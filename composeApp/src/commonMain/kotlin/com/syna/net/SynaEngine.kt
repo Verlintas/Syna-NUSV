@@ -61,6 +61,9 @@ class SynaEngine(
 
     private val pendingBurnsM = MutableStateFlow<List<Triple<String, String, String>>>(emptyList())
 
+    private val outboxM = MutableStateFlow<Map<String, List<TransportFrame>>>(emptyMap())
+    val outbox: StateFlow<Map<String, List<TransportFrame>>> = outboxM.asStateFlow()
+
     val chatStore = ChatStore()
 
     private var tcp: ConnectionManager? = null
@@ -93,6 +96,7 @@ class SynaEngine(
                 if (ann.id != userId) {
                     updatePeer(ann, ip, System.currentTimeMillis(), online = true)
                     sendKeyFrame(ann.id, PeerAddr(ip, ann.tcpPort))
+                    flushOutbox(peerFrom(ann, ip))
                 }
             }
         }
@@ -507,6 +511,7 @@ class SynaEngine(
                     if (a.id != userId) {
                         updatePeer(a, ip, System.currentTimeMillis(), online = true)
                         sendKeyFrame(a.id, PeerAddr(ip, a.tcpPort))
+                        flushOutbox(peerFrom(a, ip))
                     }
                 }
             }
@@ -570,6 +575,15 @@ class SynaEngine(
     }
 
     private suspend fun send(peer: Peer, frame: TransportFrame) {
+        if (!peer.online) {
+            enqueueOutbox(peer.id, frame)
+            return
+        }
+        sendNow(peer, frame)
+        flushOutbox(peer)
+    }
+
+    private suspend fun sendNow(peer: Peer, frame: TransportFrame) {
         when (settings.connectionMode) {
             ConnectionMode.UDP -> udp?.send(peer.addr, frame)
             ConnectionMode.TCP, ConnectionMode.AUTO, ConnectionMode.HOTSPOT -> {
@@ -581,6 +595,39 @@ class SynaEngine(
             }
         }
     }
+
+    private fun enqueueOutbox(peerId: String, frame: TransportFrame) {
+        outboxM.updateMap { it + (peerId to ((it[peerId] ?: emptyList()) + frame)) }
+    }
+
+    private suspend fun flushOutbox(peer: Peer) {
+        val frames = outboxM.value[peer.id] ?: return
+        val sent = mutableListOf<TransportFrame>()
+        for (f in frames) {
+            try {
+                sendNow(peer, f)
+                sent.add(f)
+            } catch (e: Exception) {
+                break
+            }
+        }
+        if (sent.isNotEmpty()) {
+            outboxM.updateMap { map ->
+                map.mapValues { (k, v) -> if (k == peer.id) v.filterNot { it in sent } else v }
+            }
+            outboxM.updateMap { map -> map.filterValues { it.isNotEmpty() } }
+        }
+    }
+
+    private fun peerFrom(ann: DiscoveryAnnouncement, ip: String): Peer = Peer(
+        id = ann.id,
+        username = ann.username,
+        device = ann.device,
+        addr = PeerAddr(ip, ann.tcpPort),
+        version = ann.version,
+        lastSeen = System.currentTimeMillis(),
+        online = true,
+    )
 
     fun stop() {
         if (!started) return

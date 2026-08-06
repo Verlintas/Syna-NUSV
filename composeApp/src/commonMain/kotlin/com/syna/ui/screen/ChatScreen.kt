@@ -99,9 +99,11 @@ fun ChatScreen(
                     text = if (isGroup) {
                         "群聊 · ${group!!.memberIds.size} 名成员 · ${engine.settings.connectionMode.label}"
                     } else {
+                        val pending = engine.outbox.value[peerId]?.size ?: 0
                         buildString {
                             append(if (peer?.online == true) "在线" else "离线")
                             append(" · ${engine.settings.connectionMode.label}${if (engine.peerKeys.value[peerId] != null) " · 加密" else ""}")
+                            if (pending > 0) append(" · $pending 条待发送")
                         }
                     },
                     style = MaterialTheme.typography.bodySmall,

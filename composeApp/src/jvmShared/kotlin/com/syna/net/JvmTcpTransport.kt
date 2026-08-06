@@ -10,6 +10,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
@@ -34,6 +35,44 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
         val ss = ServerSocket(0)
         server = ss
         scope.launch { acceptLoop(ss) }
+        scope.launch { heartbeatLoop() }
+    }
+
+    private suspend fun heartbeatLoop() {
+        while (true) {
+            delay(TCP_HEARTBEAT_MS)
+            outbound.entries.toList().forEach { (key, socket) ->
+                try {
+                    val ping = TransportFrame(
+                        type = FrameType.PING,
+                        from = myId,
+                        to = "",
+                        msgId = "",
+                        ts = System.currentTimeMillis(),
+                    )
+                    val bytes = ping.encode()
+                    synchronized(socket) {
+                        val out = DataOutputStream(socket.getOutputStream())
+                        out.writeInt(bytes.size)
+                        out.write(bytes)
+                        out.flush()
+                    }
+                } catch (e: IOException) {
+                    closeByKey(key)
+                } catch (e: Exception) {
+                    closeByKey(key)
+                }
+            }
+        }
+    }
+
+    private fun closeByKey(key: String) {
+        outbound.remove(key)?.let { socket ->
+            try {
+                socket.close()
+            } catch (_: Exception) {
+            }
+        }
     }
 
     private suspend fun acceptLoop(ss: ServerSocket) {
