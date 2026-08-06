@@ -1,6 +1,12 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.ExperimentalKotlinGradlePluginApi
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
@@ -80,9 +86,18 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    signingConfigs {
+        create("release") {
+            storeFile = rootProject.file(localProps.getProperty("syna.keystore.file", ""))
+            storePassword = localProps.getProperty("syna.keystore.password", "")
+            keyAlias = localProps.getProperty("syna.key.alias", "")
+            keyPassword = localProps.getProperty("syna.key.password", "")
+        }
+    }
     buildTypes {
         getByName("release") {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {
