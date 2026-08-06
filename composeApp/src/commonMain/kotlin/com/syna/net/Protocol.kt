@@ -57,6 +57,7 @@ data class TransportFrame(
     val ts: Long,
     val body: String? = null,
     val enc: Boolean = false,
+    val burn: Boolean = false,
 )
 
 fun DiscoveryAnnouncement.encode(): ByteArray = synaJson.encodeToString(this).encodeToByteArray()

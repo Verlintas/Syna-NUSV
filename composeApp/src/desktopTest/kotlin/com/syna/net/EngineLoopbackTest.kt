@@ -67,6 +67,9 @@ class EngineLoopbackTest {
             assertTrue(a.peerKeys.value[bobInA.id] != null, "A 应已持有 B 的公钥")
             assertTrue(b.peerKeys.value[aliceInB.id] != null, "B 应已持有 A 的公钥")
 
+            // 打开 B 端会话，使已读回执生效
+            b.chatStore.activeConversationId = aliceInB.id
+
             // 密钥就绪后发送的消息应为端到端加密
             a.sendText(bobInA.id, "加密的机密消息")
 
@@ -83,6 +86,19 @@ class EngineLoopbackTest {
             val raw = rawFrames[1]
             assertEquals(true, raw.enc, "线路上 TEXT 帧应标记为加密")
             assertNotEquals("加密的机密消息", raw.body, "密文不应是明文")
+
+            // 已读回执：B 收到加密消息后自动回复 READ，A 侧状态应变为已读
+            val readDeadline = System.currentTimeMillis() + 8_000
+            while (a.chatStore.messages.value[bobInA.id]?.last()?.status != com.syna.chat.MessageStatus.READ &&
+                System.currentTimeMillis() < readDeadline
+            ) {
+                delay(200)
+            }
+            assertEquals(
+                com.syna.chat.MessageStatus.READ,
+                a.chatStore.messages.value[bobInA.id]?.last()?.status,
+                "A 侧消息应收到已读回执",
+            )
         } finally {
             a.stop()
             b.stop()

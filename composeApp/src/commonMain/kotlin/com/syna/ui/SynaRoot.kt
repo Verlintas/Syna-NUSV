@@ -20,6 +20,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.syna.core.ConnectionMode
 import com.syna.net.SynaEngine
+import com.syna.ui.screen.ChatScreen
 import com.syna.ui.screen.ChatsScreen
 import com.syna.ui.screen.ContactsScreen
 import com.syna.ui.screen.SettingsScreen
@@ -42,12 +43,23 @@ fun SynaRoot(
     onE2eEnabledChange: (Boolean) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var chatPeerId by rememberSaveable { mutableStateOf<String?>(null) }
     val tabs = remember {
         listOf(
             Tab("会话") { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
             Tab("联系人") { Icon(Icons.Filled.Person, contentDescription = null) },
             Tab("设置") { Icon(Icons.Filled.Settings, contentDescription = null) },
         )
+    }
+
+    val chatTarget = chatPeerId
+    if (chatTarget != null) {
+        ChatScreen(
+            peerId = chatTarget,
+            engine = engine,
+            onBack = { chatPeerId = null },
+        )
+        return
     }
 
     Scaffold(
@@ -65,8 +77,8 @@ fun SynaRoot(
         },
     ) { padding ->
         when (selectedTab) {
-            0 -> ChatsScreen(Modifier.padding(padding))
-            1 -> ContactsScreen(engine = engine, modifier = Modifier.padding(padding))
+            0 -> ChatsScreen(engine = engine, onOpenChat = { chatPeerId = it }, modifier = Modifier.padding(padding))
+            1 -> ContactsScreen(engine = engine, onOpenChat = { chatPeerId = it }, modifier = Modifier.padding(padding))
             else -> SettingsScreen(
                 modifier = Modifier.padding(padding),
                 username = username,

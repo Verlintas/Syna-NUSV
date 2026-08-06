@@ -1,6 +1,7 @@
 package com.syna.ui.screen
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,7 +29,7 @@ import androidx.compose.ui.unit.dp
 import com.syna.net.SynaEngine
 
 @Composable
-fun ContactsScreen(engine: SynaEngine, modifier: Modifier = Modifier) {
+fun ContactsScreen(engine: SynaEngine, onOpenChat: (String) -> Unit, modifier: Modifier = Modifier) {
     val peers by engine.peers.collectAsState()
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -53,6 +54,7 @@ fun ContactsScreen(engine: SynaEngine, modifier: Modifier = Modifier) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable { onOpenChat(peer.id) }
                             .padding(horizontal = 16.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {

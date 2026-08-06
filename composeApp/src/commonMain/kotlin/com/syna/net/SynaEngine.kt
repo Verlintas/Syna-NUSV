@@ -1,5 +1,8 @@
 package com.syna.net
 
+import com.syna.chat.ChatMessage
+import com.syna.chat.ChatStore
+import com.syna.chat.MessageStatus
 import com.syna.core.ConnectionMode
 import com.syna.crypto.SynaCrypto
 import com.syna.crypto.createIdentityStore
@@ -17,7 +20,7 @@ import kotlin.uuid.Uuid
 
 @OptIn(ExperimentalUuidApi::class)
 class SynaEngine(
-    private val settings: SettingsRepository,
+    val settings: SettingsRepository,
     private val scope: CoroutineScope,
     private val version: String = "0.1.0",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
@@ -50,6 +53,8 @@ class SynaEngine(
     val peerKeys: StateFlow<Map<String, String>> = peerKeysM.asStateFlow()
 
     private val peerKeySentM = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    val chatStore = ChatStore()
 
     private var tcp: ConnectionManager? = null
     private var udp: ConnectionManager? = null
@@ -102,6 +107,16 @@ class SynaEngine(
                 sweep()
             }
         }
+        scope.launch {
+            incomingM.collect { event ->
+                if (event is IncomingEvent.PeerFrame) handleChatFrame(event.frame)
+            }
+        }
+        scope.launch {
+            peersM.collect { list ->
+                list.forEach { peer -> chatStore.renamePeer(peer.id, peer.username) }
+            }
+        }
     }
 
     private suspend fun MutableSharedFlow<TransportFrame>.emitRaw(event: IncomingEvent) {
@@ -136,13 +151,55 @@ class SynaEngine(
                 return try {
                     val session = SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(frame.from))
                     val plain = SynaCrypto.decrypt(session, frame.body ?: "")
-                    event.copyWith(frame.copy(body = plain, enc = false))
+                    event.copyWith(frame.copy(body = plain))
                 } catch (e: Exception) {
                     event
                 }
             }
         }
         return event
+    }
+
+    private suspend fun handleChatFrame(frame: TransportFrame) {
+        if (frame.from == userId) return
+        val peerName = peersM.value.firstOrNull { it.id == frame.from }?.username ?: frame.from
+        when (frame.type) {
+            FrameType.TEXT -> {
+                chatStore.addIncoming(
+                    peerId = frame.from,
+                    peerName = peerName,
+                    msg = ChatMessage(
+                        id = frame.msgId,
+                        conversationId = frame.from,
+                        senderId = frame.from,
+                        body = frame.body ?: "",
+                        ts = frame.ts,
+                        status = MessageStatus.READ,
+                        burnAfterReading = frame.burn,
+                        encrypted = frame.enc,
+                    ),
+                )
+                if (chatStore.activeConversationId == frame.from) {
+                    chatStore.markAllRead(frame.from)
+                    sendReceipt(frame.from, frame.msgId)
+                }
+            }
+            FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
+            else -> Unit
+        }
+    }
+
+    private suspend fun sendReceipt(peerId: String, msgId: String) {
+        val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
+        val frame = TransportFrame(
+            type = FrameType.READ,
+            from = userId,
+            to = peerId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = msgId,
+        )
+        send(peer, frame)
     }
 
     private fun updatePeer(ann: DiscoveryAnnouncement, ip: String, now: Long, online: Boolean) {
@@ -199,22 +256,45 @@ class SynaEngine(
         }
     }
 
-    suspend fun sendText(peerId: String, text: String) {
-        val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
+    suspend fun sendText(peerId: String, text: String, burn: Boolean = false): String {
+        val peer = peersM.value.firstOrNull { it.id == peerId } ?: return ""
         val peerKey = peerKeysM.value[peerId]
         val encrypted = settings.e2eEnabled && peerKey != null
+        val msgId = newMsgId()
         val frame = TransportFrame(
             type = FrameType.TEXT,
             from = userId,
             to = peerId,
-            msgId = newMsgId(),
+            msgId = msgId,
             ts = System.currentTimeMillis(),
             body = if (encrypted) {
                 SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(peerId)), text)
             } else text,
             enc = encrypted,
+            burn = burn,
         )
-        send(peer, frame)
+        val peerName = peersM.value.firstOrNull { it.id == peerId }?.username ?: peerId
+        chatStore.addOutgoing(
+            peerId = peerId,
+            peerName = peerName,
+            msg = ChatMessage(
+                id = msgId,
+                conversationId = peerId,
+                senderId = userId,
+                body = text,
+                ts = frame.ts,
+                status = MessageStatus.SENDING,
+                burnAfterReading = burn,
+                encrypted = encrypted,
+            ),
+        )
+        try {
+            send(peer, frame)
+            chatStore.updateStatus(msgId, MessageStatus.SENT)
+        } catch (e: Exception) {
+            chatStore.updateStatus(msgId, MessageStatus.FAILED)
+        }
+        return msgId
     }
 
     private suspend fun sendKeyFrame(peerId: String, addr: PeerAddr) {
