@@ -19,6 +19,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.syna.core.ConnectionMode
+import com.syna.net.SynaEngine
 import com.syna.ui.screen.ChatsScreen
 import com.syna.ui.screen.ContactsScreen
 import com.syna.ui.screen.SettingsScreen
@@ -28,6 +29,7 @@ private data class Tab(val label: String, val icon: @Composable () -> Unit)
 
 @Composable
 fun SynaRoot(
+    engine: SynaEngine,
     username: String,
     connectionMode: ConnectionMode,
     themeMode: ThemeMode,
@@ -62,7 +64,7 @@ fun SynaRoot(
     ) { padding ->
         when (selectedTab) {
             0 -> ChatsScreen(Modifier.padding(padding))
-            1 -> ContactsScreen(Modifier.padding(padding))
+            1 -> ContactsScreen(engine = engine, modifier = Modifier.padding(padding))
             else -> SettingsScreen(
                 modifier = Modifier.padding(padding),
                 username = username,

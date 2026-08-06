@@ -6,6 +6,12 @@ import com.syna.ui.theme.ThemeMode
 
 class SettingsRepository(private val settings: Settings = Settings()) {
 
+    var userId: String
+        get() = settings.getString(KEY_USER_ID, "")
+        set(value) {
+            settings.putString(KEY_USER_ID, value)
+        }
+
     var username: String
         get() = settings.getString(KEY_USERNAME, "")
         set(value) {
@@ -31,6 +37,7 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         }
 
     private companion object {
+        const val KEY_USER_ID = "user_id"
         const val KEY_USERNAME = "username"
         const val KEY_CONNECTION_MODE = "connection_mode"
         const val KEY_THEME_MODE = "theme_mode"

@@ -21,7 +21,26 @@ kotlin {
     jvm("desktop")
 
     sourceSets {
-        val desktopMain by getting
+        val jvmShared by creating {
+            dependsOn(commonMain.get())
+        }
+        val androidMain by getting {
+            dependsOn(jvmShared)
+        }
+        val desktopMain by getting {
+            dependsOn(jvmShared)
+        }
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(libs.multiplatform.settings.test)
+            }
+        }
+        val desktopTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
 
         commonMain.dependencies {
             implementation(compose.runtime)
