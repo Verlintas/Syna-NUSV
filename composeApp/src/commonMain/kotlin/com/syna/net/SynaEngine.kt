@@ -54,6 +54,9 @@ class SynaEngine(
 
     private val peerKeySentM = MutableStateFlow<Map<String, Long>>(emptyMap())
 
+    private val groupsM = MutableStateFlow<List<GroupInfo>>(emptyList())
+    val groups: StateFlow<List<GroupInfo>> = groupsM.asStateFlow()
+
     val chatStore = ChatStore()
 
     private var tcp: ConnectionManager? = null
@@ -184,8 +187,191 @@ class SynaEngine(
                     sendReceipt(frame.from, frame.msgId)
                 }
             }
+            FrameType.GROUP_MESSAGE -> {
+                val groupId = frame.to
+                val group = groupsM.value.firstOrNull { it.id == groupId }
+                if (group != null) {
+                    val senderName = group.memberNames[frame.from] ?: peerName
+                    chatStore.addIncoming(
+                        peerId = groupId,
+                        peerName = group.name,
+                        msg = ChatMessage(
+                            id = frame.msgId,
+                            conversationId = groupId,
+                            senderId = frame.from,
+                            body = frame.body ?: "",
+                            ts = frame.ts,
+                            status = MessageStatus.READ,
+                            burnAfterReading = frame.burn,
+                            encrypted = frame.enc,
+                        ),
+                    )
+                    if (chatStore.activeConversationId == groupId) {
+                        chatStore.markAllRead(groupId)
+                    }
+                }
+            }
+            FrameType.GROUP_INVITE -> {
+                val group = try {
+                    synaJson.decodeFromString(GroupInfo.serializer(), frame.body ?: return)
+                } catch (e: Exception) {
+                    return
+                }
+                addOrMergeGroup(group)
+                // 通知其他成员本成员已加入
+                val joinEvent = GroupMemberEvent(groupId = group.id, memberId = userId, memberName = username)
+                group.memberIds.filter { it != userId && it != frame.from }
+                    .forEach { memberId -> sendGroupEvent(memberId, FrameType.GROUP_JOIN, joinEvent) }
+            }
+            FrameType.GROUP_JOIN -> {
+                val event = try {
+                    synaJson.decodeFromString(GroupMemberEvent.serializer(), frame.body ?: return)
+                } catch (e: Exception) {
+                    return
+                }
+                groupsM.updateList { list ->
+                    list.map { group ->
+                        if (group.id == event.groupId && event.memberId !in group.memberIds) {
+                            group.copy(
+                                memberIds = group.memberIds + event.memberId,
+                                memberNames = group.memberNames + (event.memberId to event.memberName),
+                            )
+                        } else group
+                    }
+                }
+            }
+            FrameType.GROUP_LEAVE -> {
+                val event = try {
+                    synaJson.decodeFromString(GroupMemberEvent.serializer(), frame.body ?: return)
+                } catch (e: Exception) {
+                    return
+                }
+                groupsM.updateList { list ->
+                    list.map { group ->
+                        if (group.id == event.groupId) {
+                            group.copy(
+                                memberIds = group.memberIds.filter { it != event.memberId },
+                                memberNames = group.memberNames - event.memberId,
+                            )
+                        } else group
+                    }
+                }
+            }
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
             else -> Unit
+        }
+    }
+
+    suspend fun createGroup(name: String, memberIds: List<String>): String {
+        val members = memberIds.distinct().filter { it != userId }
+        val group = GroupInfo(
+            id = Uuid.random().toString(),
+            name = name.ifBlank { "群聊" },
+            creatorId = userId,
+            memberIds = listOf(userId) + members,
+            memberNames = mapOf(userId to username) + members.associateWith { memberId ->
+                peersM.value.firstOrNull { it.id == memberId }?.username ?: memberId
+            },
+            ts = System.currentTimeMillis(),
+        )
+        groupsM.updateList { it + group }
+        val body = synaJson.encodeToString(GroupInfo.serializer(), group)
+        members.forEach { memberId ->
+            val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
+            val frame = TransportFrame(
+                type = FrameType.GROUP_INVITE,
+                from = userId,
+                to = group.id,
+                msgId = newMsgId(),
+                ts = System.currentTimeMillis(),
+                body = body,
+            )
+            send(peer, frame)
+        }
+        return group.id
+    }
+
+    suspend fun leaveGroup(groupId: String) {
+        val group = groupsM.value.firstOrNull { it.id == groupId } ?: return
+        groupsM.updateList { it.filter { g -> g.id != groupId } }
+        val event = GroupMemberEvent(groupId = groupId, memberId = userId, memberName = username)
+        group.memberIds.filter { it != userId }.forEach { memberId ->
+            sendGroupEvent(memberId, FrameType.GROUP_LEAVE, event)
+        }
+    }
+
+    suspend fun sendGroupText(groupId: String, text: String, burn: Boolean = false): String {
+        val group = groupsM.value.firstOrNull { it.id == groupId } ?: return ""
+        val msgId = newMsgId()
+        group.memberIds.filter { it != userId }.forEach { memberId ->
+            val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
+            val peerKey = peerKeysM.value[memberId]
+            val encrypted = settings.e2eEnabled && peerKey != null
+            val frame = TransportFrame(
+                type = FrameType.GROUP_MESSAGE,
+                from = userId,
+                to = groupId,
+                msgId = msgId,
+                ts = System.currentTimeMillis(),
+                body = if (encrypted) {
+                    SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(memberId)), text)
+                } else text,
+                enc = encrypted,
+                burn = burn,
+            )
+            try {
+                send(peer, frame)
+            } catch (e: Exception) {
+            }
+        }
+        chatStore.addOutgoing(
+            peerId = groupId,
+            peerName = group.name,
+            msg = ChatMessage(
+                id = msgId,
+                conversationId = groupId,
+                senderId = userId,
+                body = text,
+                ts = System.currentTimeMillis(),
+                status = MessageStatus.SENT,
+                burnAfterReading = burn,
+                encrypted = settings.e2eEnabled,
+            ),
+        )
+        return msgId
+    }
+
+    private suspend fun sendGroupEvent(memberId: String, type: FrameType, event: GroupMemberEvent) {
+        val peer = peersM.value.firstOrNull { it.id == memberId } ?: return
+        val frame = TransportFrame(
+            type = type,
+            from = userId,
+            to = event.groupId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = synaJson.encodeToString(GroupMemberEvent.serializer(), event),
+        )
+        try {
+            send(peer, frame)
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun addOrMergeGroup(group: GroupInfo) {
+        groupsM.updateList { list ->
+            val existing = list.firstOrNull { it.id == group.id }
+            if (existing == null) {
+                list + group
+            } else {
+                list.map { g ->
+                    if (g.id == group.id) {
+                        g.copy(
+                            memberIds = (g.memberIds + group.memberIds).distinct(),
+                            memberNames = g.memberNames + group.memberNames,
+                        )
+                    } else g
+                }
+            }
         }
     }
 

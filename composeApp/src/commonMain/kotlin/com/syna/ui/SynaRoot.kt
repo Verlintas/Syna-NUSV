@@ -23,6 +23,7 @@ import com.syna.net.SynaEngine
 import com.syna.ui.screen.ChatScreen
 import com.syna.ui.screen.ChatsScreen
 import com.syna.ui.screen.ContactsScreen
+import com.syna.ui.screen.CreateGroupScreen
 import com.syna.ui.screen.SettingsScreen
 import com.syna.ui.theme.ThemeMode
 
@@ -44,6 +45,7 @@ fun SynaRoot(
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var chatPeerId by rememberSaveable { mutableStateOf<String?>(null) }
+    var creatingGroup by rememberSaveable { mutableStateOf(false) }
     val tabs = remember {
         listOf(
             Tab("会话") { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
@@ -58,6 +60,18 @@ fun SynaRoot(
             peerId = chatTarget,
             engine = engine,
             onBack = { chatPeerId = null },
+        )
+        return
+    }
+
+    if (creatingGroup) {
+        CreateGroupScreen(
+            engine = engine,
+            onBack = { creatingGroup = false },
+            onCreated = { groupId ->
+                creatingGroup = false
+                chatPeerId = groupId
+            },
         )
         return
     }
@@ -78,7 +92,12 @@ fun SynaRoot(
     ) { padding ->
         when (selectedTab) {
             0 -> ChatsScreen(engine = engine, onOpenChat = { chatPeerId = it }, modifier = Modifier.padding(padding))
-            1 -> ContactsScreen(engine = engine, onOpenChat = { chatPeerId = it }, modifier = Modifier.padding(padding))
+            1 -> ContactsScreen(
+                engine = engine,
+                onOpenChat = { chatPeerId = it },
+                onCreateGroup = { creatingGroup = true },
+                modifier = Modifier.padding(padding),
+            )
             else -> SettingsScreen(
                 modifier = Modifier.padding(padding),
                 username = username,

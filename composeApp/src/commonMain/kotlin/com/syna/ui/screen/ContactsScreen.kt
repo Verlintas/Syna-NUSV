@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -29,15 +30,30 @@ import androidx.compose.ui.unit.dp
 import com.syna.net.SynaEngine
 
 @Composable
-fun ContactsScreen(engine: SynaEngine, onOpenChat: (String) -> Unit, modifier: Modifier = Modifier) {
+fun ContactsScreen(
+    engine: SynaEngine,
+    onOpenChat: (String) -> Unit,
+    onCreateGroup: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val peers by engine.peers.collectAsState()
 
     Column(modifier = modifier.fillMaxSize()) {
-        Text(
-            text = "联系人",
-            style = MaterialTheme.typography.headlineSmall,
-            modifier = Modifier.padding(16.dp),
-        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "联系人",
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedButton(onClick = onCreateGroup) {
+                Text("发起群聊")
+            }
+        }
         if (peers.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),

@@ -52,7 +52,10 @@ fun ChatScreen(
 ) {
     val peers by engine.peers.collectAsState()
     val messages by engine.chatStore.messages.collectAsState()
+    val groups by engine.groups.collectAsState()
     val peer = peers.firstOrNull { it.id == peerId }
+    val group = groups.firstOrNull { it.id == peerId }
+    val isGroup = group != null
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
@@ -87,15 +90,19 @@ fun ChatScreen(
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = peer?.username ?: peerId,
+                    text = if (isGroup) group!!.name else (peer?.username ?: peerId),
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = buildString {
-                        append(if (peer?.online == true) "在线" else "离线")
-                        append(" · ${engine.settings.connectionMode.label}${if (engine.peerKeys.value[peerId] != null) " · 加密" else ""}")
+                    text = if (isGroup) {
+                        "群聊 · ${group!!.memberIds.size} 名成员 · ${engine.settings.connectionMode.label}"
+                    } else {
+                        buildString {
+                            append(if (peer?.online == true) "在线" else "离线")
+                            append(" · ${engine.settings.connectionMode.label}${if (engine.peerKeys.value[peerId] != null) " · 加密" else ""}")
+                        }
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -116,6 +123,8 @@ fun ChatScreen(
                 MessageBubble(
                     message = message,
                     isMine = message.senderId == engine.userId,
+                    showSenderName = isGroup && message.senderId != engine.userId,
+                    senderName = group?.memberNames?.get(message.senderId) ?: message.senderId,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -151,7 +160,11 @@ fun ChatScreen(
                     val text = input.trim()
                     if (text.isNotEmpty()) {
                         scope.launch {
-                            engine.sendText(peerId, text, burn = burn)
+                            if (isGroup) {
+                                engine.sendGroupText(peerId, text, burn = burn)
+                            } else {
+                                engine.sendText(peerId, text, burn = burn)
+                            }
                         }
                         input = ""
                         scope.launch {
@@ -170,7 +183,13 @@ fun ChatScreen(
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, isMine: Boolean, modifier: Modifier = Modifier) {
+private fun MessageBubble(
+    message: ChatMessage,
+    isMine: Boolean,
+    modifier: Modifier = Modifier,
+    showSenderName: Boolean = false,
+    senderName: String = "",
+) {
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
     } else {
@@ -183,6 +202,14 @@ private fun MessageBubble(message: ChatMessage, isMine: Boolean, modifier: Modif
         horizontalArrangement = if (isMine) Arrangement.End else Arrangement.Start,
     ) {
         Column(horizontalAlignment = if (isMine) Alignment.End else Alignment.Start) {
+            if (showSenderName) {
+                Text(
+                    text = senderName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp, bottom = 2.dp),
+                )
+            }
             Box(
                 modifier = Modifier
                     .widthIn(max = 280.dp)

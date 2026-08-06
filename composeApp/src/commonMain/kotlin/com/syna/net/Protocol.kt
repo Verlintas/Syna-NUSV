@@ -69,3 +69,20 @@ fun decodeAnnouncement(bytes: ByteArray): DiscoveryAnnouncement =
 
 fun decodeFrame(bytes: ByteArray): TransportFrame =
     synaJson.decodeFromString(TransportFrame.serializer(), bytes.decodeToString())
+
+@Serializable
+data class GroupInfo(
+    val id: String,
+    val name: String,
+    val creatorId: String,
+    val memberIds: List<String>,
+    val memberNames: Map<String, String>,
+    val ts: Long,
+)
+
+@Serializable
+data class GroupMemberEvent(
+    val groupId: String,
+    val memberId: String,
+    val memberName: String,
+)
