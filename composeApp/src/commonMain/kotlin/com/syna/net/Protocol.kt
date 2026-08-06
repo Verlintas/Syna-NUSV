@@ -22,6 +22,7 @@ val synaJson: Json = Json {
 enum class FrameType {
     DISCOVERY,
     HELLO,
+    KEY,
     TEXT,
     IMAGE,
     FILE_CHUNK,
@@ -55,6 +56,7 @@ data class TransportFrame(
     val msgId: String,
     val ts: Long,
     val body: String? = null,
+    val enc: Boolean = false,
 )
 
 fun DiscoveryAnnouncement.encode(): ByteArray = synaJson.encodeToString(this).encodeToByteArray()

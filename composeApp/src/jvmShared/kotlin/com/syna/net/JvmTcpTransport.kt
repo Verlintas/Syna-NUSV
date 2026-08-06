@@ -15,9 +15,10 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-actual fun createTcpTransport(myId: String): ConnectionManager = JvmTcpTransport(myId)
+actual fun createTcpTransport(myId: String, myPublicKeyB64: String): ConnectionManager =
+    JvmTcpTransport(myId, myPublicKeyB64)
 
-class JvmTcpTransport(private val myId: String) : ConnectionManager {
+class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: String) : ConnectionManager {
 
     private val incomingM = MutableSharedFlow<IncomingEvent>(extraBufferCapacity = 256)
     override val incoming = incomingM.asSharedFlow()
@@ -109,6 +110,7 @@ class JvmTcpTransport(private val myId: String) : ConnectionManager {
             to = "",
             msgId = "",
             ts = System.currentTimeMillis(),
+            body = myPublicKeyB64,
         )
         val out = DataOutputStream(socket.getOutputStream())
         val bytes = hello.encode()

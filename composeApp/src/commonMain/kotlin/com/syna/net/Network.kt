@@ -29,7 +29,7 @@ expect fun createDiscoveryService(
     intervalMs: Long = DISCOVERY_INTERVAL_MS,
 ): DiscoveryService
 
-expect fun createTcpTransport(myId: String): ConnectionManager
+expect fun createTcpTransport(myId: String, myPublicKeyB64: String): ConnectionManager
 
 expect fun createUdpTransport(myId: String): ConnectionManager
 

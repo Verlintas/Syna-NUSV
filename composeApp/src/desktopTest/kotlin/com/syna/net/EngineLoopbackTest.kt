@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class EngineLoopbackTest {
@@ -30,11 +31,17 @@ class EngineLoopbackTest {
         val b = SynaEngine(settingsB, scopeB, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
 
         val received = mutableListOf<TransportFrame>()
+        val rawFrames = mutableListOf<TransportFrame>()
         val receiveJob = scopeB.launch {
             b.incoming.collect { event ->
                 if (event is IncomingEvent.PeerFrame && event.frame.type == FrameType.TEXT) {
                     received.add(event.frame)
                 }
+            }
+        }
+        val rawJob = scopeB.launch {
+            b.rawIncoming.collect { frame ->
+                if (frame.type == FrameType.TEXT) rawFrames.add(frame)
             }
         }
 
@@ -51,21 +58,38 @@ class EngineLoopbackTest {
                 .first { it.username == "Alice" }
             assertTrue(aliceInB.online)
 
-            a.sendText(bobInA.id, "你好 Bob，我是 Alice")
-            b.sendText(aliceInB.id, "收到！我是 Bob")
+            // 第一条消息触发 TCP 连接与密钥交换
+            a.sendText(bobInA.id, "握手消息")
+            val deadline1 = System.currentTimeMillis() + 8_000
+            while ((a.peerKeys.value[bobInA.id] == null || b.peerKeys.value[aliceInB.id] == null) && System.currentTimeMillis() < deadline1) {
+                delay(200)
+            }
+            assertTrue(a.peerKeys.value[bobInA.id] != null, "A 应已持有 B 的公钥")
+            assertTrue(b.peerKeys.value[aliceInB.id] != null, "B 应已持有 A 的公钥")
+
+            // 密钥就绪后发送的消息应为端到端加密
+            a.sendText(bobInA.id, "加密的机密消息")
 
             val deadline = System.currentTimeMillis() + 8_000
-            while (received.size < 1 && System.currentTimeMillis() < deadline) {
+            while (received.size < 2 && System.currentTimeMillis() < deadline) {
                 delay(200)
             }
 
-            assertEquals("你好 Bob，我是 Alice", received.firstOrNull()?.body)
+            assertEquals(2, received.size)
+            assertEquals("握手消息", received[0].body)
+            assertEquals("加密的机密消息", received[1].body)
+
+            assertEquals(2, rawFrames.size)
+            val raw = rawFrames[1]
+            assertEquals(true, raw.enc, "线路上 TEXT 帧应标记为加密")
+            assertNotEquals("加密的机密消息", raw.body, "密文不应是明文")
         } finally {
             a.stop()
             b.stop()
             scopeA.coroutineContext[Job]?.cancel()
             scopeB.coroutineContext[Job]?.cancel()
             receiveJob.cancel()
+            rawJob.cancel()
         }
     }
 }

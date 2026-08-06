@@ -34,10 +34,12 @@ fun SynaRoot(
     connectionMode: ConnectionMode,
     themeMode: ThemeMode,
     burnAfterReading: Boolean,
+    e2eEnabled: Boolean,
     onUsernameChange: (String) -> Unit,
     onConnectionModeChange: (ConnectionMode) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
     onBurnAfterReadingChange: (Boolean) -> Unit,
+    onE2eEnabledChange: (Boolean) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     val tabs = remember {
@@ -71,10 +73,12 @@ fun SynaRoot(
                 connectionMode = connectionMode,
                 themeMode = themeMode,
                 burnAfterReading = burnAfterReading,
+                e2eEnabled = e2eEnabled,
                 onUsernameChange = onUsernameChange,
                 onConnectionModeChange = onConnectionModeChange,
                 onThemeModeChange = onThemeModeChange,
                 onBurnAfterReadingChange = onBurnAfterReadingChange,
+                onE2eEnabledChange = onE2eEnabledChange,
             )
         }
     }

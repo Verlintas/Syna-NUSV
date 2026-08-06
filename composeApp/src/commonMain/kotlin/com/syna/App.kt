@@ -29,6 +29,7 @@ fun App() {
     var themeMode by remember { mutableStateOf(settings.themeMode) }
     var connectionMode by remember { mutableStateOf(settings.connectionMode) }
     var username by remember { mutableStateOf(settings.username) }
+    var e2eEnabled by remember { mutableStateOf(settings.e2eEnabled) }
     var burnAfterReading by remember { mutableStateOf(settings.burnAfterReadingEnabled) }
 
     SynaTheme(themeMode = themeMode) {
@@ -38,6 +39,7 @@ fun App() {
             connectionMode = connectionMode,
             themeMode = themeMode,
             burnAfterReading = burnAfterReading,
+            e2eEnabled = e2eEnabled,
             onUsernameChange = {
                 username = it
                 settings.username = it
@@ -54,6 +56,10 @@ fun App() {
             onBurnAfterReadingChange = {
                 burnAfterReading = it
                 settings.burnAfterReadingEnabled = it
+            },
+            onE2eEnabledChange = {
+                e2eEnabled = it
+                settings.e2eEnabled = it
             },
         )
     }

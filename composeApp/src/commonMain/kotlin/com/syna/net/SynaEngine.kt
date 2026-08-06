@@ -1,6 +1,8 @@
 package com.syna.net
 
 import com.syna.core.ConnectionMode
+import com.syna.crypto.SynaCrypto
+import com.syna.crypto.createIdentityStore
 import com.syna.storage.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -9,7 +11,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -31,17 +32,24 @@ class SynaEngine(
 
     private val device = platformNet().deviceName()
 
+    private val identity = createIdentityStore().loadOrCreate()
+    private val publicKeyB64 = SynaCrypto.publicKeyB64(identity)
+
     private val announcementsM = MutableSharedFlow<Pair<DiscoveryAnnouncement, String>>()
     private val incomingM = MutableSharedFlow<IncomingEvent>(extraBufferCapacity = 256)
+    private val rawIncomingM = MutableSharedFlow<TransportFrame>(extraBufferCapacity = 256)
 
     val announcements: SharedFlow<Pair<DiscoveryAnnouncement, String>> = announcementsM.asSharedFlow()
     val incoming: SharedFlow<IncomingEvent> = incomingM.asSharedFlow()
+    val rawIncoming: SharedFlow<TransportFrame> = rawIncomingM.asSharedFlow()
 
     private val peersM = MutableStateFlow<List<Peer>>(emptyList())
     val peers: StateFlow<List<Peer>> = peersM.asStateFlow()
 
-    private val connectionsM = MutableStateFlow<Map<String, Peer>>(emptyMap())
-    val connections: StateFlow<Map<String, Peer>> = connectionsM.asStateFlow()
+    private val peerKeysM = MutableStateFlow<Map<String, String>>(emptyMap())
+    val peerKeys: StateFlow<Map<String, String>> = peerKeysM.asStateFlow()
+
+    private val peerKeySentM = MutableStateFlow<Map<String, Long>>(emptyMap())
 
     private var tcp: ConnectionManager? = null
     private var udp: ConnectionManager? = null
@@ -53,7 +61,7 @@ class SynaEngine(
         started = true
         platformNet().lockMulticast()
 
-        val tcp = createTcpTransport(userId).also { it.start() }
+        val tcp = createTcpTransport(userId, publicKeyB64).also { it.start() }
         val udp = createUdpTransport(userId).also { it.start() }
         val announcement = DiscoveryAnnouncement(
             id = userId,
@@ -72,25 +80,73 @@ class SynaEngine(
             discovery.announcements.collect { (ann, ip) ->
                 if (ann.id != userId) {
                     updatePeer(ann, ip, System.currentTimeMillis(), online = true)
+                    sendKeyFrame(ann.id, PeerAddr(ip, ann.tcpPort))
                 }
             }
         }
         scope.launch {
-            tcp.incoming.collect { incomingM.emit(it) }
+            tcp.incoming.collect { event ->
+                rawIncomingM.emitRaw(event)
+                incomingM.emit(decryptEvent(event))
+            }
         }
         scope.launch {
-            udp.incoming.collect { incomingM.emit(it) }
+            udp.incoming.collect { event ->
+                rawIncomingM.emitRaw(event)
+                incomingM.emit(decryptEvent(event))
+            }
         }
         scope.launch {
-            while (scope.isActive) {
+            while (true) {
                 kotlinx.coroutines.delay(sweepIntervalMs)
                 sweep()
             }
         }
     }
 
+    private suspend fun MutableSharedFlow<TransportFrame>.emitRaw(event: IncomingEvent) {
+        if (event is IncomingEvent.PeerFrame) emit(event.frame)
+    }
+
+    private suspend fun decryptEvent(event: IncomingEvent): IncomingEvent {
+        if (event !is IncomingEvent.PeerFrame) return event
+        val frame = event.frame
+        when (frame.type) {
+            FrameType.HELLO -> frame.body?.let { key ->
+                peerKeysM.updateMap { it + (frame.from to key) }
+            }
+            FrameType.KEY -> {
+                frame.body?.let { key ->
+                    peerKeysM.updateMap { it + (frame.from to key) }
+                }
+                // 收到公钥后回发自己的公钥，节流避免回复风暴
+                val peer = peersM.value.firstOrNull { p -> p.id == frame.from } ?: return event
+                val now = System.currentTimeMillis()
+                val lastSent = peerKeySentM.value[frame.from] ?: 0L
+                if (now - lastSent > 30_000L) {
+                    peerKeySentM.updateMap { it + (frame.from to now) }
+                    sendKeyFrame(frame.from, peer.addr)
+                }
+            }
+            else -> Unit
+        }
+        if (frame.enc && frame.type != FrameType.KEY && frame.type != FrameType.HELLO) {
+            val peerKey = peerKeysM.value[frame.from]
+            if (peerKey != null) {
+                return try {
+                    val session = SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(frame.from))
+                    val plain = SynaCrypto.decrypt(session, frame.body ?: "")
+                    event.copyWith(frame.copy(body = plain, enc = false))
+                } catch (e: Exception) {
+                    event
+                }
+            }
+        }
+        return event
+    }
+
     private fun updatePeer(ann: DiscoveryAnnouncement, ip: String, now: Long, online: Boolean) {
-        peersM.update { list ->
+        peersM.updateList { list ->
             val existing = list.firstOrNull { it.id == ann.id }
             val updated = Peer(
                 id = ann.id,
@@ -111,7 +167,7 @@ class SynaEngine(
 
     private fun sweep() {
         val now = System.currentTimeMillis()
-        peersM.update { list ->
+        peersM.updateList { list ->
             list.map { peer ->
                 if (peer.online && now - peer.lastSeen > peerTimeoutMs) {
                     peer.copy(online = false)
@@ -129,13 +185,15 @@ class SynaEngine(
             version = version,
         )
         discovery?.let {
-            // restart discovery with the new identity
             it.stop()
-            val d = createDiscoveryService(ann).also { d -> d.start() }
+            val d = createDiscoveryService(ann, discoveryIntervalMs).also { d -> d.start() }
             discovery = d
             scope.launch {
                 d.announcements.collect { (a, ip) ->
-                    if (a.id != userId) updatePeer(a, ip, System.currentTimeMillis(), online = true)
+                    if (a.id != userId) {
+                        updatePeer(a, ip, System.currentTimeMillis(), online = true)
+                        sendKeyFrame(a.id, PeerAddr(ip, a.tcpPort))
+                    }
                 }
             }
         }
@@ -143,15 +201,32 @@ class SynaEngine(
 
     suspend fun sendText(peerId: String, text: String) {
         val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
+        val peerKey = peerKeysM.value[peerId]
+        val encrypted = settings.e2eEnabled && peerKey != null
         val frame = TransportFrame(
             type = FrameType.TEXT,
             from = userId,
             to = peerId,
             msgId = newMsgId(),
             ts = System.currentTimeMillis(),
-            body = text,
+            body = if (encrypted) {
+                SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(peerId)), text)
+            } else text,
+            enc = encrypted,
         )
         send(peer, frame)
+    }
+
+    private suspend fun sendKeyFrame(peerId: String, addr: PeerAddr) {
+        val frame = TransportFrame(
+            type = FrameType.KEY,
+            from = userId,
+            to = peerId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = publicKeyB64,
+        )
+        send(Peer(id = peerId, username = "", device = "", addr = addr, version = "", lastSeen = 0, online = true), frame)
     }
 
     private suspend fun send(peer: Peer, frame: TransportFrame) {
@@ -178,9 +253,19 @@ class SynaEngine(
 
     private fun defaultUsername(): String = "用户-${userId.takeLast(4)}"
 
+    private fun sessionId(peerId: String): String =
+        listOf(userId, peerId).sorted().joinToString("|")
+
     private fun newMsgId(): String = Uuid.random().toString()
 }
 
-private fun <T> MutableStateFlow<List<T>>.update(transform: (List<T>) -> List<T>) {
+private fun IncomingEvent.PeerFrame.copyWith(frame: TransportFrame): IncomingEvent =
+    IncomingEvent.PeerFrame(this.peerId, frame)
+
+private fun <T> MutableStateFlow<List<T>>.updateList(transform: (List<T>) -> List<T>) {
+    value = transform(value)
+}
+
+private fun <K, V> MutableStateFlow<Map<K, V>>.updateMap(transform: (Map<K, V>) -> Map<K, V>) {
     value = transform(value)
 }

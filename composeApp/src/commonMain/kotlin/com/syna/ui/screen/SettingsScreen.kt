@@ -33,6 +33,8 @@ fun SettingsScreen(
     onConnectionModeChange: (ConnectionMode) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
     onBurnAfterReadingChange: (Boolean) -> Unit,
+    onE2eEnabledChange: (Boolean) -> Unit,
+    e2eEnabled: Boolean,
 ) {
     Column(
         modifier = modifier
@@ -117,7 +119,21 @@ fun SettingsScreen(
             Switch(checked = burnAfterReading, onCheckedChange = onBurnAfterReadingChange)
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Text("临时聊天、端到端加密将在后续版本启用", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onE2eEnabledChange(!e2eEnabled) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("端到端加密", style = MaterialTheme.typography.bodyLarge)
+                Text("X25519 密钥交换 + AES-256-GCM，密钥仅存于本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = e2eEnabled, onCheckedChange = onE2eEnabledChange)
+        }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Text("临时聊天将在后续版本启用", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
     }
 }
