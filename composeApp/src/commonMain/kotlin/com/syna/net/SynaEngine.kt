@@ -7,6 +7,7 @@ import com.syna.core.ConnectionMode
 import com.syna.crypto.SynaCrypto
 import com.syna.crypto.createIdentityStore
 import com.syna.storage.SettingsRepository
+import com.syna.util.synaLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -91,6 +92,10 @@ class SynaEngine(
         this.udp = udp
         this.discovery = discovery
 
+        synaLog("Engine") {
+            "started userId=$userId username=$username device=$device tcpPort=${tcp.localTcpPort} e2e=${settings.e2eEnabled}"
+        }
+
         scope.launch {
             discovery.announcements.collect { (ann, ip) ->
                 if (ann.id != userId) {
@@ -169,6 +174,7 @@ class SynaEngine(
                     val plain = SynaCrypto.decrypt(session, frame.body ?: "")
                     event.copyWith(frame.copy(body = plain))
                 } catch (e: Exception) {
+                    synaLog("Crypto") { "decrypt FAILED from=${frame.from.take(6)} type=${frame.type}: ${e.message}" }
                     event
                 }
             }
@@ -460,6 +466,10 @@ class SynaEngine(
     private fun updatePeer(ann: DiscoveryAnnouncement, ip: String, now: Long, online: Boolean) {
         peersM.updateList { list ->
             val existing = list.firstOrNull { it.id == ann.id }
+            val wasOnline = existing?.online == true
+            if (wasOnline != online) {
+                synaLog("Discovery") { "${ann.username}(${ann.id.take(6)}) $ip:${ann.tcpPort} ${if (online) "上线" else "离线"}" }
+            }
             val updated = Peer(
                 id = ann.id,
                 username = ann.username,
@@ -553,8 +563,10 @@ class SynaEngine(
         try {
             send(peer, frame)
             chatStore.updateStatus(msgId, MessageStatus.SENT)
+            synaLog("Send") { "text to=${peerId.take(6)} len=${text.length} enc=$encrypted burn=$burn" }
         } catch (e: Exception) {
             chatStore.updateStatus(msgId, MessageStatus.FAILED)
+            synaLog("Send") { "text FAILED to=${peerId.take(6)}: ${e.message}" }
         }
         if (burn) {
             scheduleBurnPurge(peerId, msgId, ackTo = null, deliverAck = false, delayMs = BURN_ACK_FALLBACK_MS)
@@ -563,12 +575,16 @@ class SynaEngine(
     }
 
     private suspend fun sendKeyFrame(peerId: String, addr: PeerAddr) {
+        val now = System.currentTimeMillis()
+        val lastSent = peerKeySentM.value[peerId] ?: 0L
+        if (now - lastSent < 30_000L) return
+        peerKeySentM.updateMap { it + (peerId to now) }
         val frame = TransportFrame(
             type = FrameType.KEY,
             from = userId,
             to = peerId,
             msgId = newMsgId(),
-            ts = System.currentTimeMillis(),
+            ts = now,
             body = publicKeyB64,
         )
         send(Peer(id = peerId, username = "", device = "", addr = addr, version = "", lastSeen = 0, online = true), frame)
@@ -577,6 +593,7 @@ class SynaEngine(
     private suspend fun send(peer: Peer, frame: TransportFrame) {
         if (!peer.online) {
             enqueueOutbox(peer.id, frame)
+            synaLog("Outbox") { "queued ${frame.type} to=${peer.id.take(6)} (offline)" }
             return
         }
         sendNow(peer, frame)
@@ -616,6 +633,7 @@ class SynaEngine(
                 map.mapValues { (k, v) -> if (k == peer.id) v.filterNot { it in sent } else v }
             }
             outboxM.updateMap { map -> map.filterValues { it.isNotEmpty() } }
+            synaLog("Outbox") { "flushed ${sent.size} frames to ${peer.id.take(6)}" }
         }
     }
 

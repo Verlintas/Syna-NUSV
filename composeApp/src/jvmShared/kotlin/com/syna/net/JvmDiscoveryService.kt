@@ -44,12 +44,18 @@ class JvmDiscoveryService(
         }
         socket.broadcast = true
         socket.bind(java.net.InetSocketAddress(DISCOVERY_PORT))
-        val group = InetAddress.getByName(DISCOVERY_MULTICAST_GROUP)
-        socket.joinGroup(
-            java.net.InetSocketAddress(group, DISCOVERY_PORT),
-            NetworkInterface.getByInetAddress(localInetAddress()!!),
-        )
         receiver = socket
+
+        // 加入多播组；多播不可用的网络（如部分 VPN）退化为仅广播接收
+        try {
+            val group = InetAddress.getByName(DISCOVERY_MULTICAST_GROUP)
+            val intf = NetworkInterface.getByInetAddress(localInetAddress()!!)
+            if (intf != null && intf.supportsMulticast()) {
+                socket.joinGroup(java.net.InetSocketAddress(group, DISCOVERY_PORT), intf)
+            }
+        } catch (e: Exception) {
+            // ignore: broadcast-only mode
+        }
 
         val out = DatagramSocket()
         out.broadcast = true
@@ -108,11 +114,18 @@ class JvmDiscoveryService(
         sender?.close()
     }
 
-    private fun localInetAddress(): InetAddress? {
-        findSiteLocalAddress()?.let {
-            return InetAddress.getByName(it)
+    private fun localInetAddress(): InetAddress {
+        try {
+            findSiteLocalAddress()?.let {
+                return InetAddress.getByName(it)
+            }
+        } catch (_: Exception) {
         }
-        return InetAddress.getByName("127.0.0.1")
+        return try {
+            InetAddress.getByName("127.0.0.1")
+        } catch (e: Exception) {
+            InetAddress.getLoopbackAddress()
+        }
     }
 
     private fun findSiteLocalAddress(): String? {

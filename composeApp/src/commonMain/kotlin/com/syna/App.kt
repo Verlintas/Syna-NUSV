@@ -1,6 +1,7 @@
 package com.syna
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -12,23 +13,38 @@ import com.syna.ui.SynaRoot
 import com.syna.ui.theme.SynaTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 
 @Composable
 fun App() {
     val settings = remember { SettingsRepository() }
+    val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
     val engine = remember {
         SynaEngine(
             settings = settings,
-            scope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+            scope = scope,
         )
     }
     LaunchedEffect(Unit) {
         engine.start()
     }
+    // 页面销毁（如 Android 旋转）时彻底释放引擎，避免重复实例抢占端口
+    DisposableEffect(Unit) {
+        onDispose {
+            engine.stop()
+            scope.coroutineContext[Job]?.cancel()
+        }
+    }
     var themeMode by remember { mutableStateOf(settings.themeMode) }
     var connectionMode by remember { mutableStateOf(settings.connectionMode) }
     var username by remember { mutableStateOf(settings.username) }
+    // 防抖：停止输入 1.2s 后再重启发现服务，避免每个按键都重建 socket
+    LaunchedEffect(username) {
+        delay(1_200)
+        engine.refreshUsername()
+    }
     var e2eEnabled by remember { mutableStateOf(settings.e2eEnabled) }
     var burnAfterReading by remember { mutableStateOf(settings.burnAfterReadingEnabled) }
     var tempChatEnabled by remember { mutableStateOf(settings.tempChatEnabled) }
@@ -47,7 +63,6 @@ fun App() {
             onUsernameChange = {
                 username = it
                 settings.username = it
-                engine.refreshUsername()
             },
             onConnectionModeChange = {
                 connectionMode = it

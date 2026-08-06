@@ -66,15 +66,6 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
         }
     }
 
-    private fun closeByKey(key: String) {
-        outbound.remove(key)?.let { socket ->
-            try {
-                socket.close()
-            } catch (_: Exception) {
-            }
-        }
-    }
-
     private suspend fun acceptLoop(ss: ServerSocket) {
         while (true) {
             val socket = try {
@@ -126,7 +117,7 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
                     out.flush()
                 }
             } catch (e: IOException) {
-                closeSocket(addr)
+                closeByKey("${addr.ip}:${addr.tcpPort}")
                 throw e
             }
         }
@@ -134,35 +125,44 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
 
     private fun getOrCreate(addr: PeerAddr): Socket {
         val key = "${addr.ip}:${addr.tcpPort}"
-        val existing = outbound[key]
-        if (existing != null && existing.isConnected && !existing.isClosed) return existing
+        synchronized(outbound) {
+            val existing = outbound[key]
+            if (existing != null && existing.isConnected && !existing.isClosed) return existing
 
-        val socket = Socket()
-        socket.connect(java.net.InetSocketAddress(addr.ip, addr.tcpPort), 5_000)
-        socket.tcpNoDelay = true
-        outbound[key] = socket
-        scope.launch { readLoop(socket) }
+            val socket = Socket()
+            try {
+                socket.connect(java.net.InetSocketAddress(addr.ip, addr.tcpPort), 5_000)
+            } catch (e: Exception) {
+                try {
+                    socket.close()
+                } catch (_: Exception) {
+                }
+                throw e
+            }
+            socket.tcpNoDelay = true
+            outbound[key] = socket
 
-        val hello = TransportFrame(
-            type = FrameType.HELLO,
-            from = myId,
-            to = "",
-            msgId = "",
-            ts = System.currentTimeMillis(),
-            body = myPublicKeyB64,
-        )
-        val out = DataOutputStream(socket.getOutputStream())
-        val bytes = hello.encode()
-        synchronized(socket) {
-            out.writeInt(bytes.size)
-            out.write(bytes)
-            out.flush()
+            val hello = TransportFrame(
+                type = FrameType.HELLO,
+                from = myId,
+                to = "",
+                msgId = "",
+                ts = System.currentTimeMillis(),
+                body = myPublicKeyB64,
+            )
+            val out = DataOutputStream(socket.getOutputStream())
+            val bytes = hello.encode()
+            synchronized(socket) {
+                out.writeInt(bytes.size)
+                out.write(bytes)
+                out.flush()
+            }
+            scope.launch { readLoop(socket) }
+            return socket
         }
-        return socket
     }
 
-    private fun closeSocket(addr: PeerAddr) {
-        val key = "${addr.ip}:${addr.tcpPort}"
+    private fun closeByKey(key: String) {
         outbound.remove(key)?.let { socket ->
             try {
                 socket.close()
@@ -171,8 +171,7 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
         }
     }
 
-    override fun stop() {
-        try {
+    override fun stop() {        try {
             server?.close()
         } catch (_: Exception) {
         }

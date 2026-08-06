@@ -53,6 +53,7 @@ fun ChatScreen(
     val peers by engine.peers.collectAsState()
     val messages by engine.chatStore.messages.collectAsState()
     val groups by engine.groups.collectAsState()
+    val outbox by engine.outbox.collectAsState()
     val peer = peers.firstOrNull { it.id == peerId }
     val group = groups.firstOrNull { it.id == peerId }
     val isGroup = group != null
@@ -99,7 +100,7 @@ fun ChatScreen(
                     text = if (isGroup) {
                         "群聊 · ${group!!.memberIds.size} 名成员 · ${engine.settings.connectionMode.label}"
                     } else {
-                        val pending = engine.outbox.value[peerId]?.size ?: 0
+                        val pending = outbox[peerId]?.size ?: 0
                         buildString {
                             append(if (peer?.online == true) "在线" else "离线")
                             append(" · ${engine.settings.connectionMode.label}${if (engine.peerKeys.value[peerId] != null) " · 加密" else ""}")
@@ -170,7 +171,9 @@ fun ChatScreen(
                         }
                         input = ""
                         scope.launch {
-                            listState.scrollToItem(0)
+                            if (chatMessages.isNotEmpty()) {
+                                listState.scrollToItem(0)
+                            }
                         }
                     }
                 },

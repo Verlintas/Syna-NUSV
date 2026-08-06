@@ -61,6 +61,8 @@ composeApp/
 - **Android 14+**：本地网络权限收紧，部分路由器禁用 UDP 广播（多播通道作为备选）
 - **群聊**：无中心节点，离线成员会漏收消息（发送方暂存补发仅覆盖单聊）
 - **消息持久化**：当前为内存存储，重启清空；SQLDelight 持久化在路线图中
+- **单机多实例**：桌面端设置存于用户级 Java 偏好（`Preferences.userRoot`），同一系统账号下多个实例共享同一身份
+- **调试日志**：`[Syna:Engine/Discovery/Send/Outbox/Crypto]` 前缀输出到 stdout / logcat
 
 ## 路线图
 
