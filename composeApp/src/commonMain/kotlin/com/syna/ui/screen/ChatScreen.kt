@@ -54,6 +54,7 @@ fun ChatScreen(
     val messages by engine.chatStore.messages.collectAsState()
     val groups by engine.groups.collectAsState()
     val outbox by engine.outbox.collectAsState()
+    val serverState by engine.serverState.collectAsState()
     val peer = peers.firstOrNull { it.id == peerId }
     val group = groups.firstOrNull { it.id == peerId }
     val isGroup = group != null
@@ -98,7 +99,15 @@ fun ChatScreen(
                 )
                 Text(
                     text = if (isGroup) {
-                        "群聊 · ${group!!.memberIds.size} 名成员 · ${engine.settings.connectionMode.label}"
+                        val server = engine.isServerGroup(groupId = peerId)
+                        buildString {
+                            if (server) append("🖥 ")
+                            append(group!!.name)
+                            append(" · ${group!!.memberIds.size} 名成员 · ${engine.settings.connectionMode.label}")
+                            if (server) {
+                                append(if (serverState == com.syna.net.ServerState.CONNECTED) " · 已连接" else " · 已断开")
+                            }
+                        }
                     } else {
                         val pending = outbox[peerId]?.size ?: 0
                         buildString {

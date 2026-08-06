@@ -1,0 +1,78 @@
+package com.syna.server
+
+import java.nio.file.Path
+import kotlinx.coroutines.runBlocking
+
+fun main(args: Array<String>) {
+    val config = parseArgs(args)
+    println("Syna 私人聊天服务器 v0.2.0 启动中…")
+    val server = SynaServer(
+        port = config.port,
+        password = config.password,
+        groupName = config.groupName,
+        dataDir = Path.of(config.dataDir),
+        historyLimit = config.historyLimit,
+    )
+    runBlocking {
+        server.start()
+        // 保持进程运行
+        while (true) {
+            kotlinx.coroutines.delay(86_400_000L)
+        }
+    }
+}
+
+data class ServerConfig(
+    val port: Int = 45880,
+    val password: String = "syna",
+    val groupName: String = "Syna 私服",
+    val dataDir: String = "./syna-server-data",
+    val historyLimit: Int = 200,
+)
+
+private fun parseArgs(args: Array<String>): ServerConfig {
+    var config = ServerConfig()
+    var i = 0
+    while (i < args.size) {
+        when (args[i]) {
+            "--port", "-p" -> config = config.copy(port = args.getOrNull(i + 1)?.toIntOrNull() ?: config.port)
+            "--password", "-w" -> config = config.copy(password = args.getOrNull(i + 1) ?: config.password)
+            "--group", "-g" -> config = config.copy(groupName = args.getOrNull(i + 1) ?: config.groupName)
+            "--data-dir", "-d" -> config = config.copy(dataDir = args.getOrNull(i + 1) ?: config.dataDir)
+            "--history" -> config = config.copy(historyLimit = args.getOrNull(i + 1)?.toIntOrNull() ?: config.historyLimit)
+            "--help", "-h" -> {
+                printHelp()
+                kotlin.system.exitProcess(0)
+            }
+        }
+        i++
+    }
+    return config
+}
+
+private fun printHelp() {
+    println(
+        """
+        Syna 私人聊天服务器
+
+        用法: java -jar syna-server.jar [选项]
+
+        选项:
+          -p, --port <端口>        监听端口（默认 45880）
+          -w, --password <密码>    连接密码（默认 syna，请务必修改）
+          -g, --group <名称>       群名称（默认 "Syna 私服"）
+          -d, --data-dir <路径>    数据目录（默认 ./syna-server-data，消息持久化于此）
+              --history <条数>     历史消息条数上限（默认 200）
+
+        内网穿透（公网访问）:
+          服务器只需监听端口；用任意外网隧道工具把端口映射到公网即可，
+          客户端输入穿透后的地址:端口 + 密码 加入群聊。
+          frp:    frpc.ini → [synaserver] type=tcp local_port=45880 remote_port=45880
+          ngrok:  ngrok tcp 45880
+          Tailscale: 同一 Tailnet 内直接使用节点 IP:45880
+
+        示例:
+          java -jar syna-server.jar -p 45880 -w MySecret -g "朋友群"
+        """.trimIndent(),
+    )
+}

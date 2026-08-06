@@ -59,6 +59,16 @@ actual object SynaCrypto {
         return SessionKey(material)
     }
 
+    actual fun deriveFromPassword(password: String, salt: String, info: String): SessionKey {
+        val material = hkdfSha256(
+            ikm = password.encodeToByteArray(),
+            salt = salt.encodeToByteArray(),
+            info = info.encodeToByteArray(),
+            length = 32,
+        )
+        return SessionKey(material)
+    }
+
     actual fun encrypt(key: SessionKey, plaintext: String): String {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         val nonce = ByteArray(NONCE_LEN).also { SecureRandom().nextBytes(it) }

@@ -7,6 +7,7 @@ expect object SynaCrypto {
     fun publicKeyB64(identity: IdentityKey): String
     fun parsePublicKey(publicKeyB64: String): PublicKeyBytes
     fun deriveSessionKey(privateBytes: ByteArray, peerPublicKeyB64: String, peerId: String): SessionKey
+    fun deriveFromPassword(password: String, salt: String, info: String = "syna-server-channel"): SessionKey
     fun encrypt(key: SessionKey, plaintext: String): String
     fun decrypt(key: SessionKey, payload: String): String
 }

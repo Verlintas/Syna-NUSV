@@ -67,6 +67,19 @@ class SynaEngine(
 
     val chatStore = ChatStore()
 
+    private val serverStateM = MutableStateFlow(ServerState.DISCONNECTED)
+    val serverState: StateFlow<ServerState> = serverStateM.asStateFlow()
+
+    private val serverErrorM = MutableStateFlow<String?>(null)
+    val serverError: StateFlow<String?> = serverErrorM.asStateFlow()
+
+    private var serverSession: ServerSession? = null
+
+    val serverGroupId: String?
+        get() = serverSession?.groupId
+
+    fun isServerGroup(groupId: String): Boolean = serverSession?.groupId == groupId
+
     private var tcp: ConnectionManager? = null
     private var udp: ConnectionManager? = null
     private var discovery: DiscoveryService? = null
@@ -156,17 +169,32 @@ class SynaEngine(
                     peerKeysM.updateMap { it + (frame.from to key) }
                 }
                 // 收到公钥后回发自己的公钥，节流避免回复风暴
-                val peer = peersM.value.firstOrNull { p -> p.id == frame.from } ?: return event
                 val now = System.currentTimeMillis()
                 val lastSent = peerKeySentM.value[frame.from] ?: 0L
                 if (now - lastSent > 30_000L) {
                     peerKeySentM.updateMap { it + (frame.from to now) }
-                    sendKeyFrame(frame.from, peer.addr)
+                    if (serverSession != null) {
+                        sendServerKeyFrame()
+                    } else {
+                        val peer = peersM.value.firstOrNull { p -> p.id == frame.from } ?: return event
+                        sendKeyFrame(frame.from, peer.addr)
+                    }
                 }
             }
             else -> Unit
         }
         if (frame.enc && frame.type != FrameType.KEY && frame.type != FrameType.HELLO) {
+            // 服务器群消息：使用密码派生的群密钥（所有成员共享），保证历史可解密
+            val serverGroup = serverSession?.takeIf { it.groupId == frame.to }
+            if (serverGroup != null) {
+                return try {
+                    val plain = SynaCrypto.decrypt(serverGroup.groupKey, frame.body ?: "")
+                    event.copyWith(frame.copy(body = plain))
+                } catch (e: Exception) {
+                    synaLog("Crypto") { "group decrypt FAILED from=${frame.from.take(6)}: ${e.message}" }
+                    event
+                }
+            }
             val peerKey = peerKeysM.value[frame.from]
             if (peerKey != null) {
                 return try {
@@ -319,7 +347,6 @@ class SynaEngine(
     }
 
     private suspend fun sendBurnAck(senderId: String, msgId: String) {
-        val peer = peersM.value.firstOrNull { it.id == senderId } ?: return
         val frame = TransportFrame(
             type = FrameType.BURN_ACK,
             from = userId,
@@ -329,7 +356,12 @@ class SynaEngine(
             body = msgId,
         )
         try {
-            send(peer, frame)
+            if (serverSession != null) {
+                serverSession?.channel?.send(frame)
+            } else {
+                val peer = peersM.value.firstOrNull { it.id == senderId } ?: return
+                send(peer, frame)
+            }
         } catch (e: Exception) {
         }
     }
@@ -375,8 +407,48 @@ class SynaEngine(
     suspend fun sendGroupText(groupId: String, text: String, burn: Boolean = false): String {
         val group = groupsM.value.firstOrNull { it.id == groupId } ?: return ""
         val msgId = newMsgId()
+        val serverSession = serverSession
+        if (serverSession != null && serverSession.groupId == groupId) {
+            // 服务器群：单帧发送，密码派生群密钥加密，服务器中继并持久化
+            val frame = TransportFrame(
+                type = FrameType.GROUP_MESSAGE,
+                from = userId,
+                to = groupId,
+                msgId = msgId,
+                ts = System.currentTimeMillis(),
+                body = if (settings.e2eEnabled) {
+                    SynaCrypto.encrypt(serverSession.groupKey, text)
+                } else text,
+                enc = settings.e2eEnabled,
+                burn = burn,
+            )
+            try {
+                serverSession.channel.send(frame)
+            } catch (e: Exception) {
+                synaLog("Server") { "group send failed: ${e.message}" }
+            }
+            chatStore.addOutgoing(
+                peerId = groupId,
+                peerName = group.name,
+                msg = ChatMessage(
+                    id = msgId,
+                    conversationId = groupId,
+                    senderId = userId,
+                    body = text,
+                    ts = System.currentTimeMillis(),
+                    status = MessageStatus.SENT,
+                    burnAfterReading = burn,
+                    encrypted = settings.e2eEnabled,
+                ),
+            )
+            if (burn) {
+                scheduleBurnPurge(groupId, msgId, ackTo = null, deliverAck = false, delayMs = BURN_ACK_FALLBACK_MS)
+            }
+            return msgId
+        }
+
+        // 局域网 P2P 群：按成员直连加密广播
         group.memberIds.filter { it != userId }.forEach { memberId ->
-            val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
             val peerKey = peerKeysM.value[memberId]
             val encrypted = settings.e2eEnabled && peerKey != null
             val frame = TransportFrame(
@@ -392,8 +464,10 @@ class SynaEngine(
                 burn = burn,
             )
             try {
+                val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
                 send(peer, frame)
             } catch (e: Exception) {
+                synaLog("Server") { "group send failed to $memberId: ${e.message}" }
             }
         }
         chatStore.addOutgoing(
@@ -414,6 +488,115 @@ class SynaEngine(
             scheduleBurnPurge(groupId, msgId, ackTo = null, deliverAck = false, delayMs = BURN_ACK_FALLBACK_MS)
         }
         return msgId
+    }
+
+    /** 通过 IP:端口 + 密码加入私人服务器群聊 */
+    suspend fun joinServer(host: String, port: Int, password: String): Result<String> {
+        if (serverStateM.value == ServerState.CONNECTING) return Result.failure(IllegalStateException("正在连接中"))
+        leaveServer()
+        serverStateM.value = ServerState.CONNECTING
+        serverErrorM.value = null
+        synaLog("Server") { "joining $host:$port" }
+        return try {
+            val result = createServerChannel().connect(
+                host = host,
+                port = port,
+                password = password,
+                userId = userId,
+                username = username,
+                publicKeyB64 = publicKeyB64,
+                scope = scope,
+            )
+            // 注册服务器群
+            val group = GroupInfo(
+                id = result.groupId,
+                name = result.groupName,
+                creatorId = result.serverId,
+                memberIds = listOf(userId) + result.members.filter { it.id != userId }.map { it.id },
+                memberNames = mapOf(userId to username) + result.members.associate { it.id to it.name },
+                ts = System.currentTimeMillis(),
+            )
+            addOrMergeGroup(group)
+            result.members.filter { it.id != userId && it.publicKeyB64 != null }.forEach { member ->
+                peerKeysM.updateMap { it + (member.id to member.publicKeyB64!!) }
+            }
+
+            val groupKey = SynaCrypto.deriveFromPassword(password, result.groupId, SERVER_GROUP_INFO)
+            serverSession = ServerSession(result.groupId, result.serverId, host, port, result.channel, groupKey)
+
+            // 把自己的公钥发给服务器（中继给全体成员）
+            sendServerKeyFrame()
+            // 回放历史（成员密钥帧与群消息，逐条进入解密/聊天管线）
+            result.history.forEach { frame -> routeServerFrame(frame) }
+            // 启动持续读取
+            scope.launch {
+                result.channel.incoming.collect { frame -> routeServerFrame(frame) }
+            }
+            // 断线检测
+            scope.launch {
+                while (result.channel.isOpen()) {
+                    delay(2_000)
+                }
+                if (serverSession?.channel === result.channel) {
+                    serverSession = null
+                    serverStateM.value = ServerState.DISCONNECTED
+                    synaLog("Server") { "连接断开 $host:$port" }
+                }
+            }
+
+            serverStateM.value = ServerState.CONNECTED
+            synaLog("Server") { "joined $host:$port group=${result.groupName}" }
+            Result.success(result.groupId)
+        } catch (e: Exception) {
+            serverSession = null
+            serverStateM.value = ServerState.ERROR
+            serverErrorM.value = e.message ?: "连接失败"
+            synaLog("Server") { "join FAILED: ${e.message}" }
+            Result.failure(e)
+        }
+    }
+
+    fun leaveServer() {
+        val session = serverSession ?: return
+        scope.launch {
+            try {
+                session.channel.send(
+                    TransportFrame(
+                        type = FrameType.SRV_LEAVE,
+                        from = userId,
+                        to = session.groupId,
+                        msgId = newMsgId(),
+                        ts = System.currentTimeMillis(),
+                    ),
+                )
+            } catch (e: Exception) {
+            }
+            session.channel.close()
+        }
+        serverSession = null
+        serverStateM.value = ServerState.DISCONNECTED
+    }
+
+    private suspend fun routeServerFrame(frame: TransportFrame) {
+        if (frame.from == userId) return
+        rawIncomingM.emitRaw(IncomingEvent.PeerFrame(frame.from, frame))
+        incomingM.emit(decryptEvent(IncomingEvent.PeerFrame(frame.from, frame)))
+    }
+
+    private suspend fun sendServerKeyFrame() {
+        val session = serverSession ?: return
+        val frame = TransportFrame(
+            type = FrameType.KEY,
+            from = userId,
+            to = session.groupId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = publicKeyB64,
+        )
+        try {
+            session.channel.send(frame)
+        } catch (e: Exception) {
+        }
     }
 
     private suspend fun sendGroupEvent(memberId: String, type: FrameType, event: GroupMemberEvent) {

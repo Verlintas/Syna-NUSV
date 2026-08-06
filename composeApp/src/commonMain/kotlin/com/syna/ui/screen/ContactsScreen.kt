@@ -34,6 +34,7 @@ fun ContactsScreen(
     engine: SynaEngine,
     onOpenChat: (String) -> Unit,
     onCreateGroup: () -> Unit,
+    onJoinServer: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val peers by engine.peers.collectAsState()
@@ -50,6 +51,10 @@ fun ContactsScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f),
             )
+            OutlinedButton(onClick = onJoinServer) {
+                Text("加入服务器")
+            }
+            Spacer(Modifier.size(8.dp))
             OutlinedButton(onClick = onCreateGroup) {
                 Text("发起群聊")
             }

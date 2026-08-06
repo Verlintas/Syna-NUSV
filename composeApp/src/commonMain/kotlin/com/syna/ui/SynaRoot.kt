@@ -24,6 +24,7 @@ import com.syna.ui.screen.ChatScreen
 import com.syna.ui.screen.ChatsScreen
 import com.syna.ui.screen.ContactsScreen
 import com.syna.ui.screen.CreateGroupScreen
+import com.syna.ui.screen.ServerJoinScreen
 import com.syna.ui.screen.SettingsScreen
 import com.syna.ui.theme.ThemeMode
 
@@ -50,6 +51,7 @@ fun SynaRoot(
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var chatPeerId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingGroup by rememberSaveable { mutableStateOf(false) }
+    var joiningServer by rememberSaveable { mutableStateOf(false) }
     val tabs = remember {
         listOf(
             Tab("会话") { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
@@ -80,6 +82,18 @@ fun SynaRoot(
         return
     }
 
+    if (joiningServer) {
+        ServerJoinScreen(
+            engine = engine,
+            onBack = { joiningServer = false },
+            onJoined = { groupId ->
+                joiningServer = false
+                chatPeerId = groupId
+            },
+        )
+        return
+    }
+
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -100,6 +114,7 @@ fun SynaRoot(
                 engine = engine,
                 onOpenChat = { chatPeerId = it },
                 onCreateGroup = { creatingGroup = true },
+                onJoinServer = { joiningServer = true },
                 modifier = Modifier.padding(padding),
             )
             else -> SettingsScreen(

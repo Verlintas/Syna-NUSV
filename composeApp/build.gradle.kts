@@ -116,3 +116,29 @@ compose.desktop {
         }
     }
 }
+
+// ===== Syna Server（无头服务器，Win/macOS/Linux 通用，与 GUI 共用同一 JVM 编译）=====
+val serverFatJar by tasks.registering(Jar::class) {
+    group = "server"
+    description = "打包 Syna 服务器为可执行 fat jar"
+    archiveFileName.set("syna-server.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("server"))
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes["Main-Class"] = "com.syna.server.ServerMainKt"
+        attributes["Implementation-Version"] = "0.2.0"
+    }
+    from(kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs)
+    from(configurations.getByName("desktopRuntimeClasspath").map { file ->
+        if (file.isDirectory) file else zipTree(file)
+    }) {
+        exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/versions/**/module-info.class")
+    }
+}
+
+val runServer by tasks.registering(JavaExec::class) {
+    group = "server"
+    description = "本地运行 Syna 服务器"
+    classpath = kotlin.targets.getByName("desktop").compilations.getByName("main").runtimeDependencyFiles
+    mainClass.set("com.syna.server.ServerMainKt")
+}

@@ -13,6 +13,8 @@ const val SWEEP_INTERVAL_MS = 5_000L
 const val TCP_HEARTBEAT_MS = 10_000L
 const val BURN_DISPLAY_MS = 8_000L
 const val BURN_ACK_FALLBACK_MS = 60_000L
+const val SERVER_CHANNEL_INFO = "syna-server-channel"
+const val SERVER_GROUP_INFO = "syna-server-group"
 
 val synaJson: Json = Json {
     ignoreUnknownKeys = true
@@ -39,6 +41,10 @@ enum class FrameType {
     GROUP_LEAVE,
     GROUP_MESSAGE,
     EPHEMERAL_SESSION,
+    SRV_HELLO,
+    SRV_AUTH,
+    SRV_AUTH_OK,
+    SRV_LEAVE,
 }
 
 @Serializable
@@ -87,4 +93,35 @@ data class GroupMemberEvent(
     val groupId: String,
     val memberId: String,
     val memberName: String,
+)
+
+@Serializable
+data class ServerHello(
+    val serverId: String,
+    val salt: String,
+    val version: String,
+    val groupName: String,
+)
+
+@Serializable
+data class ServerAuth(
+    val userId: String,
+    val username: String,
+    val publicKeyB64: String,
+    val password: String,
+)
+
+@Serializable
+data class ServerMember(
+    val id: String,
+    val name: String,
+    val publicKeyB64: String? = null,
+)
+
+@Serializable
+data class ServerAuthOk(
+    val groupId: String,
+    val groupName: String,
+    val members: List<ServerMember>,
+    val history: List<TransportFrame> = emptyList(),
 )
