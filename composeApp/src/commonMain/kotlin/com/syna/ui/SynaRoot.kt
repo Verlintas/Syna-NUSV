@@ -37,11 +37,15 @@ fun SynaRoot(
     themeMode: ThemeMode,
     burnAfterReading: Boolean,
     e2eEnabled: Boolean,
+    tempChatEnabled: Boolean,
+    tempChatTtlHours: Int,
     onUsernameChange: (String) -> Unit,
     onConnectionModeChange: (ConnectionMode) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
     onBurnAfterReadingChange: (Boolean) -> Unit,
     onE2eEnabledChange: (Boolean) -> Unit,
+    onTempChatEnabledChange: (Boolean) -> Unit,
+    onTempChatTtlChange: (Int) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var chatPeerId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -105,11 +109,15 @@ fun SynaRoot(
                 themeMode = themeMode,
                 burnAfterReading = burnAfterReading,
                 e2eEnabled = e2eEnabled,
+                tempChatEnabled = tempChatEnabled,
+                tempChatTtlHours = tempChatTtlHours,
                 onUsernameChange = onUsernameChange,
                 onConnectionModeChange = onConnectionModeChange,
                 onThemeModeChange = onThemeModeChange,
                 onBurnAfterReadingChange = onBurnAfterReadingChange,
                 onE2eEnabledChange = onE2eEnabledChange,
+                onTempChatEnabledChange = onTempChatEnabledChange,
+                onTempChatTtlChange = onTempChatTtlChange,
             )
         }
     }

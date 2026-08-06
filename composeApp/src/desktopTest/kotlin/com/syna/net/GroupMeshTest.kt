@@ -90,8 +90,8 @@ class GroupMeshTest {
             assertEquals(3, groupB?.memberIds?.size)
 
             // A 发送群消息，B 和 C 都应收到并成功解密
-            b.chatStore.activeConversationId = groupId
-            c.chatStore.activeConversationId = groupId
+            b.chatStore.activeConversationId.value = groupId
+            c.chatStore.activeConversationId.value = groupId
             a.sendGroupText(groupId, "大家好，我是群主 Alice")
 
             val msgDeadline = System.currentTimeMillis() + 10_000

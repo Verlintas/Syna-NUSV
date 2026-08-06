@@ -34,7 +34,11 @@ fun SettingsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     onBurnAfterReadingChange: (Boolean) -> Unit,
     onE2eEnabledChange: (Boolean) -> Unit,
+    onTempChatEnabledChange: (Boolean) -> Unit,
+    onTempChatTtlChange: (Int) -> Unit,
     e2eEnabled: Boolean,
+    tempChatEnabled: Boolean,
+    tempChatTtlHours: Int,
 ) {
     Column(
         modifier = modifier
@@ -133,7 +137,49 @@ fun SettingsScreen(
             Switch(checked = e2eEnabled, onCheckedChange = onE2eEnabledChange)
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
-        Text("临时聊天将在后续版本启用", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onTempChatEnabledChange(!tempChatEnabled) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("临时聊天", style = MaterialTheme.typography.bodyLarge)
+                Text("会话在无活动 TTL 后自动清除，双方记录同时销毁", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = tempChatEnabled, onCheckedChange = onTempChatEnabledChange)
+        }
+        if (tempChatEnabled) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("清除周期", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(end = 8.dp))
+                listOf(1, 24, 168).forEach { hours ->
+                    Text(
+                        text = if (tempChatTtlHours == hours) "● " else "○ ",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (tempChatTtlHours == hours) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = when (hours) {
+                            1 -> "1小时"
+                            24 -> "24小时"
+                            else -> "7天"
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .clickable { onTempChatTtlChange(hours) }
+                            .padding(end = 14.dp),
+                    )
+                }
+            }
+        }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Text("临时聊天关闭时，会话记录将保留在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
     }
 }

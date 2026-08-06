@@ -38,16 +38,16 @@ class ChatStore {
     private val conversationsM = MutableStateFlow<List<Conversation>>(emptyList())
     val conversations: StateFlow<List<Conversation>> = conversationsM.asStateFlow()
 
-    var activeConversationId: String? = null
+    val activeConversationId = MutableStateFlow<String?>(null)
 
-    fun addIncoming(peerId: String, peerName: String, msg: ChatMessage) {
+    fun addIncoming(peerId: String, peerName: String, msg: ChatMessage, preview: String = msg.body) {
         messagesM.updateMap { it + (peerId to (it[peerId] ?: emptyList()) + msg) }
         upsertConversation(
             peerId = peerId,
             peerName = peerName,
-            lastMessage = msg.body,
+            lastMessage = preview,
             lastTs = msg.ts,
-            unreadDelta = if (activeConversationId == peerId) 0 else 1,
+            unreadDelta = if (activeConversationId.value == peerId) 0 else 1,
         )
     }
 
@@ -67,6 +67,79 @@ class ChatStore {
             map.mapValues { (_, list) ->
                 list.map { if (it.id == msgId) it.copy(status = status) else it }
             }
+        }
+    }
+
+    fun removeMessageById(msgId: String) {
+        val map = messagesM.value
+        var removedFrom: String? = null
+        val newMap = map.mapValues { (conversationId, list) ->
+            if (list.any { it.id == msgId }) {
+                removedFrom = conversationId
+                list.filterNot { it.id == msgId }
+            } else list
+        }
+        messagesM.value = newMap
+        val conversationId = removedFrom ?: return
+        val remaining = newMap[conversationId]
+        if (remaining.isNullOrEmpty()) {
+            conversationsM.updateList { it.filterNot { c -> c.peerId == conversationId } }
+        } else {
+            refreshPreview(conversationId, remaining)
+        }
+    }
+
+    private fun refreshPreview(conversationId: String, remaining: List<ChatMessage>) {
+        val last = remaining.lastOrNull()
+        conversationsM.updateList { list ->
+            list.map { conv ->
+                if (conv.peerId == conversationId) {
+                    conv.copy(
+                        lastMessage = if (last == null) "" else if (last.burnAfterReading) "🔥 阅后即焚消息" else last.body,
+                        lastTs = last?.ts ?: conv.lastTs,
+                    )
+                } else conv
+            }
+        }
+    }
+
+    fun removeMessage(conversationId: String, msgId: String) {
+        messagesM.updateMap { map ->
+            val list = map[conversationId] ?: return@updateMap map
+            val updated = list.filterNot { it.id == msgId }
+            if (updated.isEmpty()) {
+                map - conversationId
+            } else {
+                map + (conversationId to updated)
+            }
+        }
+        // 若移除的是最后一条，刷新会话预览
+        val remaining = messagesM.value[conversationId]
+        conversationsM.updateList { list ->
+            list.map { conv ->
+                if (conv.peerId == conversationId) {
+                    val last = remaining?.lastOrNull()
+                    if (last == null) {
+                        conv.copy(lastMessage = "", lastTs = conv.lastTs)
+                    } else {
+                        conv.copy(
+                            lastMessage = if (last.burnAfterReading) "🔥 阅后即焚消息" else last.body,
+                            lastTs = last.ts,
+                        )
+                    }
+                } else conv
+            }
+        }
+    }
+
+    fun removeConversation(conversationId: String) {
+        messagesM.updateMap { it - conversationId }
+        conversationsM.updateList { list -> list.filterNot { it.peerId == conversationId } }
+    }
+
+    fun purgeExpired(ttlMs: Long, now: Long = System.currentTimeMillis()) {
+        conversationsM.value.filter { now - it.lastTs > ttlMs }.forEach { conv ->
+            removeConversation(conv.peerId)
         }
     }
 

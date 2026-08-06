@@ -42,6 +42,18 @@ class SettingsRepository(private val settings: Settings = Settings()) {
             settings.putBoolean(KEY_BURN_ENABLED, value)
         }
 
+    var tempChatEnabled: Boolean
+        get() = settings.getBoolean(KEY_TEMP_CHAT_ENABLED, false)
+        set(value) {
+            settings.putBoolean(KEY_TEMP_CHAT_ENABLED, value)
+        }
+
+    var tempChatTtlHours: Int
+        get() = settings.getInt(KEY_TEMP_CHAT_TTL_HOURS, 24)
+        set(value) {
+            settings.putInt(KEY_TEMP_CHAT_TTL_HOURS, value)
+        }
+
     private companion object {
         const val KEY_USER_ID = "user_id"
         const val KEY_USERNAME = "username"
@@ -49,5 +61,7 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_E2E_ENABLED = "e2e_enabled"
         const val KEY_BURN_ENABLED = "burn_after_reading"
+        const val KEY_TEMP_CHAT_ENABLED = "temp_chat_enabled"
+        const val KEY_TEMP_CHAT_TTL_HOURS = "temp_chat_ttl_hours"
     }
 }

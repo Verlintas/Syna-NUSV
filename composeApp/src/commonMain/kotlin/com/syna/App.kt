@@ -31,6 +31,8 @@ fun App() {
     var username by remember { mutableStateOf(settings.username) }
     var e2eEnabled by remember { mutableStateOf(settings.e2eEnabled) }
     var burnAfterReading by remember { mutableStateOf(settings.burnAfterReadingEnabled) }
+    var tempChatEnabled by remember { mutableStateOf(settings.tempChatEnabled) }
+    var tempChatTtlHours by remember { mutableStateOf(settings.tempChatTtlHours) }
 
     SynaTheme(themeMode = themeMode) {
         SynaRoot(
@@ -40,6 +42,8 @@ fun App() {
             themeMode = themeMode,
             burnAfterReading = burnAfterReading,
             e2eEnabled = e2eEnabled,
+            tempChatEnabled = tempChatEnabled,
+            tempChatTtlHours = tempChatTtlHours,
             onUsernameChange = {
                 username = it
                 settings.username = it
@@ -60,6 +64,14 @@ fun App() {
             onE2eEnabledChange = {
                 e2eEnabled = it
                 settings.e2eEnabled = it
+            },
+            onTempChatEnabledChange = {
+                tempChatEnabled = it
+                settings.tempChatEnabled = it
+            },
+            onTempChatTtlChange = {
+                tempChatTtlHours = it
+                settings.tempChatTtlHours = it
             },
         )
     }

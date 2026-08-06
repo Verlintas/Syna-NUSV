@@ -68,7 +68,7 @@ class EngineLoopbackTest {
             assertTrue(b.peerKeys.value[aliceInB.id] != null, "B 应已持有 A 的公钥")
 
             // 打开 B 端会话，使已读回执生效
-            b.chatStore.activeConversationId = aliceInB.id
+            b.chatStore.activeConversationId.value = aliceInB.id
 
             // 密钥就绪后发送的消息应为端到端加密
             a.sendText(bobInA.id, "加密的机密消息")

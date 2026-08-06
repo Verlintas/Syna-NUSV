@@ -62,11 +62,11 @@ fun ChatScreen(
     var burn by remember { mutableStateOf(engine.settings.burnAfterReadingEnabled) }
 
     DisposableEffect(peerId) {
-        engine.chatStore.activeConversationId = peerId
+        engine.chatStore.activeConversationId.value = peerId
         engine.chatStore.markAllRead(peerId)
         onDispose {
-            if (engine.chatStore.activeConversationId == peerId) {
-                engine.chatStore.activeConversationId = null
+            if (engine.chatStore.activeConversationId.value == peerId) {
+                engine.chatStore.activeConversationId.value = null
             }
         }
     }

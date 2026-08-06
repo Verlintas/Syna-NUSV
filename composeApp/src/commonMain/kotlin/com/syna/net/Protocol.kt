@@ -11,6 +11,8 @@ const val DISCOVERY_INTERVAL_MS = 3_000L
 const val PEER_TIMEOUT_MS = 15_000L
 const val SWEEP_INTERVAL_MS = 5_000L
 const val TCP_HEARTBEAT_MS = 10_000L
+const val BURN_DISPLAY_MS = 8_000L
+const val BURN_ACK_FALLBACK_MS = 60_000L
 
 val synaJson: Json = Json {
     ignoreUnknownKeys = true

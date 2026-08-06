@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -26,6 +27,7 @@ class SynaEngine(
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
+    private val tempChatTtlMsOverride: Long? = null,
 ) {
     val userId: String = settings.userId
         .ifEmpty { Uuid.random().toString().also { settings.userId = it } }
@@ -56,6 +58,8 @@ class SynaEngine(
 
     private val groupsM = MutableStateFlow<List<GroupInfo>>(emptyList())
     val groups: StateFlow<List<GroupInfo>> = groupsM.asStateFlow()
+
+    private val pendingBurnsM = MutableStateFlow<List<Triple<String, String, String>>>(emptyList())
 
     val chatStore = ChatStore()
 
@@ -120,6 +124,11 @@ class SynaEngine(
                 list.forEach { peer -> chatStore.renamePeer(peer.id, peer.username) }
             }
         }
+        scope.launch {
+            chatStore.activeConversationId.collect { conversationId ->
+                conversationId?.let { trySchedulePendingBurns(it) }
+            }
+        }
     }
 
     private suspend fun MutableSharedFlow<TransportFrame>.emitRaw(event: IncomingEvent) {
@@ -181,8 +190,13 @@ class SynaEngine(
                         burnAfterReading = frame.burn,
                         encrypted = frame.enc,
                     ),
+                    preview = if (frame.burn) "🔥 阅后即焚消息" else frame.body ?: "",
                 )
-                if (chatStore.activeConversationId == frame.from) {
+                if (frame.burn) {
+                    pendingBurnsM.updateList { it + Triple(frame.from, frame.msgId, frame.from) }
+                    trySchedulePendingBurns(frame.from)
+                }
+                if (chatStore.activeConversationId.value == frame.from) {
                     chatStore.markAllRead(frame.from)
                     sendReceipt(frame.from, frame.msgId)
                 }
@@ -205,8 +219,13 @@ class SynaEngine(
                             burnAfterReading = frame.burn,
                             encrypted = frame.enc,
                         ),
+                        preview = if (frame.burn) "🔥 阅后即焚消息" else frame.body ?: "",
                     )
-                    if (chatStore.activeConversationId == groupId) {
+                    if (frame.burn) {
+                        pendingBurnsM.updateList { it + Triple(groupId, frame.msgId, frame.from) }
+                        trySchedulePendingBurns(groupId)
+                    }
+                    if (chatStore.activeConversationId.value == groupId) {
                         chatStore.markAllRead(groupId)
                     }
                 }
@@ -258,7 +277,50 @@ class SynaEngine(
                 }
             }
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
+            FrameType.BURN_ACK -> frame.body?.let { msgId -> chatStore.removeMessageById(msgId) }
             else -> Unit
+        }
+    }
+
+    private fun trySchedulePendingBurns(conversationId: String) {
+        if (chatStore.activeConversationId.value != conversationId) return
+        val pending = pendingBurnsM.value.filter { it.first == conversationId }
+        if (pending.isEmpty()) return
+        pendingBurnsM.updateList { list -> list.filterNot { it.first == conversationId } }
+        pending.forEach { (conversation, msgId, senderId) ->
+            scheduleBurnPurge(conversation, msgId, senderId, deliverAck = true)
+        }
+    }
+
+    private fun scheduleBurnPurge(
+        conversationId: String,
+        msgId: String,
+        ackTo: String?,
+        deliverAck: Boolean,
+        delayMs: Long = BURN_DISPLAY_MS,
+    ) {
+        scope.launch {
+            delay(delayMs)
+            chatStore.removeMessage(conversationId, msgId)
+            if (deliverAck && ackTo != null) {
+                sendBurnAck(ackTo, msgId)
+            }
+        }
+    }
+
+    private suspend fun sendBurnAck(senderId: String, msgId: String) {
+        val peer = peersM.value.firstOrNull { it.id == senderId } ?: return
+        val frame = TransportFrame(
+            type = FrameType.BURN_ACK,
+            from = userId,
+            to = senderId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = msgId,
+        )
+        try {
+            send(peer, frame)
+        } catch (e: Exception) {
         }
     }
 
@@ -338,6 +400,9 @@ class SynaEngine(
                 encrypted = settings.e2eEnabled,
             ),
         )
+        if (burn) {
+            scheduleBurnPurge(groupId, msgId, ackTo = null, deliverAck = false, delayMs = BURN_ACK_FALLBACK_MS)
+        }
         return msgId
     }
 
@@ -417,6 +482,12 @@ class SynaEngine(
                 } else peer
             }
         }
+        val effectiveTtl = tempChatTtlMsOverride ?: if (settings.tempChatEnabled) {
+            settings.tempChatTtlHours * 3600_000L
+        } else 0L
+        if (effectiveTtl > 0L) {
+            chatStore.purgeExpired(effectiveTtl, now)
+        }
     }
 
     fun refreshUsername() {
@@ -479,6 +550,9 @@ class SynaEngine(
             chatStore.updateStatus(msgId, MessageStatus.SENT)
         } catch (e: Exception) {
             chatStore.updateStatus(msgId, MessageStatus.FAILED)
+        }
+        if (burn) {
+            scheduleBurnPurge(peerId, msgId, ackTo = null, deliverAck = false, delayMs = BURN_ACK_FALLBACK_MS)
         }
         return msgId
     }
