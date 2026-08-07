@@ -76,6 +76,11 @@ class SynaEngine(
     private val blockedM = MutableStateFlow(settings.blockedPeerIds)
     val blockedContacts: StateFlow<List<String>> = blockedM.asStateFlow()
 
+    private val typingM = MutableStateFlow<Map<String, Pair<Long, String>>>(emptyMap())
+    val typing: StateFlow<Map<String, Pair<Long, String>>> = typingM.asStateFlow()
+
+    private val typingSentM = MutableStateFlow<Map<String, Long>>(emptyMap())
+
     private var serverSession: ServerSession? = null
 
     val serverGroupId: String?
@@ -326,6 +331,11 @@ class SynaEngine(
                 removeGroupLocally(event.groupId)
                 synaLog("Group") { "群已解散: ${event.groupId.take(8)}" }
             }
+            FrameType.TYPING -> {
+                val conversationId = if (groupsM.value.any { it.id == frame.to }) frame.to else frame.from
+                typingM.updateMap { it + (conversationId to (System.currentTimeMillis() to frame.from)) }
+            }
+            FrameType.RECALL -> frame.body?.let { msgId -> chatStore.markRecalledByMsgId(msgId) }
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
             FrameType.BURN_ACK -> frame.body?.let { msgId -> chatStore.removeMessageById(msgId) }
             else -> Unit
@@ -762,6 +772,56 @@ class SynaEngine(
         } else 0L
         if (effectiveTtl > 0L) {
             chatStore.purgeExpired(effectiveTtl, now)
+        }
+        // 清理超时的"正在输入"状态（3 秒无更新视为停止输入）
+        typingM.updateMap { map ->
+            map.filterValues { (ts, _) -> now - ts < 3_000L }
+        }
+    }
+
+    /** 发送"正在输入"信号（2 秒节流），支持单聊/群聊/服务器群 */
+    fun sendTyping(conversationId: String) {
+        val now = System.currentTimeMillis()
+        val lastSent = typingSentM.value[conversationId] ?: 0L
+        if (now - lastSent < 2_000L) return
+        typingSentM.updateMap { it + (conversationId to now) }
+        val frame = TransportFrame(
+            type = FrameType.TYPING,
+            from = userId,
+            to = conversationId,
+            msgId = newMsgId(),
+            ts = now,
+        )
+        val serverSession = serverSession
+        if (serverSession != null && serverSession.groupId == conversationId) {
+            scope.launch {
+                try {
+                    serverSession.channel.send(frame)
+                } catch (e: Exception) {
+                }
+            }
+            return
+        }
+        val peer = peersM.value.firstOrNull { it.id == conversationId }
+        if (peer != null) {
+            scope.launch {
+                try {
+                    send(peer, frame)
+                } catch (e: Exception) {
+                }
+            }
+            return
+        }
+        // 局域网群：发给每个在线成员
+        val group = groupsM.value.firstOrNull { it.id == conversationId } ?: return
+        scope.launch {
+            group.memberIds.filter { it != userId }.forEach { memberId ->
+                val p = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
+                try {
+                    send(p, frame)
+                } catch (e: Exception) {
+                }
+            }
         }
     }
 

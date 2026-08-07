@@ -119,7 +119,7 @@ class SynaServer(
             val input = DataInputStream(socket.getInputStream())
             val output = DataOutputStream(socket.getOutputStream())
             session = ClientSession(socket, input, output)
-            sessions.add(session)
+            synchronized(sessions) { sessions.add(session) }
 
             // 1. 明文 SRV_HELLO（携带 salt，客户端据此派生通道密钥）；发送完成后再启用加密
             val salt = randomSalt()
@@ -198,7 +198,7 @@ class SynaServer(
         } catch (e: Exception) {
             // 连接中断
         } finally {
-            sessions.remove(session)
+            synchronized(sessions) { sessions.remove(session) }
             session?.close()
             session?.userId?.let { uid ->
                 log("[SynaServer] 成员离开: $uid")
@@ -244,8 +244,21 @@ class SynaServer(
                 frame.body?.let { msgId -> purgeMessage(msgId) }
                 broadcast(frame, except = session)
             }
+            FrameType.RECALL -> {
+                // 撤回帧也持久化，保证后加入者回放历史时能看到撤回标记
+                synchronized(messages) {
+                    if (messages.none { it.msgId == frame.msgId }) {
+                        messages.add(frame)
+                        if (messages.size > historyLimit) messages.removeAt(0)
+                        publishMessageCount()
+                    }
+                }
+                rewriteHistory()
+                broadcast(frame, except = session)
+            }
             FrameType.GROUP_MESSAGE, FrameType.KEY, FrameType.TEXT, FrameType.READ,
             FrameType.GROUP_JOIN, FrameType.GROUP_LEAVE, FrameType.EPHEMERAL_SESSION,
+            FrameType.TYPING, FrameType.FILE_CHUNK, FrameType.ANNOUNCEMENT,
             -> {
                 if (frame.type == FrameType.KEY) {
                     memberMap[frame.from]?.let {
@@ -262,21 +275,25 @@ class SynaServer(
     }
 
     private fun persistMessage(frame: TransportFrame) {
-        if (messages.any { it.msgId == frame.msgId }) return
-        messages.add(frame)
-        if (messages.size > historyLimit) {
-            messages.removeAt(0)
+        synchronized(messages) {
+            if (messages.any { it.msgId == frame.msgId }) return
+            messages.add(frame)
+            if (messages.size > historyLimit) {
+                messages.removeAt(0)
+            }
+            publishMessageCount()
         }
-        publishMessageCount()
         rewriteHistory()
     }
 
     private fun purgeMessage(msgId: String) {
-        if (messages.removeAll { it.msgId == msgId }) {
-            publishMessageCount()
-            rewriteHistory()
-            log("[SynaServer] 阅后即焚清除: ${msgId.take(8)}")
+        synchronized(messages) {
+            if (messages.removeAll { it.msgId == msgId }) {
+                publishMessageCount()
+            }
         }
+        rewriteHistory()
+        log("[SynaServer] 阅后即焚清除: ${msgId.take(8)}")
     }
 
     private fun rewriteHistory() {
@@ -295,7 +312,7 @@ class SynaServer(
             if (!Files.exists(historyFile)) return
             Files.readAllLines(historyFile).forEach { line ->
                 try {
-                    messages.add(synaJson.decodeFromString(TransportFrame.serializer(), line))
+                    synchronized(messages) { messages.add(synaJson.decodeFromString(TransportFrame.serializer(), line)) }
                 } catch (e: Exception) {
                 }
             }
@@ -307,7 +324,10 @@ class SynaServer(
     }
 
     private suspend fun broadcast(frame: TransportFrame, except: ClientSession?) {
-        sessions.filter { it !== except && it.isOpen() }.forEach { session ->
+        val targets = synchronized(sessions) {
+            sessions.filter { it !== except && it.isOpen() }
+        }
+        targets.forEach { session ->
             try {
                 session.sendRaw(frame)
             } catch (e: Exception) {

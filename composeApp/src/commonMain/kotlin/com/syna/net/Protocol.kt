@@ -40,8 +40,11 @@ enum class FrameType {
     GROUP_JOIN,
     GROUP_LEAVE,
     GROUP_DISSOLVE,
+    GROUP_KICK,
     GROUP_MESSAGE,
     EPHEMERAL_SESSION,
+    RECALL,
+    ANNOUNCEMENT,
     SRV_HELLO,
     SRV_AUTH,
     SRV_AUTH_OK,
@@ -67,6 +70,26 @@ data class TransportFrame(
     val body: String? = null,
     val enc: Boolean = false,
     val burn: Boolean = false,
+    val replyTo: String? = null,
+)
+
+@Serializable
+data class FileChunk(
+    val fileId: String,
+    val fileName: String,
+    val fileSize: Long,
+    val mimeType: String,
+    val totalChunks: Int,
+    val index: Int,
+    val dataB64: String,
+)
+
+@Serializable
+data class Announcement(
+    val groupId: String,
+    val text: String,
+    val ts: Long,
+    val by: String,
 )
 
 fun DiscoveryAnnouncement.encode(): ByteArray = synaJson.encodeToString(this).encodeToByteArray()

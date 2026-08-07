@@ -55,6 +55,7 @@ fun ChatScreen(
     val groups by engine.groups.collectAsState()
     val outbox by engine.outbox.collectAsState()
     val serverState by engine.serverState.collectAsState()
+    val typing by engine.typing.collectAsState()
     val peer = peers.firstOrNull { it.id == peerId }
     val group = groups.firstOrNull { it.id == peerId }
     val isGroup = group != null
@@ -119,6 +120,14 @@ fun ChatScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                val typingInfo = typingSubtitle(engine, peerId, isGroup, group, peer, typing)
+                if (typingInfo != null) {
+                    Text(
+                        text = typingInfo,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
             // 群管理：群主可解散，成员可退出（服务器群除外）
             if (isGroup && !engine.isServerGroup(peerId)) {
@@ -200,7 +209,10 @@ fun ChatScreen(
             Spacer(Modifier.size(6.dp))
             OutlinedTextField(
                 value = input,
-                onValueChange = { input = it },
+                onValueChange = {
+                    input = it
+                    engine.sendTyping(peerId)
+                },
                 placeholder = { Text(if (burn) "输入消息（阅后即焚）…" else "输入消息…") },
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
@@ -233,6 +245,26 @@ fun ChatScreen(
             }
         }
     }
+}
+
+@Composable
+private fun typingSubtitle(
+    engine: SynaEngine,
+    conversationId: String,
+    isGroup: Boolean,
+    group: com.syna.net.GroupInfo?,
+    peer: com.syna.net.Peer?,
+    typing: Map<String, Pair<Long, String>>,
+): String? {
+    val state = typing[conversationId] ?: return null
+    val (ts, senderId) = state
+    if (System.currentTimeMillis() - ts > 3_000L) return null
+    val sender = if (isGroup) {
+        group?.memberNames?.get(senderId) ?: "成员"
+    } else {
+        peer?.username ?: "对方"
+    }
+    return "$sender 正在输入…"
 }
 
 @Composable

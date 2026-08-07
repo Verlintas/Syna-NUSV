@@ -11,6 +11,12 @@ enum class MessageStatus {
     READ,
 }
 
+enum class MessageKind {
+    TEXT,
+    IMAGE,
+    FILE,
+}
+
 data class ChatMessage(
     val id: String,
     val conversationId: String,
@@ -20,6 +26,14 @@ data class ChatMessage(
     val status: MessageStatus,
     val burnAfterReading: Boolean,
     val encrypted: Boolean,
+    val kind: MessageKind = MessageKind.TEXT,
+    val fileName: String? = null,
+    val fileSize: Long? = null,
+    val localPath: String? = null,
+    val progress: Int? = null,
+    val recalled: Boolean = false,
+    val replyToId: String? = null,
+    val mentions: List<String> = emptyList(),
 )
 
 data class Conversation(
@@ -69,6 +83,25 @@ class ChatStore {
             }
         }
     }
+
+    fun updateProgress(msgId: String, progress: Int) {
+        messagesM.updateMap { map ->
+            map.mapValues { (_, list) ->
+                list.map { if (it.id == msgId) it.copy(progress = progress) else it }
+            }
+        }
+    }
+
+    fun markRecalledByMsgId(msgId: String) {
+        messagesM.updateMap { map ->
+            map.mapValues { (_, list) ->
+                list.map { if (it.id == msgId) it.copy(recalled = true, body = "[消息已撤回]") else it }
+            }
+        }
+    }
+
+    fun messageById(msgId: String): ChatMessage? =
+        messagesM.value.values.flatten().firstOrNull { it.id == msgId }
 
     fun removeMessageById(msgId: String) {
         val map = messagesM.value
