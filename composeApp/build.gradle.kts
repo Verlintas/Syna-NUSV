@@ -113,6 +113,15 @@ compose.desktop {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "Syna"
             packageVersion = "1.0.0"
+            macOS {
+                iconFile.set(rootProject.file("assets/icons/Syna.icns"))
+            }
+            windows {
+                iconFile.set(rootProject.file("assets/icons/Syna.ico"))
+            }
+            linux {
+                iconFile.set(rootProject.file("assets/icons/Syna-512.png"))
+            }
         }
     }
 }
