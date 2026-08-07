@@ -135,7 +135,7 @@ val serverFatJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "com.syna.server.ServerMainKt"
-        attributes["Implementation-Version"] = "0.2.0"
+        attributes["Implementation-Version"] = "0.3.0"
     }
     from(kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs)
     from(configurations.getByName("desktopRuntimeClasspath").map { file ->
@@ -148,6 +148,7 @@ val serverFatJar by tasks.registering(Jar::class) {
 val runServer by tasks.registering(JavaExec::class) {
     group = "server"
     description = "本地运行 Syna 服务器"
-    classpath = kotlin.targets.getByName("desktop").compilations.getByName("main").runtimeDependencyFiles
+    classpath = kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs +
+        kotlin.targets.getByName("desktop").compilations.getByName("main").runtimeDependencyFiles
     mainClass.set("com.syna.server.ServerMainKt")
 }

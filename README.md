@@ -9,23 +9,31 @@
 ## Features
 
 - ✅ **Multi-platform**: Android (APK) + Desktop (Windows/macOS share the same JVM build)
-- ✅ **LAN peer discovery**: UDP broadcast + multicast dual-channel, 3s heartbeat, 15s offline timeout
+- ✅ **LAN peer discovery**: UDP broadcast + multicast dual-channel, 3s heartbeat, 15s offline timeout, **manual refresh button** for troubleshooting
 - ✅ **Custom username**: change it anytime in Settings, broadcast to LAN peers instantly
 - ✅ **WeChat-style chat**: conversation list (unread badges / timestamps / previews), chat bubbles, ✓✓ read receipts, connection status display
+- ✅ **Images & files**: chunked 64KB transfer with progress bar, image preview in bubbles, system file picker (Android / desktop)
+- ✅ **Typing indicator**: live "正在输入…" status in 1:1, LAN groups and server groups
+- ✅ **Message recall**: long-press your message → recall within 2 minutes, both sides marked
+- ✅ **Quote reply & @mentions**: long-press → reply with quoted preview; @ member picker in groups
+- ✅ **System notifications**: Android notification bar / desktop tray popup for new messages
 - ✅ **Connection mode switching**: Auto / TCP (reliable) / UDP (fast) / Host Hotspot
-- ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), messages encrypted pairwise and delivered directly to each member — no central node
+- ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), **group owner can dissolve the group**, members can leave
 - ✅ **Enhanced protection**:
   - **End-to-end encryption**: X25519 key exchange + HKDF-SHA256 + AES-256-GCM; private keys stay on your device only
   - **Burn after reading**: message shows for 8 seconds, then is destroyed on both sides with BURN_ACK confirmation + 60s fallback
   - **Temporary chat**: conversations auto-purge after a TTL (1h / 24h / 7d) on both devices
 - ✅ **Dark / light / system theme**
+- ✅ **Contact management**: delete contacts (persistent block, re-discover after unblock), blocked list management in Settings
 - ✅ **Offline messages**: messages queue locally when the target is offline and are flushed automatically when they come back online
 - ✅ **Auto-reconnect**: TCP heartbeat keep-alive + on-demand reconnection
 - ✅ **Private server (Minecraft-style)**: run your own headless chat server on Windows / macOS / Linux, join by `IP:port + password` from anywhere
   - Persistent history on the server — late joiners pull the full backlog automatically
   - Password-derived AES-GCM channel + password-derived group key encryption
+  - **Server management**: kick & ban members (persistent blacklist), group announcements, GUI dashboard or headless CLI
   - Burn-after-reading messages are purged from the server history too
   - **NAT traversal**: just map the server port to the public internet with any tunnel tool (frp / ngrok / Tailscale) — the client only needs the public `address:port`
+- ✅ **CI**: GitHub Actions auto-builds tests, Android APK, server jar and macOS DMG; tag pushes publish a GitHub Release
 
 ## Architecture
 
@@ -129,8 +137,6 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 ## Roadmap
 
 - [ ] LAN message history persistence (SQLDelight)
-- [ ] Image / file transfer (chunked, hybrid UDP/TCP)
-- [ ] Typing indicator, message recall
-- [ ] Android Keystore hardware-backed key storage
-- [ ] Server admin UI (member management, kick/ban)
 - [ ] Server TLS certificate support (instead of password-derived channel)
+- [ ] Multiple groups per server
+- [ ] Voice messages
