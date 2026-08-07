@@ -2,11 +2,13 @@ package com.syna.net
 
 import com.syna.chat.ChatMessage
 import com.syna.chat.ChatStore
+import com.syna.chat.MessageKind
 import com.syna.chat.MessageStatus
 import com.syna.core.ConnectionMode
 import com.syna.crypto.SynaCrypto
 import com.syna.crypto.createIdentityStore
 import com.syna.storage.SettingsRepository
+import com.syna.util.saveReceivedFile
 import com.syna.util.synaLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -80,6 +82,18 @@ class SynaEngine(
     val typing: StateFlow<Map<String, Pair<Long, String>>> = typingM.asStateFlow()
 
     private val typingSentM = MutableStateFlow<Map<String, Long>>(emptyMap())
+
+    private class FileAssembler(
+        val fileName: String,
+        val fileSize: Long,
+        val mimeType: String,
+        val totalChunks: Int,
+    ) {
+        val chunks = arrayOfNulls<ByteArray>(totalChunks)
+        var received = 0
+    }
+
+    private val fileAssemblers = mutableMapOf<String, FileAssembler>()
 
     private var serverSession: ServerSession? = null
 
@@ -336,6 +350,7 @@ class SynaEngine(
                 typingM.updateMap { it + (conversationId to (System.currentTimeMillis() to frame.from)) }
             }
             FrameType.RECALL -> frame.body?.let { msgId -> chatStore.markRecalledByMsgId(msgId) }
+            FrameType.FILE_CHUNK -> handleFileChunk(frame)
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
             FrameType.BURN_ACK -> frame.body?.let { msgId -> chatStore.removeMessageById(msgId) }
             else -> Unit
@@ -767,8 +782,145 @@ class SynaEngine(
         }
     }
 
-    private suspend fun sendReceipt(peerId: String, msgId: String) {
-        val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
+    /** 发送文件/图片：64KB 分块，支持 1:1 / 局域网群 / 服务器群 */
+    suspend fun sendFile(conversationId: String, fileName: String, bytes: ByteArray, mimeType: String = "application/octet-stream") {
+        val chunkSize = 64 * 1024
+        val totalChunks = ((bytes.size + chunkSize - 1) / chunkSize).coerceAtLeast(1)
+        val fileId = newMsgId()
+        val kind = if (mimeType.startsWith("image/")) MessageKind.IMAGE else MessageKind.FILE
+
+        val group = groupsM.value.firstOrNull { it.id == conversationId }
+        val conversationName = group?.name ?: peersM.value.firstOrNull { it.id == conversationId }?.username ?: conversationId
+        chatStore.addOutgoing(
+            peerId = conversationId,
+            peerName = conversationName,
+            msg = ChatMessage(
+                id = fileId,
+                conversationId = conversationId,
+                senderId = userId,
+                body = fileName,
+                ts = System.currentTimeMillis(),
+                status = MessageStatus.SENDING,
+                burnAfterReading = false,
+                encrypted = false,
+                kind = kind,
+                fileName = fileName,
+                fileSize = bytes.size.toLong(),
+                progress = 0,
+            ),
+        )
+
+        var failed = false
+        for (i in 0 until totalChunks) {
+            val start = i * chunkSize
+            val end = minOf((i + 1) * chunkSize, bytes.size)
+            val chunk = bytes.copyOfRange(start, end)
+            val fileChunk = FileChunk(
+                fileId = fileId,
+                fileName = fileName,
+                fileSize = bytes.size.toLong(),
+                mimeType = mimeType,
+                totalChunks = totalChunks,
+                index = i,
+                dataB64 = @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+                kotlin.io.encoding.Base64.Default.encode(chunk),
+            )
+            val frame = TransportFrame(
+                type = FrameType.FILE_CHUNK,
+                from = userId,
+                to = conversationId,
+                msgId = fileId,
+                ts = System.currentTimeMillis(),
+                body = synaJson.encodeToString(FileChunk.serializer(), fileChunk),
+            )
+            try {
+                sendToConversation(conversationId, frame)
+                chatStore.updateProgress(fileId, ((i + 1) * 100) / totalChunks)
+            } catch (e: Exception) {
+                failed = true
+                synaLog("File") { "发送失败 chunk=$i: ${e.message}" }
+                break
+            }
+        }
+        chatStore.updateStatus(fileId, if (failed) MessageStatus.FAILED else MessageStatus.SENT)
+        synaLog("File") { "send $fileName (${bytes.size}B, $totalChunks chunks) ${if (failed) "FAILED" else "ok"}" }
+    }
+
+    /** 按会话类型路由单帧：服务器群 → 通道；局域网群 → 逐成员；1:1 → 对端 */
+    private suspend fun sendToConversation(conversationId: String, frame: TransportFrame) {
+        val serverSession = serverSession
+        if (serverSession != null && serverSession.groupId == conversationId) {
+            serverSession.channel.send(frame)
+            return
+        }
+        val group = groupsM.value.firstOrNull { it.id == conversationId }
+        if (group != null) {
+            group.memberIds.filter { it != userId }.forEach { memberId ->
+                val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
+                send(peer, frame)
+            }
+            return
+        }
+        val peer = peersM.value.firstOrNull { it.id == conversationId } ?: return
+        send(peer, frame)
+    }
+
+    private suspend fun handleFileChunk(frame: TransportFrame) {
+        val fc = try {
+            synaJson.decodeFromString(FileChunk.serializer(), frame.body ?: return)
+        } catch (e: Exception) {
+            return
+        }
+        val conversationId = if (groupsM.value.any { it.id == frame.to }) frame.to else frame.from
+        val assembler = fileAssemblers.getOrPut(fc.fileId) {
+            FileAssembler(fc.fileName, fc.fileSize, fc.mimeType, fc.totalChunks)
+        }
+        if (assembler.chunks[fc.index] == null) {
+            assembler.chunks[fc.index] = @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+            kotlin.io.encoding.Base64.Default.decode(fc.dataB64)
+            assembler.received++
+        }
+        if (assembler.received >= assembler.totalChunks) {
+            fileAssemblers.remove(fc.fileId)
+            val full = ByteArray(assembler.fileSize.toInt())
+            var offset = 0
+            for (i in 0 until assembler.totalChunks) {
+                val c = assembler.chunks[i] ?: continue
+                c.copyInto(full, offset)
+                offset += c.size
+            }
+            val path = try {
+                saveReceivedFile(assembler.fileName, full.copyOfRange(0, offset))
+            } catch (e: Exception) {
+                synaLog("File") { "保存失败: ${e.message}" }
+                return
+            }
+            val kind = if (assembler.mimeType.startsWith("image/")) MessageKind.IMAGE else MessageKind.FILE
+            val group = groupsM.value.firstOrNull { it.id == conversationId }
+            chatStore.addIncoming(
+                peerId = conversationId,
+                peerName = group?.name ?: peersM.value.firstOrNull { it.id == frame.from }?.username ?: frame.from,
+                msg = ChatMessage(
+                    id = fc.fileId,
+                    conversationId = conversationId,
+                    senderId = frame.from,
+                    body = assembler.fileName,
+                    ts = frame.ts,
+                    status = MessageStatus.READ,
+                    burnAfterReading = false,
+                    encrypted = false,
+                    kind = kind,
+                    fileName = assembler.fileName,
+                    fileSize = assembler.fileSize,
+                    localPath = path,
+                ),
+                preview = if (kind == MessageKind.IMAGE) "🖼 ${assembler.fileName}" else "📄 ${assembler.fileName}",
+            )
+            synaLog("File") { "received ${assembler.fileName} (${assembler.fileSize}B) -> $path" }
+        }
+    }
+
+    private suspend fun sendReceipt(peerId: String, msgId: String) {        val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
         val frame = TransportFrame(
             type = FrameType.READ,
             from = userId,

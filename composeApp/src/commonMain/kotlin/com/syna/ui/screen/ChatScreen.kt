@@ -37,13 +37,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.decodeToImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Image
+import androidx.compose.runtime.produceState
 import com.syna.chat.ChatMessage
 import com.syna.chat.MessageKind
 import com.syna.chat.MessageStatus
 import com.syna.net.SynaEngine
+import com.syna.util.FilePickerButton
 import com.syna.util.formatTime
+import com.syna.util.readFileBytes
 import kotlinx.coroutines.launch
 
 @Composable
@@ -247,6 +253,14 @@ fun ChatScreen(
                     .padding(10.dp),
             )
             Spacer(Modifier.size(6.dp))
+            FilePickerButton(
+                onFilePicked = { name, bytes ->
+                    scope.launch {
+                        engine.sendFile(peerId, name, bytes, mimeTypeFromName(name))
+                    }
+                },
+            )
+            Spacer(Modifier.size(4.dp))
             OutlinedTextField(
                 value = input,
                 onValueChange = {
@@ -307,8 +321,19 @@ private fun typingSubtitle(
     return "$sender 正在输入…"
 }
 
-@Composable
+private fun mimeTypeFromName(name: String): String {
+    val lower = name.lowercase()
+    return when {
+        lower.endsWith(".png") -> "image/png"
+        lower.endsWith(".jpg") || lower.endsWith(".jpeg") -> "image/jpeg"
+        lower.endsWith(".gif") -> "image/gif"
+        lower.endsWith(".webp") -> "image/webp"
+        else -> "application/octet-stream"
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class)
+@Composable
 private fun MessageBubble(
     message: ChatMessage,
     isMine: Boolean,
@@ -369,7 +394,35 @@ private fun MessageBubble(
                             Spacer(Modifier.size(4.dp))
                         }
                         when (message.kind) {
-                            MessageKind.IMAGE -> Text("🖼 ${message.fileName ?: "图片"}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                            MessageKind.IMAGE -> {
+                                val path = message.localPath
+                                if (path != null && message.progress == null && !message.recalled) {
+                                    val bitmap by produceState<ImageBitmap?>(null, path) {
+                                        value = runCatching {
+                                            val bytes = readFileBytes(path)
+                                            if (bytes.size <= 4 * 1024 * 1024) bytes.decodeToImageBitmap() else null
+                                        }.getOrNull()
+                                    }
+                                    val bmp = bitmap
+                                    if (bmp != null) {
+                                        Image(
+                                            bitmap = bmp,
+                                            contentDescription = message.fileName,
+                                            modifier = Modifier
+                                                .widthIn(max = 220.dp)
+                                                .clip(RoundedCornerShape(8.dp)),
+                                        )
+                                    } else {
+                                        Text("🖼 ${message.fileName ?: "图片"}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                                    }
+                                } else {
+                                    Text(
+                                        "🖼 ${message.fileName ?: "图片"}${message.progress?.let { " ($it%)" } ?: ""}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = textColor,
+                                    )
+                                }
+                            }
                             MessageKind.FILE -> Text("📄 ${message.fileName ?: "文件"}${message.fileSize?.let { " · ${it / 1024}KB" } ?: ""}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
                             MessageKind.TEXT -> Text(
                                 text = message.body,

@@ -1,6 +1,8 @@
 package com.syna.net
 
 import com.russhwolf.settings.MapSettings
+import com.syna.chat.MessageKind
+import com.syna.chat.MessageStatus
 import com.syna.storage.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -239,6 +241,89 @@ class TypingAndRecallTest {
                 b.chatStore.messages.value[alice.id]?.firstOrNull { it.id == msgId }?.recalled != true,
                 "非本人消息不可撤回",
             )
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+}
+
+class FileTransferTest {
+
+    private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
+        val settings = SettingsRepository(MapSettings())
+        settings.username = name
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+    }
+
+    @Test
+    fun fileTransferReassemblesCorrectly() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        val b = newEngine("Bob", scopeB)
+        try {
+            a.start()
+            b.start()
+            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
+                .first { it.username == "Bob" }
+            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
+                .first { it.username == "Alice" }
+
+            // 跨多块的大文件（256KB）
+            val original = ByteArray(256 * 1024) { (it % 251).toByte() }
+            a.sendFile(bob.id, "测试文件.bin", original, "application/octet-stream")
+
+            val deadline = System.currentTimeMillis() + 15_000
+            while (System.currentTimeMillis() < deadline) {
+                val msgs = b.chatStore.messages.value[alice.id].orEmpty()
+                if (msgs.any { it.fileName == "测试文件.bin" && it.localPath != null }) break
+                delay(300)
+            }
+            val received = b.chatStore.messages.value[alice.id]
+                ?.firstOrNull { it.fileName == "测试文件.bin" && it.localPath != null }
+            assertTrue(received != null, "B 应收到完整文件")
+            assertEquals(MessageKind.FILE, received?.kind)
+            assertEquals(original.size.toLong(), received?.fileSize)
+
+            val saved = com.syna.util.readFileBytes(received!!.localPath!!)
+            assertTrue(saved.contentEquals(original), "重组后的文件字节应与原文件一致")
+
+            // A 侧发送状态应为已发送
+            val sentMsg = a.chatStore.messages.value[bob.id]?.firstOrNull { it.fileName == "测试文件.bin" }
+            assertEquals(MessageStatus.SENT, sentMsg?.status)
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun imageFileMarkedAsImageKind() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        val b = newEngine("Bob", scopeB)
+        try {
+            a.start()
+            b.start()
+            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
+                .first { it.username == "Bob" }
+            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
+                .first { it.username == "Alice" }
+
+            val png = ByteArray(1024) { 0x55 }
+            a.sendFile(bob.id, "photo.png", png, "image/png")
+
+            val deadline = System.currentTimeMillis() + 12_000
+            while (System.currentTimeMillis() < deadline) {
+                if (b.chatStore.messages.value[alice.id].orEmpty().any { it.fileName == "photo.png" && it.localPath != null }) break
+                delay(300)
+            }
+            val received = b.chatStore.messages.value[alice.id]
+                ?.firstOrNull { it.fileName == "photo.png" && it.localPath != null }
+            assertTrue(received != null, "B 应收到图片")
+            assertEquals(MessageKind.IMAGE, received?.kind, "图片应标记为 IMAGE 类型")
         } finally {
             a.stop(); b.stop()
             scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
