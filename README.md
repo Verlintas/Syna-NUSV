@@ -49,17 +49,27 @@ composeApp/
 
 ## Private Server (Syna Server)
 
-Run your own persistent group chat server on any JVM machine — Windows / macOS / Linux.
+Run your own persistent group chat server on any JVM machine — Windows / macOS / Linux. Two modes for different preferences:
 
+**① CLI (headless)** — perfect for servers / remote machines / systemd:
 ```bash
 java -jar syna-server.jar -p 45880 -w YourSecretPassword -g "My Group"
+```
 
+**② GUI mode** — visual dashboard for everyone else:
+```bash
+java -jar syna-server.jar --ui
+```
+The UI shows live status: running port, LAN access addresses, member list, history count, and a scrolling log console — configure and start/stop the server with a click.
+
+```
 # options
 #   -p, --port <port>       listen port (default 45880)
 #   -w, --password <pw>     join password (default "syna" — change it!)
 #   -g, --group <name>      group name (default "Syna 私服")
 #   -d, --data-dir <path>   data dir for persistent history (default ./syna-server-data)
 #       --history <count>   max history messages (default 200)
+#       --ui                launch the graphical dashboard
 ```
 
 The server persists encrypted message history to `history.jsonl` and survives restarts.

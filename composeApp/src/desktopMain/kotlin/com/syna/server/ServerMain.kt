@@ -1,11 +1,25 @@
 package com.syna.server
 
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Window
+import androidx.compose.ui.window.application
+import androidx.compose.ui.window.rememberWindowState
 import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 
 fun main(args: Array<String>) {
+    if (args.contains("--ui") || args.contains("-ui")) {
+        val config = parseArgs(args)
+        serverUiMain(config)
+        return
+    }
+    serverCliMain(args)
+}
+
+/** CLI 无头模式 */
+private fun serverCliMain(args: Array<String>) {
     val config = parseArgs(args)
-    println("Syna 私人聊天服务器 v0.2.0 启动中…")
+    println("Syna 私人聊天服务器 v0.2.1 启动中…（带界面模式: 加 --ui 参数）")
     val server = SynaServer(
         port = config.port,
         password = config.password,
@@ -15,9 +29,22 @@ fun main(args: Array<String>) {
     )
     runBlocking {
         server.start()
-        // 保持进程运行
         while (true) {
             kotlinx.coroutines.delay(86_400_000L)
+        }
+    }
+}
+
+/** GUI 界面模式 */
+private fun serverUiMain(config: ServerConfig) {
+    val controller = ServerController()
+    application {
+        Window(
+            onCloseRequest = ::exitApplication,
+            title = "Syna 私人聊天服务器",
+            state = rememberWindowState(width = 680.dp, height = 760.dp),
+        ) {
+            ServerUiScreen(controller = controller, initialConfig = config)
         }
     }
 }
@@ -56,6 +83,7 @@ private fun printHelp() {
         Syna 私人聊天服务器
 
         用法: java -jar syna-server.jar [选项]
+              java -jar syna-server.jar --ui    # 带图形界面模式
 
         选项:
           -p, --port <端口>        监听端口（默认 45880）
@@ -63,6 +91,7 @@ private fun printHelp() {
           -g, --group <名称>       群名称（默认 "Syna 私服"）
           -d, --data-dir <路径>    数据目录（默认 ./syna-server-data，消息持久化于此）
               --history <条数>     历史消息条数上限（默认 200）
+              --ui                 使用图形界面（配置、状态、成员、日志一目了然）
 
         内网穿透（公网访问）:
           服务器只需监听端口；用任意外网隧道工具把端口映射到公网即可，
@@ -72,7 +101,8 @@ private fun printHelp() {
           Tailscale: 同一 Tailnet 内直接使用节点 IP:45880
 
         示例:
-          java -jar syna-server.jar -p 45880 -w MySecret -g "朋友群"
+          java -jar syna-server.jar -p 45880 -w MySecret -g "朋友群"   # 命令行
+          java -jar syna-server.jar --ui                              # 图形界面
         """.trimIndent(),
     )
 }

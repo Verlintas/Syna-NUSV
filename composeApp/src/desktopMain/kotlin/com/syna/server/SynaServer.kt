@@ -27,6 +27,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 class SynaServer(
@@ -50,9 +52,37 @@ class SynaServer(
     private var serverSocket: ServerSocket? = null
     private val sessions = mutableListOf<ClientSession>()
     private val messages = mutableListOf<TransportFrame>()
-    private val members = mutableMapOf<String, ServerMember>()
+    private val memberMap = mutableMapOf<String, ServerMember>()
+
+    // ===== UI 可观测状态 =====
+    private val runningM = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isRunning = runningM.asStateFlow()
+
+    private val membersM = kotlinx.coroutines.flow.MutableStateFlow<List<ServerMember>>(emptyList())
+    val members: StateFlow<List<ServerMember>> = membersM.asStateFlow()
+
+    private val messageCountM = kotlinx.coroutines.flow.MutableStateFlow(0)
+    val messageCount: StateFlow<Int> = messageCountM.asStateFlow()
+
+    private val logsM = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
+    val logs: StateFlow<List<String>> = logsM.asStateFlow()
+
+    private fun log(msg: String) {
+        println(msg)
+        logsM.value = (logsM.value + msg).takeLast(500)
+    }
+
+    private fun publishMembers() {
+        membersM.value = memberMap.values.toList()
+    }
+
+    private fun publishMessageCount() {
+        messageCountM.value = messages.size
+    }
 
     fun start() {
+        if (runningM.value) return
+        runningM.value = true
         Files.createDirectories(dataDir)
         loadHistory()
         val ss = ServerSocket(port)
@@ -62,6 +92,7 @@ class SynaServer(
     }
 
     fun stop() {
+        runningM.value = false
         try {
             serverSocket?.close()
         } catch (_: Exception) {
@@ -112,15 +143,16 @@ class SynaServer(
             if (authFrame.type != FrameType.SRV_AUTH) return
             val auth = synaJson.decodeFromString(ServerAuth.serializer(), authFrame.body ?: return)
             if (auth.password != password) {
-                println("[SynaServer] 认证失败: ${auth.username} (${auth.userId.take(6)})")
+                 log("[SynaServer] 认证失败: ${auth.username} (${auth.userId.take(6)})")
                 return
             }
             session.userId = auth.userId
 
             // 3. 注册成员 + 广播加入
-            val isNew = auth.userId !in members
-            members[auth.userId] = ServerMember(auth.userId, auth.username, auth.publicKeyB64)
-            println("[SynaServer] 成员加入: ${auth.username} (${auth.userId.take(6)})${if (isNew) "" else " 重新连接"}")
+            val isNew = auth.userId !in memberMap
+            memberMap[auth.userId] = ServerMember(auth.userId, auth.username, auth.publicKeyB64)
+            publishMembers()
+            log("[SynaServer] 成员加入: ${auth.username} (${auth.userId.take(6)})${if (isNew) "" else " 重新连接"}")
             if (isNew) {
                 broadcast(
                     TransportFrame(
@@ -151,7 +183,7 @@ class SynaServer(
                         ServerAuthOk(
                             groupId = groupId,
                             groupName = groupName,
-                            members = members.values.toList(),
+                            members = memberMap.values.toList(),
                             history = messages.toList(),
                         ),
                     ),
@@ -169,9 +201,11 @@ class SynaServer(
             sessions.remove(session)
             session?.close()
             session?.userId?.let { uid ->
-                println("[SynaServer] 成员离开: $uid")
+                log("[SynaServer] 成员离开: $uid")
                 val remaining = sessions.any { it.userId == uid }
                 if (!remaining) {
+                    memberMap.remove(uid)
+                    publishMembers()
                     broadcast(
                         TransportFrame(
                             type = FrameType.GROUP_LEAVE,
@@ -181,7 +215,7 @@ class SynaServer(
                             ts = System.currentTimeMillis(),
                             body = synaJson.encodeToString(
                                 GroupMemberEvent.serializer(),
-                                GroupMemberEvent(groupId, uid, members[uid]?.name ?: uid),
+                                GroupMemberEvent(groupId, uid, memberMap[uid]?.name ?: uid),
                             ),
                         ),
                         except = null,
@@ -214,8 +248,8 @@ class SynaServer(
             FrameType.GROUP_JOIN, FrameType.GROUP_LEAVE, FrameType.EPHEMERAL_SESSION,
             -> {
                 if (frame.type == FrameType.KEY) {
-                    members[frame.from]?.let {
-                        members[frame.from] = it.copy(publicKeyB64 = frame.body)
+                    memberMap[frame.from]?.let {
+                        memberMap[frame.from] = it.copy(publicKeyB64 = frame.body)
                     }
                 }
                 if (frame.type == FrameType.GROUP_MESSAGE || frame.type == FrameType.KEY) {
@@ -233,13 +267,15 @@ class SynaServer(
         if (messages.size > historyLimit) {
             messages.removeAt(0)
         }
+        publishMessageCount()
         rewriteHistory()
     }
 
     private fun purgeMessage(msgId: String) {
         if (messages.removeAll { it.msgId == msgId }) {
+            publishMessageCount()
             rewriteHistory()
-            println("[SynaServer] 阅后即焚清除: ${msgId.take(8)}")
+            log("[SynaServer] 阅后即焚清除: ${msgId.take(8)}")
         }
     }
 
@@ -250,7 +286,7 @@ class SynaServer(
             }
             Files.writeString(historyFile, if (lines.isEmpty()) "" else "$lines\n")
         } catch (e: Exception) {
-            println("[SynaServer] 历史写入失败: ${e.message}")
+            log("[SynaServer] 历史写入失败: ${e.message}")
         }
     }
 
@@ -264,9 +300,10 @@ class SynaServer(
                 }
             }
         } catch (e: Exception) {
-            println("[SynaServer] 历史读取失败: ${e.message}")
+            log("[SynaServer] 历史读取失败: ${e.message}")
         }
-        println("[SynaServer] 已加载历史 ${messages.size} 条")
+        publishMessageCount()
+        log("[SynaServer] 已加载历史 ${messages.size} 条")
     }
 
     private suspend fun broadcast(frame: TransportFrame, except: ClientSession?) {
@@ -297,6 +334,8 @@ class SynaServer(
         println("  然后客户端输入穿透后的地址:端口 + 密码加入群聊")
         println("================================================")
     }
+
+    fun localAddressesText(): String = localAddresses().joinToString(", ") { "$it:$boundPort" }
 
     private fun localAddresses(): List<String> {
         val result = mutableListOf<String>()
