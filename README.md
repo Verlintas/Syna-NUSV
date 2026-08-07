@@ -2,6 +2,10 @@
 
 **Syna** is a LAN instant messaging app built with **Kotlin Multiplatform + Compose Multiplatform**. It runs on **Android**, **Windows**, and **macOS** with a fully peer-to-peer architecture — no central server, no internet required.
 
+> 📖 **New to Syna? Read the [bilingual tutorial (TUTORIAL.md)](TUTORIAL.md)** — quick start, LAN chat, private server setup, NAT traversal (frp/ngrok/Tailscale), security model & troubleshooting.
+>
+> 📖 **初次使用？请看[双语教程](TUTORIAL.md)** — 快速开始、局域网聊天、私人服务器搭建、内网穿透、安全模型与故障排查。
+
 ## Features
 
 - ✅ **Multi-platform**: Android (APK) + Desktop (Windows/macOS share the same JVM build)
