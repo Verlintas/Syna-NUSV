@@ -94,6 +94,14 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 # Desktop (macOS / Windows / Linux)
 ./gradlew :composeApp:run
 
+# macOS 安装包 (dmg)
+./gradlew :composeApp:packageDmg
+# Output: composeApp/build/compose/binaries/main/dmg/Syna-1.0.0.dmg
+
+# Windows 安装包 (msi, 需 Windows + WiX) / Linux (deb/rpm)
+./gradlew :composeApp:packageMsi
+./gradlew :composeApp:packageDeb
+
 # Syna server fat jar (headless, all platforms)
 ./gradlew :composeApp:serverFatJar
 # Output: composeApp/build/server/syna-server.jar  →  java -jar syna-server.jar

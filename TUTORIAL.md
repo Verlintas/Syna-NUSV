@@ -416,8 +416,10 @@ ngrok 会输出一个公网地址（如 `0.tcp.jp.ngrok.io:12345`），连同密
 **Desktop native packages / 桌面原生包**
 
 ```bash
-./gradlew :composeApp:createDistributable
-# macOS:  .app bundle; Windows MSI needs a Windows machine with WiX; Linux: Deb/Rpm via packageDistributable
+./gradlew :composeApp:packageDmg   # macOS 安装包 (dmg)
+./gradlew :composeApp:packageMsi   # Windows 安装包 (需 Windows 机器 + WiX)
+./gradlew :composeApp:packageDeb   # Linux Deb
+./gradlew :composeApp:packageRpm   # Linux Rpm
 ```
 
 **Server as a service (Linux, systemd example) / Linux 服务化示例**
