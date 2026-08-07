@@ -250,6 +250,8 @@ class SynaEngine(
                         status = MessageStatus.READ,
                         burnAfterReading = frame.burn,
                         encrypted = frame.enc,
+                        replyToId = frame.replyTo,
+                        mentions = frame.mentions,
                     ),
                     preview = if (frame.burn) "🔥 阅后即焚消息" else frame.body ?: "",
                 )
@@ -282,10 +284,12 @@ class SynaEngine(
                             body = frame.body ?: "",
                             ts = frame.ts,
                             status = MessageStatus.READ,
-                            burnAfterReading = frame.burn,
-                            encrypted = frame.enc,
-                        ),
-                        preview = if (frame.burn) "🔥 阅后即焚消息" else frame.body ?: "",
+                        burnAfterReading = frame.burn,
+                        encrypted = frame.enc,
+                        replyToId = frame.replyTo,
+                        mentions = frame.mentions,
+                    ),
+                    preview = if (frame.burn) "🔥 阅后即焚消息" else frame.body ?: "",
                     )
                     if (frame.burn) {
                         pendingBurnsM.updateList { it + Triple(groupId, frame.msgId, frame.from) }
@@ -564,7 +568,13 @@ class SynaEngine(
         synaLog("Discovery") { "手动刷新完成（已广播存在并重算在线状态）" }
     }
 
-    suspend fun sendGroupText(groupId: String, text: String, burn: Boolean = false): String {
+    suspend fun sendGroupText(
+        groupId: String,
+        text: String,
+        burn: Boolean = false,
+        replyTo: String? = null,
+        mentions: List<String> = emptyList(),
+    ): String {
         val group = groupsM.value.firstOrNull { it.id == groupId } ?: return ""
         val msgId = newMsgId()
         val serverSession = serverSession
@@ -581,6 +591,8 @@ class SynaEngine(
                 } else text,
                 enc = settings.e2eEnabled,
                 burn = burn,
+                replyTo = replyTo,
+                mentions = mentions,
             )
             try {
                 serverSession.channel.send(frame)
@@ -599,6 +611,8 @@ class SynaEngine(
                     status = MessageStatus.SENT,
                     burnAfterReading = burn,
                     encrypted = settings.e2eEnabled,
+                    replyToId = replyTo,
+                    mentions = mentions,
                 ),
             )
             if (burn) {
@@ -622,6 +636,8 @@ class SynaEngine(
                 } else text,
                 enc = encrypted,
                 burn = burn,
+                replyTo = replyTo,
+                mentions = mentions,
             )
             try {
                 val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
@@ -642,6 +658,8 @@ class SynaEngine(
                 status = MessageStatus.SENT,
                 burnAfterReading = burn,
                 encrypted = settings.e2eEnabled,
+                replyToId = replyTo,
+                mentions = mentions,
             ),
         )
         if (burn) {
@@ -1058,7 +1076,13 @@ class SynaEngine(
         }
     }
 
-    suspend fun sendText(peerId: String, text: String, burn: Boolean = false): String {
+    suspend fun sendText(
+        peerId: String,
+        text: String,
+        burn: Boolean = false,
+        replyTo: String? = null,
+        mentions: List<String> = emptyList(),
+    ): String {
         val peer = peersM.value.firstOrNull { it.id == peerId } ?: return ""
         val peerKey = peerKeysM.value[peerId]
         val encrypted = settings.e2eEnabled && peerKey != null
@@ -1074,6 +1098,8 @@ class SynaEngine(
             } else text,
             enc = encrypted,
             burn = burn,
+            replyTo = replyTo,
+            mentions = mentions,
         )
         val peerName = peersM.value.firstOrNull { it.id == peerId }?.username ?: peerId
         chatStore.addOutgoing(

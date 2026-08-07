@@ -330,3 +330,73 @@ class FileTransferTest {
         }
     }
 }
+
+class ReplyAndMentionTest {
+
+    private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
+        val settings = SettingsRepository(MapSettings())
+        settings.username = name
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+    }
+
+    @Test
+    fun replyToAndMentionsCarriedOverTransport() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        val b = newEngine("Bob", scopeB)
+        try {
+            a.start()
+            b.start()
+            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
+                .first { it.username == "Bob" }
+            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
+                .first { it.username == "Alice" }
+
+            val originalId = a.sendText(bob.id, "原始消息")
+            val recvDeadline = System.currentTimeMillis() + 8_000
+            while (b.chatStore.messages.value[alice.id]?.any { it.id == originalId } != true &&
+                System.currentTimeMillis() < recvDeadline
+            ) {
+                delay(200)
+            }
+
+            // 引用回复 + @提及
+            a.sendText(bob.id, "回复你 @Bob", replyTo = originalId, mentions = listOf(bob.id))
+            val replyDeadline = System.currentTimeMillis() + 8_000
+            while (System.currentTimeMillis() < replyDeadline) {
+                val msgs = b.chatStore.messages.value[alice.id].orEmpty()
+                if (msgs.any { it.replyToId == originalId && it.body == "回复你 @Bob" }) break
+                delay(200)
+            }
+            val reply = b.chatStore.messages.value[alice.id]
+                ?.firstOrNull { it.body == "回复你 @Bob" }
+            assertTrue(reply != null, "B 应收到引用回复")
+            assertEquals(originalId, reply?.replyToId, "replyToId 应正确传递")
+            assertTrue(reply?.mentions?.contains(bob.id) == true, "mentions 应正确传递")
+
+            // 群聊引用回复
+            val groupId = a.createGroup("测试群", listOf(bob.id))
+            val joinDeadline = System.currentTimeMillis() + 8_000
+            while (b.groups.value.none { it.id == groupId } && System.currentTimeMillis() < joinDeadline) delay(200)
+            a.sendGroupText(groupId, "群里的原始消息")
+            val gMsgDeadline = System.currentTimeMillis() + 8_000
+            while (System.currentTimeMillis() < gMsgDeadline) {
+                if (b.chatStore.messages.value[groupId].orEmpty().any { it.body == "群里的原始消息" }) break
+                delay(200)
+            }
+            val originalGroup = b.chatStore.messages.value[groupId]?.firstOrNull { it.body == "群里的原始消息" }
+            a.sendGroupText(groupId, "群引用", replyTo = originalGroup?.id, mentions = listOf(bob.id))
+            val gReplyDeadline = System.currentTimeMillis() + 8_000
+            while (System.currentTimeMillis() < gReplyDeadline) {
+                if (b.chatStore.messages.value[groupId].orEmpty().any { it.body == "群引用" && it.replyToId == originalGroup?.id }) break
+                delay(200)
+            }
+            val gReply = b.chatStore.messages.value[groupId]?.firstOrNull { it.body == "群引用" }
+            assertEquals(originalGroup?.id, gReply?.replyToId, "群聊引用回复应正确传递")
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+}

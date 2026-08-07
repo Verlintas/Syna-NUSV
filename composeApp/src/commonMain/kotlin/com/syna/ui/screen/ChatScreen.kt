@@ -73,6 +73,9 @@ fun ChatScreen(
     var input by remember { mutableStateOf("") }
     var burn by remember { mutableStateOf(engine.settings.burnAfterReadingEnabled) }
     var recallTarget by remember { mutableStateOf<String?>(null) }
+    var replyingTo by remember { mutableStateOf<ChatMessage?>(null) }
+    var mentionTarget by remember { mutableStateOf(false) }
+    var pendingMention by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(peerId) {
         engine.chatStore.activeConversationId.value = peerId
@@ -196,12 +199,13 @@ fun ChatScreen(
                     showSenderName = isGroup && message.senderId != engine.userId,
                     senderName = group?.memberNames?.get(message.senderId) ?: message.senderId,
                     onLongClick = { recallTarget = message.id },
+                    allMessages = chatMessages,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
 
-        // 撤回确认
+        // 撤回/回复确认
         val targetId = recallTarget
         if (targetId != null) {
             val target = chatMessages.firstOrNull { it.id == targetId }
@@ -209,14 +213,18 @@ fun ChatScreen(
                 target.senderId == engine.userId &&
                 !target.recalled &&
                 System.currentTimeMillis() - target.ts <= 2 * 60_000L
+            val canReply = target != null && !target.recalled
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { recallTarget = null },
                 title = { Text("消息操作") },
                 text = {
                     Text(
-                        if (target == null) "消息不存在"
-                        else if (!canRecall) "仅可撤回自己 2 分钟内发送的消息"
-                        else "撤回这条消息？双方都将看到「已撤回」。",
+                        when {
+                            target == null -> "消息不存在"
+                            target.recalled -> "该消息已撤回"
+                            !canRecall -> "仅可撤回自己 2 分钟内发送的消息"
+                            else -> "撤回这条消息？双方都将看到「已撤回」。"
+                        },
                     )
                 },
                 confirmButton = {
@@ -231,9 +239,47 @@ fun ChatScreen(
                     ) { Text("撤回") }
                 },
                 dismissButton = {
-                    androidx.compose.material3.TextButton(onClick = { recallTarget = null }) { Text("取消") }
+                    Row {
+                        if (canReply) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    replyingTo = target
+                                    recallTarget = null
+                                },
+                            ) { Text("回复") }
+                        }
+                        androidx.compose.material3.TextButton(onClick = { recallTarget = null }) { Text("取消") }
+                    }
                 },
             )
+        }
+
+        // 回复条
+        val replyMsg = replyingTo
+        if (replyMsg != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "↩ 回复 ${if (replyMsg.senderId == engine.userId) "自己" else (group?.memberNames?.get(replyMsg.senderId) ?: peer?.username ?: "对方")}: ${replyMsg.body.take(40)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "✕",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier
+                        .clickable { replyingTo = null }
+                        .padding(6.dp),
+                )
+            }
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
@@ -260,6 +306,16 @@ fun ChatScreen(
                     }
                 },
             )
+            if (isGroup) {
+                Text(
+                    text = "@",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier
+                        .clickable { mentionTarget = true }
+                        .padding(8.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Spacer(Modifier.size(4.dp))
             OutlinedTextField(
                 value = input,
@@ -276,14 +332,18 @@ fun ChatScreen(
                 onClick = {
                     val text = input.trim()
                     if (text.isNotEmpty()) {
+                        val replyId = replyingTo?.id
+                        val mentions = pendingMention?.let { listOf(it) } ?: emptyList()
                         scope.launch {
                             if (isGroup) {
-                                engine.sendGroupText(peerId, text, burn = burn)
+                                engine.sendGroupText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
                             } else {
-                                engine.sendText(peerId, text, burn = burn)
+                                engine.sendText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
                             }
                         }
                         input = ""
+                        replyingTo = null
+                        pendingMention = null
                         scope.launch {
                             if (chatMessages.isNotEmpty()) {
                                 listState.scrollToItem(0)
@@ -297,6 +357,36 @@ fun ChatScreen(
             ) {
                 Text("➤", color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.padding(start = 2.dp))
             }
+        }
+
+        // @成员选择对话框
+        if (mentionTarget) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { mentionTarget = false },
+                title = { Text("选择要 @ 的成员") },
+                text = {
+                    Column {
+                        group?.memberIds?.filter { it != engine.userId }?.forEach { memberId ->
+                            val name = group?.memberNames?.get(memberId) ?: memberId
+                            Text(
+                                text = "@$name",
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        input = input.trimEnd() + (if (input.isBlank()) "" else " ") + "@$name "
+                                        pendingMention = memberId
+                                        mentionTarget = false
+                                    }
+                                    .padding(vertical = 8.dp),
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { mentionTarget = false }) { Text("取消") }
+                },
+            )
         }
     }
 }
@@ -341,6 +431,7 @@ private fun MessageBubble(
     showSenderName: Boolean = false,
     senderName: String = "",
     onLongClick: () -> Unit = {},
+    allMessages: List<ChatMessage> = emptyList(),
 ) {
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
@@ -384,6 +475,22 @@ private fun MessageBubble(
                         color = textColor.copy(alpha = 0.7f),
                     )
                 } else {
+                    // 引用回复预览
+                    val quoted = message.replyToId?.let { id -> allMessages.firstOrNull { it.id == id } }
+                    if (quoted != null && !quoted.recalled) {
+                        Text(
+                            text = "↩ ${quoted.body.take(30)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = textColor.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .padding(bottom = 2.dp)
+                                .background(if (isMine) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.15f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                        )
+                    }
                     Row {
                         if (message.burnAfterReading) {
                             Text("🔥", style = MaterialTheme.typography.bodyMedium)

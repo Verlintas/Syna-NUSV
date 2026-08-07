@@ -71,6 +71,7 @@ data class TransportFrame(
     val enc: Boolean = false,
     val burn: Boolean = false,
     val replyTo: String? = null,
+    val mentions: List<String> = emptyList(),
 )
 
 @Serializable
