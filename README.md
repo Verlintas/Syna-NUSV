@@ -5,9 +5,10 @@
 > 🤖 **AI-generated code notice / AI 生成代码声明**: This project's source code was predominantly generated with the assistance of AI agents (LLM-based coding assistants), then reviewed and tested by humans. Please review code before relying on it in production.
 > 本项目源代码主要由 AI 智能体（大语言模型编程助手）生成，经人工审查与测试后发布。生产环境使用前请自行复核。
 
-> 📖 **New to Syna? Read the [bilingual tutorial (TUTORIAL.md)](TUTORIAL.md)** — quick start, LAN chat, private server setup, NAT traversal (frp/ngrok/Tailscale), security model & troubleshooting.
+> 📖 **New to Syna? Read the tutorial** — quick start, LAN chat, private server setup, NAT traversal (frp/ngrok/Tailscale), security model & troubleshooting.
+> 📖 **初次使用？请看教程** — 快速开始、局域网聊天、私人服务器搭建、内网穿透、安全模型与故障排查。
 >
-> 📖 **初次使用？请看[双语教程](TUTORIAL.md)** — 快速开始、局域网聊天、私人服务器搭建、内网穿透、安全模型与故障排查。
+> **English**: [TUTORIAL_EN.md](TUTORIAL_EN.md) · **中文**: [TUTORIAL_ZH.md](TUTORIAL_ZH.md) · **入口**: [TUTORIAL.md](TUTORIAL.md)
 
 ## Features
 
