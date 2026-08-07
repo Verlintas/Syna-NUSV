@@ -237,3 +237,91 @@ class ServerTest {
         assertEquals(id1, id2, "重启后 serverId 应保持一致")
     }
 }
+
+class ServerManagementTest {
+
+    private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
+        val settings = SettingsRepository(MapSettings())
+        settings.username = name
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000)
+    }
+
+    @Test
+    fun kickAndBanBlocksRejoin() = runBlocking {
+        val server = SynaServer(0, "pw", "管理测试", Files.createTempDirectory("syna-kick"))
+        server.start()
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        try {
+            a.start()
+            val port = server.boundPort
+            val r1 = a.joinServer("127.0.0.1", port, "pw")
+            assertTrue(r1.isSuccess, "A 应先能加入")
+            val groupId = r1.getOrThrow()
+
+            // 服务器踢出并封禁
+            server.kickUser(a.userId)
+
+            // A 收到 GROUP_KICK → 本地群移除 + 断开
+            val kickDeadline = System.currentTimeMillis() + 8_000
+            while (a.serverState.value != ServerState.DISCONNECTED && System.currentTimeMillis() < kickDeadline) delay(200)
+            assertEquals(ServerState.DISCONNECTED, a.serverState.value, "被踢后应断开")
+            assertTrue(a.groups.value.none { it.id == groupId }, "被踢后群应被移除")
+            assertTrue(server.bannedUsers.value.contains(a.userId), "服务器应有封禁记录")
+
+            // 封禁期间无法重新加入
+            val r2 = a.joinServer("127.0.0.1", port, "pw")
+            assertTrue(r2.isFailure, "被封禁用户应无法重新加入")
+
+            // 解除封禁后可加入
+            server.unbanUser(a.userId)
+            val r3 = a.joinServer("127.0.0.1", port, "pw")
+            assertTrue(r3.isSuccess, "解除封禁后应能重新加入")
+        } finally {
+            server.stop()
+            a.stop()
+            scopeA.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun announcementBroadcastAndPersistToNewJoiner() = runBlocking {
+        val server = SynaServer(0, "pw", "公告测试", Files.createTempDirectory("syna-ann"))
+        server.start()
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        try {
+            a.start()
+            val port = server.boundPort
+            val r1 = a.joinServer("127.0.0.1", port, "pw")
+            assertTrue(r1.isSuccess)
+            val groupId = r1.getOrThrow()
+
+            server.setAnnouncement("今晚八点开黑！")
+            val annDeadline = System.currentTimeMillis() + 8_000
+            while (a.serverAnnouncement.value?.text != "今晚八点开黑！" && System.currentTimeMillis() < annDeadline) delay(200)
+            assertEquals("今晚八点开黑！", a.serverAnnouncement.value?.text, "在线成员应收到公告")
+            assertEquals(groupId, a.serverAnnouncement.value?.groupId)
+
+            // 新加入者也应收到当前公告
+            val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val b = newEngine("Bob", scopeB)
+            try {
+                b.start()
+                val rb = b.joinServer("127.0.0.1", port, "pw")
+                assertTrue(rb.isSuccess, "B 应能加入")
+                val bAnnDeadline = System.currentTimeMillis() + 8_000
+                while (b.serverAnnouncement.value?.text != "今晚八点开黑！" && System.currentTimeMillis() < bAnnDeadline) delay(200)
+                println("[ANN-DEBUG] bAnn=${b.serverAnnouncement.value} bGroups=${b.groups.value.map{it.id}}")
+                assertEquals("今晚八点开黑！", b.serverAnnouncement.value?.text, "新成员加入时应收到当前公告")
+            } finally {
+                b.stop()
+                scopeB.coroutineContext[Job]?.cancel()
+            }
+        } finally {
+            server.stop()
+            a.stop()
+            scopeA.coroutineContext[Job]?.cancel()
+        }
+    }
+}

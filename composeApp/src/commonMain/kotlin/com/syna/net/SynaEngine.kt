@@ -76,6 +76,9 @@ class SynaEngine(
     private val serverErrorM = MutableStateFlow<String?>(null)
     val serverError: StateFlow<String?> = serverErrorM.asStateFlow()
 
+    private val serverAnnouncementM = MutableStateFlow<Announcement?>(null)
+    val serverAnnouncement: StateFlow<Announcement?> = serverAnnouncementM.asStateFlow()
+
     private val blockedM = MutableStateFlow(settings.blockedPeerIds)
     val blockedContacts: StateFlow<List<String>> = blockedM.asStateFlow()
 
@@ -366,6 +369,40 @@ class SynaEngine(
             }
             FrameType.RECALL -> frame.body?.let { msgId -> chatStore.markRecalledByMsgId(msgId) }
             FrameType.FILE_CHUNK -> handleFileChunk(frame)
+            FrameType.ANNOUNCEMENT -> {
+                val ann = try {
+                    synaJson.decodeFromString(Announcement.serializer(), frame.body ?: return)
+                } catch (e: Exception) {
+                    return
+                }
+                serverAnnouncementM.value = ann
+                synaLog("Server") { "收到群公告: ${ann.text.take(30)}" }
+            }
+            FrameType.GROUP_KICK -> {
+                val event = try {
+                    synaJson.decodeFromString(GroupMemberEvent.serializer(), frame.body ?: return)
+                } catch (e: Exception) {
+                    return
+                }
+                if (event.memberId == userId) {
+                    synaLog("Server") { "已被服务器踢出" }
+                    removeGroupLocally(event.groupId)
+                    serverSession = null
+                    serverStateM.value = ServerState.DISCONNECTED
+                    notifyMessage("Syna", "你已被服务器移出群聊")
+                } else {
+                    groupsM.updateList { list ->
+                        list.map { group ->
+                            if (group.id == event.groupId) {
+                                group.copy(
+                                    memberIds = group.memberIds.filter { it != event.memberId },
+                                    memberNames = group.memberNames - event.memberId,
+                                )
+                            } else group
+                        }
+                    }
+                }
+            }
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
             FrameType.BURN_ACK -> frame.body?.let { msgId -> chatStore.removeMessageById(msgId) }
             else -> Unit
@@ -666,6 +703,10 @@ class SynaEngine(
             scheduleBurnPurge(groupId, msgId, ackTo = null, deliverAck = false, delayMs = BURN_ACK_FALLBACK_MS)
         }
         return msgId
+    }
+
+    fun dismissAnnouncement() {
+        serverAnnouncementM.value = null
     }
 
     /** 通过 IP:端口 + 密码加入私人服务器群聊 */

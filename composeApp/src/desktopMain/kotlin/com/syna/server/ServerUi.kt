@@ -1,6 +1,7 @@
 package com.syna.server
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +56,7 @@ class ServerController {
     val logs = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
     val boundPort = kotlinx.coroutines.flow.MutableStateFlow(0)
     val addressesText = kotlinx.coroutines.flow.MutableStateFlow("")
+    val bannedUsers = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
 
     fun start(port: Int, password: String, groupName: String, dataDir: String) {
         if (server != null) return
@@ -65,6 +67,7 @@ class ServerController {
             launch { s.messageCount.collect { messageCount.value = it } }
             launch { s.logs.collect { logs.value = it } }
             launch { s.isRunning.collect { isRunning.value = it } }
+            launch { s.bannedUsers.collect { bannedUsers.value = it } }
         }
         s.start()
         boundPort.value = s.boundPort
@@ -77,6 +80,12 @@ class ServerController {
         linkJob?.cancel()
         isRunning.value = false
     }
+
+    fun kick(userId: String) = server?.kickUser(userId)
+
+    fun unban(userId: String) = server?.unbanUser(userId)
+
+    fun announce(text: String) = server?.setAnnouncement(text)
 }
 
 @Composable
@@ -85,6 +94,7 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
     val members by controller.members.collectAsState()
     val messageCount by controller.messageCount.collectAsState()
     val logs by controller.logs.collectAsState()
+    val bannedUsers by controller.bannedUsers.collectAsState()
     val boundPort by controller.boundPort.collectAsState()
     val addressesText by controller.addressesText.collectAsState()
     val logListState = rememberLazyListState()
@@ -93,6 +103,7 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
     var password by remember { mutableStateOf(initialConfig.password) }
     var groupName by remember { mutableStateOf(initialConfig.groupName) }
     var dataDir by remember { mutableStateOf(initialConfig.dataDir) }
+    var announcementInput by remember { mutableStateOf("") }
 
     // 日志自动滚动到底部
     LaunchedEffect(logs.size) {
@@ -224,10 +235,57 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
                                         .background(Color(0xFF00A05A)),
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                Text("${member.name} (${member.id.take(8)}…)", style = MaterialTheme.typography.bodySmall)
+                                Text("${member.name} (${member.id.take(8)}…)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                                Text(
+                                    text = "踢出",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier
+                                        .clickable { controller.kick(member.id) }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                                )
                             }
                         }
                     }
+                }
+                // 封禁列表
+                val banned = bannedUsers
+                if (banned.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("封禁列表", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    banned.forEach { id ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
+                            Text(
+                                text = "解除",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .clickable { controller.unban(id) }
+                                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                            )
+                        }
+                    }
+                }
+                // 群公告
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("群公告:", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = announcementInput,
+                        onValueChange = { announcementInput = it },
+                        placeholder = { Text("输入公告内容，回车或点击发布") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = {
+                        if (announcementInput.isNotBlank()) {
+                            controller.announce(announcementInput)
+                            announcementInput = ""
+                        }
+                    }) { Text("发布") }
                 }
             }
         }

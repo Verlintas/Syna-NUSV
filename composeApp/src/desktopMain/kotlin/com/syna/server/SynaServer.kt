@@ -1,6 +1,7 @@
 package com.syna.server
 
 import com.syna.crypto.SynaCrypto
+import com.syna.net.Announcement
 import com.syna.net.FrameType
 import com.syna.net.GroupMemberEvent
 import com.syna.net.ServerAuth
@@ -53,6 +54,12 @@ class SynaServer(
     private val sessions = mutableListOf<ClientSession>()
     private val messages = mutableListOf<TransportFrame>()
     private val memberMap = mutableMapOf<String, ServerMember>()
+    private val banned = mutableSetOf<String>()
+    private var announcementText: String? = null
+    private val bansFile: Path = dataDir.resolve("bans.json")
+
+    private val bannedM = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
+    val bannedUsers: StateFlow<List<String>> = bannedM.asStateFlow()
 
     // ===== UI 可观测状态 =====
     private val runningM = kotlinx.coroutines.flow.MutableStateFlow(false)
@@ -84,6 +91,7 @@ class SynaServer(
         if (runningM.value) return
         runningM.value = true
         Files.createDirectories(dataDir)
+        loadBans()
         loadHistory()
         val ss = ServerSocket(port)
         serverSocket = ss
@@ -142,8 +150,12 @@ class SynaServer(
             val authFrame = session.receiveFrame() ?: return
             if (authFrame.type != FrameType.SRV_AUTH) return
             val auth = synaJson.decodeFromString(ServerAuth.serializer(), authFrame.body ?: return)
+            if (auth.userId in banned) {
+                log("[SynaServer] 拒绝封禁用户: ${auth.username} (${auth.userId.take(6)})")
+                return
+            }
             if (auth.password != password) {
-                 log("[SynaServer] 认证失败: ${auth.username} (${auth.userId.take(6)})")
+                log("[SynaServer] 认证失败: ${auth.username} (${auth.userId.take(6)})")
                 return
             }
             session.userId = auth.userId
@@ -170,7 +182,7 @@ class SynaServer(
                 )
             }
 
-            // 4. 下发群信息 + 成员密钥 + 历史
+            // 4. 下发群信息 + 成员密钥 + 历史 + 公告
             session.sendRaw(
                 TransportFrame(
                     type = FrameType.SRV_AUTH_OK,
@@ -189,6 +201,21 @@ class SynaServer(
                     ),
                 ),
             )
+            announcementText?.let { text ->
+                session.sendRaw(
+                    TransportFrame(
+                        type = FrameType.ANNOUNCEMENT,
+                        from = groupId,
+                        to = groupId,
+                        msgId = UUID.randomUUID().toString(),
+                        ts = System.currentTimeMillis(),
+                        body = synaJson.encodeToString(
+                            Announcement.serializer(),
+                            Announcement(groupId, text, System.currentTimeMillis(), "服务器"),
+                        ),
+                    ),
+                )
+            }
 
             // 5. 持续读取与中继
             while (true) {
@@ -353,6 +380,86 @@ class SynaServer(
         println("    Tailscale: 同一 Tailnet 内直接使用节点 IP:${boundPort}")
         println("  然后客户端输入穿透后的地址:端口 + 密码加入群聊")
         println("================================================")
+    }
+
+    private fun loadBans() {
+        try {
+            if (Files.exists(bansFile)) {
+                val ids = synaJson.decodeFromString<List<String>>(Files.readString(bansFile))
+                banned.addAll(ids)
+            }
+        } catch (e: Exception) {
+            log("[SynaServer] 封禁列表读取失败: ${e.message}")
+        }
+        publishBans()
+    }
+
+    private fun saveBans() {
+        try {
+            Files.writeString(bansFile, synaJson.encodeToString(banned.toList()))
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun publishBans() {
+        bannedM.value = banned.toList()
+    }
+
+    /** 踢出并封禁成员（GUI 调用） */
+    fun kickUser(userId: String) {
+        if (userId in banned) return
+        banned.add(userId)
+        saveBans()
+        publishBans()
+        // 发送踢出通知并断开连接
+        val session = synchronized(sessions) { sessions.firstOrNull { it.userId == userId } }
+        val member = memberMap[userId]
+        val kickFrame = TransportFrame(
+            type = FrameType.GROUP_KICK,
+            from = groupId,
+            to = groupId,
+            msgId = UUID.randomUUID().toString(),
+            ts = System.currentTimeMillis(),
+            body = synaJson.encodeToString(
+                GroupMemberEvent.serializer(),
+                GroupMemberEvent(groupId, userId, member?.name ?: userId),
+            ),
+        )
+        scope.launch {
+            session?.let {
+                try {
+                    it.sendRaw(kickFrame)
+                } catch (e: Exception) {
+                }
+                it.close()
+            }
+            broadcast(kickFrame, except = session)
+        }
+        log("[SynaServer] 已踢出并封禁: ${member?.name ?: userId} (${userId.take(6)})")
+    }
+
+    fun unbanUser(userId: String) {
+        banned.remove(userId)
+        saveBans()
+        publishBans()
+        log("[SynaServer] 已解除封禁: ${userId.take(6)}")
+    }
+
+    /** 发布群公告（GUI 调用），广播给所有在线成员 */
+    fun setAnnouncement(text: String) {
+        val trimmed = text.trim()
+        announcementText = trimmed
+        val ann = Announcement(groupId, trimmed, System.currentTimeMillis(), "服务器")
+        val frame = TransportFrame(
+            type = FrameType.ANNOUNCEMENT,
+            from = groupId,
+            to = groupId,
+            msgId = UUID.randomUUID().toString(),
+            ts = System.currentTimeMillis(),
+            body = synaJson.encodeToString(Announcement.serializer(), ann),
+        )
+        scope.launch { broadcast(frame, except = null) }
+        log("[SynaServer] 群公告已发布: ${trimmed.take(40)}")
     }
 
     fun localAddressesText(): String = localAddresses().joinToString(", ") { "$it:$boundPort" }

@@ -88,8 +88,32 @@ fun ChatScreen(
     }
 
     val chatMessages = messages[peerId] ?: emptyList()
+    val announcement by engine.serverAnnouncement.collectAsState()
 
     Column(modifier = modifier.fillMaxSize()) {
+        // 服务器群公告条
+        val ann = announcement
+        if (ann != null && ann.groupId == peerId && ann.text.isNotBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "📢 ${ann.text}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "✕",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.clickable { engine.dismissAnnouncement() }.padding(4.dp),
+                )
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
