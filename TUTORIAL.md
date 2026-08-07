@@ -14,10 +14,11 @@ This tutorial walks you through everything: LAN chat, private server, remote acc
 1. [Quick Start / 快速开始](#1-quick-start--快速开始)
 2. [LAN Features / 局域网功能](#2-lan-features--局域网功能)
 3. [Private Server / 私人服务器](#3-private-server--私人服务器)
-4. [Remote Access (NAT Traversal) / 远程接入（内网穿透）](#4-remote-access-nat-traversal--远程接入内网穿透)
-5. [Security Model / 安全模型](#5-security-model--安全模型)
-6. [Troubleshooting / 故障排查](#6-troubleshooting--故障排查)
-7. [Build & Distribute / 构建与分发](#7-build--distribute--构建与分发)
+4. [Physical Machine Setup / 实体机搭建教程](#4-physical-machine-setup--实体机搭建教程)
+5. [Remote Access (NAT Traversal) / 远程接入（内网穿透）](#5-remote-access-nat-traversal--远程接入内网穿透)
+6. [Security Model / 安全模型](#6-security-model--安全模型)
+7. [Troubleshooting / 故障排查](#7-troubleshooting--故障排查)
+8. [Build & Distribute / 构建与分发](#8-build--distribute--构建与分发)
 
 ---
 
@@ -157,7 +158,7 @@ java -jar syna-server.jar --ui
 1. In the app: **Contacts → 加入服务器**.
 2. Enter the server address (`IP:port` — LAN IP, public IP, or a tunnel domain), the password, and tap **加入服务器**.
 3. The server group chat opens with the full message history. The header shows 🖥 and connection state.
-4. If the server is behind NAT, see section 4 for remote access.
+4. If the server is behind NAT, see [section 5](#5-remote-access-nat-traversal--远程接入内网穿透) for remote access.
 
 **4. Data & persistence / 数据与持久化**
 
@@ -195,7 +196,7 @@ java -jar syna-server.jar --ui
 1. 应用中：**联系人 → 加入服务器**。
 2. 输入服务器地址（`IP:端口`——局域网 IP、公网 IP 或穿透域名均可）、密码，点击**加入服务器**。
 3. 自动进入服务器群聊，并拉取完整历史记录。标题栏显示 🖥 与连接状态。
-4. 服务器在路由器后面时，参考第 4 节远程接入。
+4. 服务器在路由器后面时，参考[第 5 节](#5-remote-access-nat-traversal--远程接入内网穿透)远程接入。
 
 **4. 数据与持久化**
 
@@ -205,7 +206,509 @@ java -jar syna-server.jar --ui
 
 ---
 
-## 4. Remote Access (NAT Traversal) / 远程接入（内网穿透）
+## 4. Physical Machine Setup / 实体机搭建教程
+
+### English
+
+**Who is this for?** Anyone with a spare PC, an old laptop, a NAS, or a Raspberry Pi who wants a **dedicated, always-on** chat server at home. Syna Server is very light — it uses only ~30–60 MB RAM, so even a 10-year-old machine runs it easily.
+
+**What you need / 需要准备**
+
+- One physical machine (Windows / macOS / Linux — see details below). A Raspberry Pi 3B+ or better works great.
+- Java 17 (JRE is enough, you do NOT need the full JDK).
+- The server jar: download `Syna-server-v0.2.1.jar` from the [GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases) page.
+- (Optional) Your router admin password for port forwarding — see [Router port forwarding](#router-port-forwarding-路由器端口转发) below.
+
+**The 4-step formula for every OS / 每个系统的通用四步**
+
+1. Install Java 17
+2. Put `syna-server.jar` in a fixed folder
+3. Start it with your password & group name
+4. Open the firewall port (and optionally enable auto-start)
+
+After that, anyone on your LAN joins with `你的内网IP:45880` + password. For friends outside your home, follow [Section 5](#5-remote-access-nat-traversal--远程接入内网穿透).
+
+---
+
+#### Windows（最主流，跟着点鼠标即可）
+
+**Step 1 — 安装 Java 17**
+
+1. Open [adoptium.net](https://adoptium.net) in a browser.
+2. Click **Windows x64** → download the `.msi` installer → run it → click **Next** all the way (keep all defaults).
+3. Verify: press `Win+R`, type `cmd`, press Enter, then type:
+   ```
+   java -version
+   ```
+   You should see something like `openjdk version "17..."`. Done.
+
+**Step 2 — 放置服务器程序**
+
+1. Create a folder: `D:\SynaServer` (or anywhere you like, avoid Chinese characters in the path).
+2. Move `syna-server.jar` into it.
+
+**Step 3 — 启动服务器**
+
+Open CMD (`Win+R` → `cmd`) and run:
+
+```
+java -jar D:\SynaServer\syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+```
+
+You should see the banner with `端口: 45880`. **Keep this window open** — closing it stops the server.
+
+> 想用图形界面？用 `java -jar D:\SynaServer\syna-server.jar --ui`，弹窗里点"启动服务器"即可。
+
+**Step 4 — 防火墙放行（新手最容易卡在这里！）**
+
+1. Press `Win` key, type **Windows Defender 防火墙**, open it.
+2. Click **高级设置** (left panel, needs admin).
+3. Click **入站规则** → right panel **新建规则…**
+4. Choose **端口** → Next → **TCP** + specific local ports: `45880` → Next → **允许连接** → Next → tick all three (域/专用/公用) → Next → name it `Syna Server` → **完成**.
+5. Now other devices can connect. (If you changed the port with `-p`, use that number instead.)
+
+**Optional — 开机自启（重启电脑后自动运行）**
+
+1. Press `Win+R`, type `shell:startup`, press Enter — a folder opens.
+2. Create a file `SynaServer.bat` inside it with:
+   ```bat
+   @echo off
+   java -jar D:\SynaServer\syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+   ```
+3. Done — the server starts automatically every login.
+
+**找到你的内网 IP（告诉朋友/家人用）**
+
+CMD 里输入 `ipconfig`，找到 **IPv4 地址**（类似 `192.168.1.100`）。局域网内其他人用 `192.168.1.100:45880` 加入。
+
+---
+
+#### macOS（同样很简单）
+
+**Step 1 — 安装 Java 17**
+
+- Option A (recommended for beginners): download the **macOS .dmg** from [adoptium.net](https://adoptium.net) (choose `Apple Silicon` if you have an M-series Mac, otherwise `x64`), open the dmg, double-click to install.
+- Option B (if you have Homebrew): `brew install --cask temurin@17`
+
+Verify in Terminal (`Cmd+Space` → `终端`):
+
+```
+java -version
+```
+
+**Step 2 — 放置与启动**
+
+```bash
+mkdir -p ~/SynaServer
+# 把下载的 syna-server.jar 移进去，然后：
+java -jar ~/SynaServer/syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+```
+
+Or use the GUI mode if you prefer clicking: `java -jar ~/SynaServer/syna-server.jar --ui`
+
+**Step 3 — 防火墙（如果开启过防火墙）**
+
+1. 系统设置 → 网络 → 防火墙.
+2. If it's on and Java isn't listed as allowed, click 选项 → add `java` and allow incoming connections.
+3. (Usually fine if the firewall was never turned on.)
+
+**Optional — 开机自启（launchd）**
+
+Create `/Library/LaunchDaemons/com.syna.server.plist` (needs admin):
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.syna.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/java</string>
+        <string>-jar</string>
+        <string>/Users/你的用户名/SynaServer/syna-server.jar</string>
+        <string>-p</string>
+        <string>45880</string>
+        <string>-w</string>
+        <string>你的密码</string>
+        <string>-g</string>
+        <string>你的群名</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+```
+
+Then:
+
+```bash
+sudo launchctl load /Library/LaunchDaemons/com.syna.server.plist
+```
+
+**找到你的内网 IP**：系统设置 → Wi-Fi → 详细信息 → IP 地址（如 `192.168.1.100`）。
+
+---
+
+#### Linux（Ubuntu / Debian / 树莓派，适合常年开机）
+
+> 树莓派也适用：树莓派装 64 位 Ubuntu / Raspberry Pi OS 后，下面的命令完全一样。
+
+**Step 1 — 安装 Java 17**
+
+```bash
+# Ubuntu / Debian / 树莓派(64位系统)
+sudo apt update
+sudo apt install -y openjdk-17-jre-headless
+
+# CentOS / RHEL / Rocky / AlmaLinux
+sudo dnf install -y java-17-openjdk-headless
+```
+
+验证：`java -version`
+
+**Step 2 — 创建专用用户与目录（推荐，安全）**
+
+```bash
+sudo useradd -r -m -d /opt/syna syna          # 创建只跑服务器的系统用户
+sudo mkdir -p /opt/syna
+sudo cp ~/下载/syna-server.jar /opt/syna/      # 把 jar 复制过去
+sudo chown -R syna:syna /opt/syna
+```
+
+**Step 3 — 防火墙放行（UFW 默认开启时）**
+
+```bash
+# Ubuntu UFW
+sudo ufw allow 45880/tcp
+sudo ufw status          # 确认 45880 是 ALLOW
+
+# CentOS firewalld
+sudo firewall-cmd --permanent --add-port=45880/tcp
+sudo firewall-cmd --reload
+```
+
+**Step 4 — 注册为 systemd 服务（开机自启 + 崩溃自动重启，一劳永逸）**
+
+Create `/etc/systemd/system/syna-server.service`:
+
+```ini
+[Unit]
+Description=Syna Private Chat Server
+After=network.target
+
+[Service]
+Type=simple
+User=syna
+WorkingDirectory=/opt/syna
+ExecStart=/usr/bin/java -jar /opt/syna/syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now syna-server          # 立即启动 + 开机自启
+systemctl status syna-server                     # 查看状态（绿色 active 即成功）
+```
+
+**Step 5 — 验证端口在听**
+
+```bash
+ss -tlnp | grep 45880
+```
+
+看到 `LISTEN` 即成功。内网 IP 用 `hostname -I` 查看（第一个类似 `192.168.1.100` 的就是）。
+
+> 服务器管理：`sudo systemctl restart syna-server` 重启 / `stop` 停止 / `journalctl -u syna-server -f` 看日志。
+
+---
+
+#### Router Port Forwarding / 路由器端口转发（想直连公网时）
+
+> 如果你用 frp/ngrok/Tailscale（见 [第 5 节](#5-remote-access-nat-traversal--远程接入内网穿透)），**跳过这里**。只有想让大家直接连你公网 IP 时才需要。
+
+1. 浏览器打开路由器管理页（通常是 `192.168.1.1` 或 `192.168.0.1`，看路由器背面标签），登录。
+2. 找到 **端口转发 / 虚拟服务器 / Port Forwarding / NAT 设置**（不同品牌叫法不同，通常在"高级设置"里）。
+3. 添加一条规则：
+   - 外部端口: `45880`
+   - 内部 IP: 服务器内网 IP（如 `192.168.1.100`）
+   - 内部端口: `45880`
+   - 协议: `TCP`
+   - 保存并重启路由器（部分路由器需要）。
+4. 公网访问: 打开 [ip.sb](https://ip.sb) 查你家的**公网 IP**，别人用 `公网IP:45880` + 密码即可加入。
+
+**两个常见坑：**
+- **运营商大内网（NAT444）**：查到的 IP 是 `100.64.x.x` 开头的就不是真公网，端口转发无效 → 直接用 frp/ngrok/Tailscale。
+- **家庭公网 IP 会变**：重启路由器可能换 IP。想固定就用 DDNS（花生壳、阿里云、no-ip 等），或者干脆用 Tailscale/frp。
+
+#### Verification Checklist / 搭建完成后的验证清单
+
+1. **本机测**：Syna 应用 → 联系人 → 加入服务器 → `127.0.0.1:45880` → 应能加入。
+2. **局域网测**：手机连同一 WiFi → 加入服务器 → 填服务器内网 IP:45880 → 应能加入。
+3. **公网测（如配置了）**：关掉 WiFi 用流量 → 加入服务器 → 填公网 IP:45880 → 应能加入。
+4. **重启测**：重启实体机 → 服务器自动起来（如配置了自启）→ 手机重新加入 → 历史消息还在。
+
+### 中文
+
+**这个教程给谁？** 家里有闲置电脑、旧笔记本、NAS 或树莓派，想搞一台**专门长期在线**的聊天服务器的人。Syna 服务器非常轻量——只占约 30–60 MB 内存，10 年前的机器都能轻松跑。
+
+**需要准备什么**
+
+- 一台实体机（Windows / macOS / Linux 均可，下面分系统讲）。树莓派 3B+ 及以上也行。
+- Java 17（只要 JRE 运行时即可，不需要完整 JDK）。
+- 服务器程序：到 [GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases) 下载 `Syna-server-v0.2.1.jar`。
+- （可选）路由器管理员密码——用于端口转发，见下文"路由器端口转发"。
+
+**每个系统通用的四步公式**
+
+1. 安装 Java 17
+2. 把 `syna-server.jar` 放到固定文件夹
+3. 用你的密码和群名启动它
+4. 放行防火墙端口（可选：配置开机自启）
+
+之后，局域网内任何人用 `你的内网IP:45880` + 密码 即可加入。外面的朋友要连，请看[第 5 节](#5-remote-access-nat-traversal--远程接入内网穿透)。
+
+---
+
+#### Windows（最主流，跟着点鼠标即可）
+
+**第 1 步 — 安装 Java 17**
+
+1. 浏览器打开 [adoptium.net](https://adoptium.net)。
+2. 选 **Windows x64** → 下载 `.msi` 安装包 → 运行 → 一路**下一步**（保持默认）。
+3. 验证：按 `Win+R`，输入 `cmd` 回车，然后输入：
+   ```
+   java -version
+   ```
+   看到 `openjdk version "17..."` 就成功了。
+
+**第 2 步 — 放置服务器程序**
+
+1. 建一个文件夹：`D:\SynaServer`（路径别带中文）。
+2. 把 `syna-server.jar` 移进去。
+
+**第 3 步 — 启动服务器**
+
+按 `Win+R` → `cmd` → 运行：
+
+```
+java -jar D:\SynaServer\syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+```
+
+看到 `端口: 45880` 的横幅就成功了。**这个窗口别关**——关了服务器就停了。
+
+> 想用图形界面？运行 `java -jar D:\SynaServer\syna-server.jar --ui`，在窗口里点"启动服务器"即可。
+
+**第 4 步 — 防火墙放行（新手最容易卡在这里！）**
+
+1. 按 `Win` 键，输入 **Windows Defender 防火墙**，打开。
+2. 左侧点 **高级设置**（需要管理员）。
+3. 左侧点 **入站规则** → 右侧 **新建规则…**
+4. 选 **端口** → 下一步 → **TCP** + 特定本地端口 `45880` → 下一步 → **允许连接** → 下一步 → 三个（域/专用/公用）都勾上 → 下一步 → 命名 `Syna Server` → **完成**。
+5. 这样别人就能连了（如果你用 `-p` 改了端口，就填那个端口）。
+
+**可选 — 开机自启（重启电脑后自动运行）**
+
+1. 按 `Win+R`，输入 `shell:startup` 回车，会打开一个文件夹。
+2. 在里面新建文件 `SynaServer.bat`，内容：
+   ```bat
+   @echo off
+   java -jar D:\SynaServer\syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+   ```
+3. 完成——每次登录自动启动服务器。
+
+**找到你的内网 IP（告诉别人用）**
+
+CMD 输入 `ipconfig`，找 **IPv4 地址**（形如 `192.168.1.100`）。局域网内别人用 `192.168.1.100:45880` 加入。
+
+---
+
+#### macOS（同样很简单）
+
+**第 1 步 — 安装 Java 17**
+
+- 方式 A（新手推荐）：到 [adoptium.net](https://adoptium.net) 下载 **macOS .dmg**（M 系列芯片选 `Apple Silicon`，Intel 选 `x64`），打开 dmg 双击安装。
+- 方式 B（装了 Homebrew 的话）：`brew install --cask temurin@17`
+
+终端验证（`Cmd+空格` → `终端`）：
+
+```
+java -version
+```
+
+**第 2 步 — 放置与启动**
+
+```bash
+mkdir -p ~/SynaServer
+# 把下载的 syna-server.jar 移进去，然后：
+java -jar ~/SynaServer/syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+```
+
+喜欢点鼠标就用图形界面：`java -jar ~/SynaServer/syna-server.jar --ui`
+
+**第 3 步 — 防火墙（如果开过防火墙）**
+
+1. 系统设置 → 网络 → 防火墙。
+2. 如果防火墙开着且 java 不在允许列表，点"选项"把 `java` 添加为允许接收传入连接。
+3. （没开过防火墙的话通常不用管。）
+
+**可选 — 开机自启（launchd）**
+
+创建 `/Library/LaunchDaemons/com.syna.server.plist`（需要管理员权限）：
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.syna.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/java</string>
+        <string>-jar</string>
+        <string>/Users/你的用户名/SynaServer/syna-server.jar</string>
+        <string>-p</string>
+        <string>45880</string>
+        <string>-w</string>
+        <string>你的密码</string>
+        <string>-g</string>
+        <string>你的群名</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+```
+
+然后：
+
+```bash
+sudo launchctl load /Library/LaunchDaemons/com.syna.server.plist
+```
+
+**找到你的内网 IP**：系统设置 → Wi-Fi → 详细信息 → IP 地址（如 `192.168.1.100`）。
+
+---
+
+#### Linux（Ubuntu / Debian / 树莓派，适合常年开机）
+
+> 树莓派同样适用：装 64 位 Ubuntu 或 Raspberry Pi OS 后，下面命令完全一样。
+
+**第 1 步 — 安装 Java 17**
+
+```bash
+# Ubuntu / Debian / 树莓派（64 位系统）
+sudo apt update
+sudo apt install -y openjdk-17-jre-headless
+
+# CentOS / RHEL / Rocky / AlmaLinux
+sudo dnf install -y java-17-openjdk-headless
+```
+
+验证：`java -version`
+
+**第 2 步 — 创建专用用户与目录（推荐，更安全）**
+
+```bash
+sudo useradd -r -m -d /opt/syna syna          # 创建只跑服务器的系统用户
+sudo mkdir -p /opt/syna
+sudo cp ~/下载/syna-server.jar /opt/syna/      # 把 jar 复制过去
+sudo chown -R syna:syna /opt/syna
+```
+
+**第 3 步 — 防火墙放行（UFW 默认开启时需要）**
+
+```bash
+# Ubuntu 的 UFW
+sudo ufw allow 45880/tcp
+sudo ufw status          # 确认 45880 是 ALLOW
+
+# CentOS 的 firewalld
+sudo firewall-cmd --permanent --add-port=45880/tcp
+sudo firewall-cmd --reload
+```
+
+**第 4 步 — 注册 systemd 服务（开机自启 + 崩溃自动重启，一劳永逸）**
+
+创建 `/etc/systemd/system/syna-server.service`：
+
+```ini
+[Unit]
+Description=Syna Private Chat Server
+After=network.target
+
+[Service]
+Type=simple
+User=syna
+WorkingDirectory=/opt/syna
+ExecStart=/usr/bin/java -jar /opt/syna/syna-server.jar -p 45880 -w 你的密码 -g 你的群名
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+然后：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now syna-server          # 立即启动 + 开机自启
+systemctl status syna-server                     # 绿色 active 即成功
+```
+
+**第 5 步 — 验证端口在听**
+
+```bash
+ss -tlnp | grep 45880
+```
+
+看到 `LISTEN` 即成功。内网 IP 用 `hostname -I` 查看（第一个类似 `192.168.1.100` 的就是）。
+
+> 日常管理：`sudo systemctl restart syna-server` 重启 / `stop` 停止 / `journalctl -u syna-server -f` 实时看日志。
+
+---
+
+#### 路由器端口转发（想公网直连时）
+
+> 用 frp/ngrok/Tailscale（见[第 5 节](#5-remote-access-nat-traversal--远程接入内网穿透)）的话**跳过这里**。只有想让别人直接连你家公网 IP 才需要。
+
+1. 浏览器打开路由器管理页（通常是 `192.168.1.1` 或 `192.168.0.1`，路由器背面标签上有），登录。
+2. 找 **端口转发 / 虚拟服务器 / Port Forwarding / NAT 设置**（不同品牌叫法不同，一般在"高级设置"里）。
+3. 添加规则：
+   - 外部端口: `45880`
+   - 内部 IP: 服务器的内网 IP（如 `192.168.1.100`）
+   - 内部端口: `45880`
+   - 协议: `TCP`
+   - 保存，部分路由器需要重启才生效。
+4. 公网访问：打开 [ip.sb](https://ip.sb) 查你家的**公网 IP**，别人用 `公网IP:45880` + 密码 加入。
+
+**两个常见坑：**
+- **运营商大内网（NAT444）**：查到的 IP 以 `100.64.x.x` 开头就不是真公网，端口转发无效 → 直接用 frp/ngrok/Tailscale。
+- **公网 IP 会变**：重启路由器可能换 IP。想固定用 DDNS（花生壳、阿里云、no-ip 等），或者干脆用 Tailscale/frp。
+
+#### 搭建完成后的验证清单
+
+1. **本机测**：Syna 应用 → 联系人 → 加入服务器 → `127.0.0.1:45880` → 应能加入。
+2. **局域网测**：手机连同一 WiFi → 加入服务器 → 填服务器内网 IP:45880 → 应能加入。
+3. **公网测（如配置了）**：关掉 WiFi 用手机流量 → 加入服务器 → 填公网 IP:45880 → 应能加入。
+4. **重启测**：重启实体机 → 服务器自动起来（如配置了自启）→ 手机重新加入 → 历史消息还在。
+
+---
+
+## 5. Remote Access (NAT Traversal) / 远程接入（内网穿透）
 
 ### English
 
@@ -307,7 +810,7 @@ ngrok 会输出一个公网地址（如 `0.tcp.jp.ngrok.io:12345`），连同密
 
 ---
 
-## 5. Security Model / 安全模型
+## 6. Security Model / 安全模型
 
 ### English
 
@@ -361,7 +864,7 @@ ngrok 会输出一个公网地址（如 `0.tcp.jp.ngrok.io:12345`），连同密
 
 ---
 
-## 6. Troubleshooting / 故障排查
+## 7. Troubleshooting / 故障排查
 
 ### English
 
@@ -393,7 +896,7 @@ ngrok 会输出一个公网地址（如 `0.tcp.jp.ngrok.io:12345`），连同密
 
 ---
 
-## 7. Build & Distribute / 构建与分发
+## 8. Build & Distribute / 构建与分发
 
 ### English
 
