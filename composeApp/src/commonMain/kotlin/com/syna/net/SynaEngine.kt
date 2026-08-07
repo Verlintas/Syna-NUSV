@@ -465,6 +465,52 @@ class SynaEngine(
         }
     }
 
+    /** 撤回消息：仅本人 2 分钟内的消息，广播 RECALL 并本地标记 */
+    suspend fun recallMessage(conversationId: String, msgId: String) {
+        val msg = chatStore.messageById(msgId) ?: return
+        if (msg.senderId != userId) {
+            synaLog("Recall") { "只能撤回自己的消息" }
+            return
+        }
+        if (msg.recalled) return
+        if (System.currentTimeMillis() - msg.ts > 2 * 60_000L) {
+            synaLog("Recall") { "超过 2 分钟无法撤回" }
+            return
+        }
+        val frame = TransportFrame(
+            type = FrameType.RECALL,
+            from = userId,
+            to = conversationId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = msgId,
+        )
+        chatStore.markRecalledByMsgId(msgId)
+        val serverSession = serverSession
+        try {
+            when {
+                serverSession != null && serverSession.groupId == conversationId -> serverSession.channel.send(frame)
+                groupsM.value.any { it.id == conversationId } -> {
+                    val group = groupsM.value.first { it.id == conversationId }
+                    group.memberIds.filter { it != userId }.forEach { memberId ->
+                        val p = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
+                        try {
+                            send(p, frame)
+                        } catch (e: Exception) {
+                        }
+                    }
+                }
+                else -> {
+                    val peer = peersM.value.firstOrNull { it.id == conversationId }
+                    if (peer != null) send(peer, frame)
+                }
+            }
+            synaLog("Recall") { "已撤回 $msgId" }
+        } catch (e: Exception) {
+            synaLog("Recall") { "撤回失败: ${e.message}" }
+        }
+    }
+
     /** 删除联系人：屏蔽其发现广播并清除会话 */
     fun removeContact(peerId: String) {
         settings.blockedPeerIds = settings.blockedPeerIds + peerId

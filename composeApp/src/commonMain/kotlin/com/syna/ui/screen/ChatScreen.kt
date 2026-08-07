@@ -1,7 +1,9 @@
 package com.syna.ui.screen
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.syna.chat.ChatMessage
+import com.syna.chat.MessageKind
 import com.syna.chat.MessageStatus
 import com.syna.net.SynaEngine
 import com.syna.util.formatTime
@@ -63,6 +66,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
     var burn by remember { mutableStateOf(engine.settings.burnAfterReadingEnabled) }
+    var recallTarget by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(peerId) {
         engine.chatStore.activeConversationId.value = peerId
@@ -185,9 +189,45 @@ fun ChatScreen(
                     isMine = message.senderId == engine.userId,
                     showSenderName = isGroup && message.senderId != engine.userId,
                     senderName = group?.memberNames?.get(message.senderId) ?: message.senderId,
+                    onLongClick = { recallTarget = message.id },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+        }
+
+        // 撤回确认
+        val targetId = recallTarget
+        if (targetId != null) {
+            val target = chatMessages.firstOrNull { it.id == targetId }
+            val canRecall = target != null &&
+                target.senderId == engine.userId &&
+                !target.recalled &&
+                System.currentTimeMillis() - target.ts <= 2 * 60_000L
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { recallTarget = null },
+                title = { Text("消息操作") },
+                text = {
+                    Text(
+                        if (target == null) "消息不存在"
+                        else if (!canRecall) "仅可撤回自己 2 分钟内发送的消息"
+                        else "撤回这条消息？双方都将看到「已撤回」。",
+                    )
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(
+                        onClick = {
+                            recallTarget = null
+                            if (canRecall) {
+                                scope.launch { engine.recallMessage(peerId, targetId) }
+                            }
+                        },
+                        enabled = canRecall,
+                    ) { Text("撤回") }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { recallTarget = null }) { Text("取消") }
+                },
+            )
         }
 
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)
@@ -268,12 +308,14 @@ private fun typingSubtitle(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MessageBubble(
     message: ChatMessage,
     isMine: Boolean,
     modifier: Modifier = Modifier,
     showSenderName: Boolean = false,
     senderName: String = "",
+    onLongClick: () -> Unit = {},
 ) {
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
@@ -307,22 +349,35 @@ private fun MessageBubble(
                         ),
                     )
                     .background(bubbleColor)
+                    .combinedClickable(onClick = {}, onLongClick = onLongClick)
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                Row {
-                    if (message.burnAfterReading) {
-                        Text("🔥", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.size(4.dp))
-                    }
-                    if (message.encrypted) {
-                        Text("🔒", style = MaterialTheme.typography.bodyMedium)
-                        Spacer(Modifier.size(4.dp))
-                    }
+                if (message.recalled) {
                     Text(
-                        text = message.body,
+                        text = "[消息已撤回]",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = textColor,
+                        color = textColor.copy(alpha = 0.7f),
                     )
+                } else {
+                    Row {
+                        if (message.burnAfterReading) {
+                            Text("🔥", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.size(4.dp))
+                        }
+                        if (message.encrypted) {
+                            Text("🔒", style = MaterialTheme.typography.bodyMedium)
+                            Spacer(Modifier.size(4.dp))
+                        }
+                        when (message.kind) {
+                            MessageKind.IMAGE -> Text("🖼 ${message.fileName ?: "图片"}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                            MessageKind.FILE -> Text("📄 ${message.fileName ?: "文件"}${message.fileSize?.let { " · ${it / 1024}KB" } ?: ""}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                            MessageKind.TEXT -> Text(
+                                text = message.body,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = textColor,
+                            )
+                        }
+                    }
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {

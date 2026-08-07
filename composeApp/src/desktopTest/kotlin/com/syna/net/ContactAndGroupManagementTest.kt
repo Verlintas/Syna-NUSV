@@ -137,3 +137,111 @@ class ContactAndGroupManagementTest {
         }
     }
 }
+
+class TypingAndRecallTest {
+
+    private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
+        val settings = SettingsRepository(MapSettings())
+        settings.username = name
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+    }
+
+    @Test
+    fun typingSignalVisibleToPeer() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        val b = newEngine("Bob", scopeB)
+        try {
+            a.start()
+            b.start()
+            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
+                .first { it.username == "Bob" }
+            a.sendTyping(bob.id)
+            val deadline = System.currentTimeMillis() + 5_000
+            while (b.typing.value[a.userId] == null && System.currentTimeMillis() < deadline) delay(200)
+            assertTrue(b.typing.value[a.userId] != null, "B 应看到 A 的输入状态")
+            assertEquals(a.userId, b.typing.value[a.userId]?.second, "输入状态应记录发送者")
+            // 3 秒后状态应被清理（轮询等待 sweep 执行）
+            val cleanDeadline = System.currentTimeMillis() + 6_000
+            while (b.typing.value.isNotEmpty() && System.currentTimeMillis() < cleanDeadline) delay(300)
+            assertTrue(b.typing.value.isEmpty(), "输入状态应超时清理")
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun recallMessageMarksOnBothSides() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        val b = newEngine("Bob", scopeB)
+        try {
+            a.start()
+            b.start()
+            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
+                .first { it.username == "Bob" }
+            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
+                .first { it.username == "Alice" }
+
+            val msgId = a.sendText(bob.id, "这条要撤回")
+            val recvDeadline = System.currentTimeMillis() + 8_000
+            while (b.chatStore.messages.value[alice.id]?.any { it.id == msgId } != true &&
+                System.currentTimeMillis() < recvDeadline
+            ) {
+                delay(200)
+            }
+            assertTrue(b.chatStore.messages.value[alice.id]?.any { it.id == msgId } == true)
+
+            a.recallMessage(bob.id, msgId)
+            val recallDeadline = System.currentTimeMillis() + 8_000
+            while (System.currentTimeMillis() < recallDeadline) {
+                val bRecalled = b.chatStore.messages.value[alice.id]?.firstOrNull { it.id == msgId }?.recalled == true
+                val aRecalled = a.chatStore.messages.value[bob.id]?.firstOrNull { it.id == msgId }?.recalled == true
+                if (bRecalled && aRecalled) break
+                delay(200)
+            }
+            assertTrue(a.chatStore.messages.value[bob.id]?.firstOrNull { it.id == msgId }?.recalled == true, "A 侧应标记已撤回")
+            assertTrue(b.chatStore.messages.value[alice.id]?.firstOrNull { it.id == msgId }?.recalled == true, "B 侧应标记已撤回")
+            assertEquals("[消息已撤回]", b.chatStore.messages.value[alice.id]?.firstOrNull { it.id == msgId }?.body)
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun cannotRecallOthersMessage() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("Alice", scopeA)
+        val b = newEngine("Bob", scopeB)
+        try {
+            a.start()
+            b.start()
+            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
+                .first { it.username == "Bob" }
+            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
+                .first { it.username == "Alice" }
+            val msgId = a.sendText(bob.id, "Bob 想撤回这条")
+            val recvDeadline = System.currentTimeMillis() + 8_000
+            while (b.chatStore.messages.value[alice.id]?.any { it.id == msgId } != true &&
+                System.currentTimeMillis() < recvDeadline
+            ) {
+                delay(200)
+            }
+            // B 尝试撤回 A 的消息 → 应被拒绝
+            b.recallMessage(alice.id, msgId)
+            delay(1_000)
+            assertTrue(
+                b.chatStore.messages.value[alice.id]?.firstOrNull { it.id == msgId }?.recalled != true,
+                "非本人消息不可撤回",
+            )
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+}
