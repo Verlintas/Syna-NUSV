@@ -8,6 +8,7 @@ import com.syna.core.ConnectionMode
 import com.syna.crypto.SynaCrypto
 import com.syna.crypto.createIdentityStore
 import com.syna.storage.SettingsRepository
+import com.syna.util.notifyMessage
 import com.syna.util.saveReceivedFile
 import com.syna.util.synaLog
 import kotlinx.coroutines.CoroutineScope
@@ -259,6 +260,11 @@ class SynaEngine(
                 if (chatStore.activeConversationId.value == frame.from) {
                     chatStore.markAllRead(frame.from)
                     sendReceipt(frame.from, frame.msgId)
+                } else {
+                    notifyMessage(
+                        peerName,
+                        if (frame.burn) "[阅后即焚消息]" else (frame.body ?: "").take(80),
+                    )
                 }
             }
             FrameType.GROUP_MESSAGE -> {
@@ -287,6 +293,11 @@ class SynaEngine(
                     }
                     if (chatStore.activeConversationId.value == groupId) {
                         chatStore.markAllRead(groupId)
+                    } else {
+                        notifyMessage(
+                            "${group.name} · $senderName",
+                            if (frame.burn) "[阅后即焚消息]" else (frame.body ?: "").take(80),
+                        )
                     }
                 }
             }
