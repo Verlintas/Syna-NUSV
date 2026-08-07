@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Syna license audit tool, Copyright (C) 2026 Verlintas
+
 #!/usr/bin/env python3
 """License audit for Syna: scan the Gradle dependency cache, extract each
 artifact's declared license from its POM, and classify compatibility with
