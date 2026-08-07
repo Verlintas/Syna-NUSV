@@ -17,8 +17,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -51,13 +51,34 @@ fun ContactsScreen(
                 style = MaterialTheme.typography.headlineSmall,
                 modifier = Modifier.weight(1f),
             )
-            OutlinedButton(onClick = onJoinServer) {
+            Text(
+                text = "⟳ 刷新",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .clickable { engine.refreshContacts() }
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
+            )
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            TextButton(onClick = onJoinServer) {
                 Text("加入服务器")
             }
-            Spacer(Modifier.size(8.dp))
-            OutlinedButton(onClick = onCreateGroup) {
+            TextButton(onClick = onCreateGroup) {
                 Text("发起群聊")
             }
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "刷新 = 立即重播广播并重算在线状态",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.CenterVertically),
+            )
         }
         if (peers.isEmpty()) {
             Box(
@@ -110,6 +131,14 @@ fun ContactsScreen(
                                     if (peer.online) Color(0xFF00A05A)
                                     else MaterialTheme.colorScheme.outlineVariant,
                                 ),
+                        )
+                        Text(
+                            text = "✕",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
+                            modifier = Modifier
+                                .clickable { engine.removeContact(peer.id) }
+                                .padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
                         )
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)

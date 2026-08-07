@@ -15,16 +15,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.syna.core.ConnectionMode
+import com.syna.net.SynaEngine
 import com.syna.ui.theme.ThemeMode
 
 @Composable
 fun SettingsScreen(
     modifier: Modifier = Modifier,
+    engine: SynaEngine,
     username: String,
     connectionMode: ConnectionMode,
     themeMode: ThemeMode,
@@ -180,6 +185,36 @@ fun SettingsScreen(
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("临时聊天关闭时，会话记录将保留在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(24.dp))
+
+        SectionTitle("已屏蔽的联系人")
+        val blocked by engine.blockedContacts.collectAsState()
+        if (blocked.isEmpty()) {
+            Text(
+                "暂无（在联系人页点 ✕ 删除联系人后会出现在这里，可随时解除屏蔽）",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            blocked.forEach { id ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = id,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { engine.unblockContact(id) }) {
+                        Text("解除屏蔽")
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(24.dp))
     }
 }

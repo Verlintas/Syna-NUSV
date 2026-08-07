@@ -13,6 +13,7 @@ interface DiscoveryService {
     val announcements: SharedFlow<Pair<DiscoveryAnnouncement, String>>
     val localAddress: String
     fun start()
+    fun sendNow()
     fun stop()
 }
 

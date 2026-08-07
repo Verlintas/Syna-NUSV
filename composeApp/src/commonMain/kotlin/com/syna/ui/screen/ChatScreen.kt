@@ -96,7 +96,7 @@ fun ChatScreen(
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                )
+                ) 
                 Text(
                     text = if (isGroup) {
                         val server = engine.isServerGroup(groupId = peerId)
@@ -119,6 +119,45 @@ fun ChatScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+            // 群管理：群主可解散，成员可退出（服务器群除外）
+            if (isGroup && !engine.isServerGroup(peerId)) {
+                val isCreator = group?.creatorId == engine.userId
+                var showLeaveDialog by remember { mutableStateOf(false) }
+                Text(
+                    text = if (isCreator) "解散" else "退出",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .clickable { showLeaveDialog = true }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+                if (showLeaveDialog) {
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { showLeaveDialog = false },
+                        title = { Text(if (isCreator) "解散群聊" else "退出群聊") },
+                        text = {
+                            Text(
+                                if (isCreator) "确定解散「${group?.name}」吗？所有成员将收到通知，群聊记录将被清除。"
+                                else "确定退出「${group?.name}」吗？退出后不再接收该群消息。",
+                            )
+                        },
+                        confirmButton = {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    showLeaveDialog = false
+                                    scope.launch {
+                                        if (isCreator) engine.dissolveGroup(peerId) else engine.leaveGroup(peerId)
+                                    }
+                                    onBack()
+                                },
+                            ) { Text("确定") }
+                        },
+                        dismissButton = {
+                            androidx.compose.material3.TextButton(onClick = { showLeaveDialog = false }) { Text("取消") }
+                        },
+                    )
+                }
             }
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant)

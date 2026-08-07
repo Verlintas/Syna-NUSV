@@ -54,6 +54,15 @@ class SettingsRepository(private val settings: Settings = Settings()) {
             settings.putInt(KEY_TEMP_CHAT_TTL_HOURS, value)
         }
 
+    var blockedPeerIds: List<String>
+        get() {
+            val raw = settings.getStringOrNull(KEY_BLOCKED_PEERS)
+            return if (raw.isNullOrBlank()) emptyList() else raw.split("\n").filter { it.isNotBlank() }
+        }
+        set(value) {
+            settings.putString(KEY_BLOCKED_PEERS, value.distinct().joinToString("\n"))
+        }
+
     private companion object {
         const val KEY_USER_ID = "user_id"
         const val KEY_USERNAME = "username"
@@ -63,5 +72,6 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         const val KEY_BURN_ENABLED = "burn_after_reading"
         const val KEY_TEMP_CHAT_ENABLED = "temp_chat_enabled"
         const val KEY_TEMP_CHAT_TTL_HOURS = "temp_chat_ttl_hours"
+        const val KEY_BLOCKED_PEERS = "blocked_peers"
     }
 }

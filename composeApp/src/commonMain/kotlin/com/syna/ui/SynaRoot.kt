@@ -119,6 +119,7 @@ fun SynaRoot(
             )
             else -> SettingsScreen(
                 modifier = Modifier.padding(padding),
+                engine = engine,
                 username = username,
                 connectionMode = connectionMode,
                 themeMode = themeMode,

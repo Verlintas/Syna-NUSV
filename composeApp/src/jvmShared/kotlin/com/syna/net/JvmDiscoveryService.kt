@@ -102,6 +102,19 @@ class JvmDiscoveryService(
         }
     }
 
+    override fun sendNow() {
+        val payload = announcement.encode()
+        try {
+            val groupAddr = InetAddress.getByName(DISCOVERY_MULTICAST_GROUP)
+            val broadcast = InetAddress.getByName(DISCOVERY_BROADCAST)
+            sender?.let { out ->
+                out.send(DatagramPacket(payload, payload.size, groupAddr, DISCOVERY_PORT))
+                out.send(DatagramPacket(payload, payload.size, broadcast, DISCOVERY_PORT))
+            }
+        } catch (_: Exception) {
+        }
+    }
+
     override fun stop() {
         jobs.forEach { it.cancel() }
         jobs.clear()

@@ -73,6 +73,9 @@ class SynaEngine(
     private val serverErrorM = MutableStateFlow<String?>(null)
     val serverError: StateFlow<String?> = serverErrorM.asStateFlow()
 
+    private val blockedM = MutableStateFlow(settings.blockedPeerIds)
+    val blockedContacts: StateFlow<List<String>> = blockedM.asStateFlow()
+
     private var serverSession: ServerSession? = null
 
     val serverGroupId: String?
@@ -111,7 +114,7 @@ class SynaEngine(
 
         scope.launch {
             discovery.announcements.collect { (ann, ip) ->
-                if (ann.id != userId) {
+                if (ann.id != userId && !isBlocked(ann.id)) {
                     updatePeer(ann, ip, System.currentTimeMillis(), online = true)
                     sendKeyFrame(ann.id, PeerAddr(ip, ann.tcpPort))
                     flushOutbox(peerFrom(ann, ip))
@@ -314,6 +317,15 @@ class SynaEngine(
                     }
                 }
             }
+            FrameType.GROUP_DISSOLVE -> {
+                val event = try {
+                    synaJson.decodeFromString(GroupMemberEvent.serializer(), frame.body ?: return)
+                } catch (e: Exception) {
+                    return
+                }
+                removeGroupLocally(event.groupId)
+                synaLog("Group") { "群已解散: ${event.groupId.take(8)}" }
+            }
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
             FrameType.BURN_ACK -> frame.body?.let { msgId -> chatStore.removeMessageById(msgId) }
             else -> Unit
@@ -402,6 +414,72 @@ class SynaEngine(
         group.memberIds.filter { it != userId }.forEach { memberId ->
             sendGroupEvent(memberId, FrameType.GROUP_LEAVE, event)
         }
+        chatStore.removeConversation(groupId)
+        if (chatStore.activeConversationId.value == groupId) {
+            chatStore.activeConversationId.value = null
+        }
+    }
+
+    /** 群主解散群聊：通知所有成员并本地清除 */
+    suspend fun dissolveGroup(groupId: String) {
+        val group = groupsM.value.firstOrNull { it.id == groupId } ?: return
+        if (group.creatorId != userId) {
+            synaLog("Group") { "只有群主可以解散群聊" }
+            return
+        }
+        val event = GroupMemberEvent(groupId = groupId, memberId = userId, memberName = username)
+        val frame = TransportFrame(
+            type = FrameType.GROUP_DISSOLVE,
+            from = userId,
+            to = groupId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = synaJson.encodeToString(GroupMemberEvent.serializer(), event),
+        )
+        group.memberIds.filter { it != userId }.forEach { memberId ->
+            try {
+                val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
+                send(peer, frame)
+            } catch (e: Exception) {
+            }
+        }
+        removeGroupLocally(groupId)
+        synaLog("Group") { "已解散群聊: ${group.name}" }
+    }
+
+    private fun removeGroupLocally(groupId: String) {
+        groupsM.updateList { list -> list.filterNot { it.id == groupId } }
+        chatStore.removeConversation(groupId)
+        if (chatStore.activeConversationId.value == groupId) {
+            chatStore.activeConversationId.value = null
+        }
+    }
+
+    /** 删除联系人：屏蔽其发现广播并清除会话 */
+    fun removeContact(peerId: String) {
+        settings.blockedPeerIds = settings.blockedPeerIds + peerId
+        blockedM.updateList { it + peerId }
+        peersM.updateList { list -> list.filterNot { it.id == peerId } }
+        chatStore.removeConversation(peerId)
+        if (chatStore.activeConversationId.value == peerId) {
+            chatStore.activeConversationId.value = null
+        }
+        synaLog("Contact") { "已删除联系人 ${peerId.take(8)}" }
+    }
+
+    fun unblockContact(peerId: String) {
+        settings.blockedPeerIds = settings.blockedPeerIds.filterNot { it == peerId }
+        blockedM.updateList { it.filterNot { id -> id == peerId } }
+        synaLog("Contact") { "已解除屏蔽 ${peerId.take(8)}" }
+    }
+
+    fun isBlocked(peerId: String): Boolean = peerId in blockedM.value
+
+    /** 手动刷新：立即广播自身存在并重算在线状态（排障用） */
+    fun refreshContacts() {
+        discovery?.sendNow()
+        sweep()
+        synaLog("Discovery") { "手动刷新完成（已广播存在并重算在线状态）" }
     }
 
     suspend fun sendGroupText(groupId: String, text: String, burn: Boolean = false): String {
@@ -701,7 +779,7 @@ class SynaEngine(
             discovery = d
             scope.launch {
                 d.announcements.collect { (a, ip) ->
-                    if (a.id != userId) {
+                    if (a.id != userId && !isBlocked(a.id)) {
                         updatePeer(a, ip, System.currentTimeMillis(), online = true)
                         sendKeyFrame(a.id, PeerAddr(ip, a.tcpPort))
                         flushOutbox(peerFrom(a, ip))

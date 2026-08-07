@@ -39,6 +39,7 @@ enum class FrameType {
     GROUP_INVITE,
     GROUP_JOIN,
     GROUP_LEAVE,
+    GROUP_DISSOLVE,
     GROUP_MESSAGE,
     EPHEMERAL_SESSION,
     SRV_HELLO,
