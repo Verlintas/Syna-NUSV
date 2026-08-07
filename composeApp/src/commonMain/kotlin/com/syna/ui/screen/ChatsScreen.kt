@@ -26,6 +26,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.syna.chat.Conversation
 import com.syna.net.SynaEngine
+import com.syna.ui.MaxWidthContainer
 import com.syna.util.formatTime
 
 @Composable
@@ -33,7 +34,8 @@ fun ChatsScreen(engine: SynaEngine, onOpenChat: (String) -> Unit, modifier: Modi
     val conversations by engine.chatStore.conversations.collectAsState()
     val sorted = conversations.sortedByDescending { it.lastTs }
 
-    Column(modifier = modifier.fillMaxSize()) {
+    MaxWidthContainer(modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "会话",
             style = MaterialTheme.typography.headlineSmall,
@@ -57,6 +59,7 @@ fun ChatsScreen(engine: SynaEngine, onOpenChat: (String) -> Unit, modifier: Modi
                 }
             }
         }
+    }
     }
 }
 

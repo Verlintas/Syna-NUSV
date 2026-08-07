@@ -20,6 +20,7 @@ interface DiscoveryService {
 interface ConnectionManager {
     val incoming: SharedFlow<IncomingEvent>
     val localTcpPort: Int
+    val localUdpPort: Int
     fun start()
     suspend fun send(addr: PeerAddr, frame: TransportFrame)
     fun stop()

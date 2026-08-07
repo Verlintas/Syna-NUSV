@@ -3,7 +3,7 @@ package com.syna.net
 import kotlinx.serialization.Serializable
 
 @Serializable
-data class PeerAddr(val ip: String, val tcpPort: Int)
+data class PeerAddr(val ip: String, val tcpPort: Int, val udpPort: Int = UDP_DATA_PORT)
 
 data class Peer(
     val id: String,

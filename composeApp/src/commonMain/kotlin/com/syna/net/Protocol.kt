@@ -15,6 +15,7 @@ const val BURN_DISPLAY_MS = 8_000L
 const val BURN_ACK_FALLBACK_MS = 60_000L
 const val SERVER_CHANNEL_INFO = "syna-server-channel"
 const val SERVER_GROUP_INFO = "syna-server-group"
+const val MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024
 
 val synaJson: Json = Json {
     ignoreUnknownKeys = true
@@ -45,6 +46,7 @@ enum class FrameType {
     EPHEMERAL_SESSION,
     RECALL,
     ANNOUNCEMENT,
+    REQ_KEY,
     SRV_HELLO,
     SRV_AUTH,
     SRV_AUTH_OK,
@@ -58,6 +60,8 @@ data class DiscoveryAnnouncement(
     val device: String,
     val tcpPort: Int,
     val version: String,
+    // UDP 数据通道端口：每实例独立，支持同机多实例/多设备并存（旧客户端缺省 45878）
+    val udpPort: Int = UDP_DATA_PORT,
 )
 
 @Serializable

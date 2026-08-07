@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
@@ -35,8 +36,7 @@ class ContactAndGroupManagementTest {
             a.start()
             b.start()
 
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
             a.sendText(bob.id, "handshake")
             val keyDeadline = System.currentTimeMillis() + 8_000
             while (a.peerKeys.value[bob.id] == null && System.currentTimeMillis() < keyDeadline) delay(200)
@@ -81,8 +81,7 @@ class ContactAndGroupManagementTest {
             a.start()
             b.start()
 
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
             assertTrue(a.peers.value.any { it.id == bob.id })
 
             // 删除联系人
@@ -120,8 +119,7 @@ class ContactAndGroupManagementTest {
             a.start()
             b.start()
 
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
 
             // 手动刷新不应清除已有联系人，也不应抛异常
             a.refreshContacts()
@@ -157,8 +155,7 @@ class TypingAndRecallTest {
         try {
             a.start()
             b.start()
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
             a.sendTyping(bob.id)
             val deadline = System.currentTimeMillis() + 5_000
             while (b.typing.value[a.userId] == null && System.currentTimeMillis() < deadline) delay(200)
@@ -183,10 +180,8 @@ class TypingAndRecallTest {
         try {
             a.start()
             b.start()
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
-            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
-                .first { it.username == "Alice" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
+            val alice = waitForPeer(b, "Alice") ?: throw AssertionError("b 未发现 Alice")
 
             val msgId = a.sendText(bob.id, "这条要撤回")
             val recvDeadline = System.currentTimeMillis() + 8_000
@@ -223,10 +218,8 @@ class TypingAndRecallTest {
         try {
             a.start()
             b.start()
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
-            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
-                .first { it.username == "Alice" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
+            val alice = waitForPeer(b, "Alice") ?: throw AssertionError("b 未发现 Alice")
             val msgId = a.sendText(bob.id, "Bob 想撤回这条")
             val recvDeadline = System.currentTimeMillis() + 8_000
             while (b.chatStore.messages.value[alice.id]?.any { it.id == msgId } != true &&
@@ -265,10 +258,8 @@ class FileTransferTest {
         try {
             a.start()
             b.start()
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
-            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
-                .first { it.username == "Alice" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
+            val alice = waitForPeer(b, "Alice") ?: throw AssertionError("b 未发现 Alice")
 
             // 跨多块的大文件（256KB）
             val original = ByteArray(256 * 1024) { (it % 251).toByte() }
@@ -307,10 +298,8 @@ class FileTransferTest {
         try {
             a.start()
             b.start()
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
-            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
-                .first { it.username == "Alice" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
+            val alice = waitForPeer(b, "Alice") ?: throw AssertionError("b 未发现 Alice")
 
             val png = ByteArray(1024) { 0x55 }
             a.sendFile(bob.id, "photo.png", png, "image/png")
@@ -348,10 +337,8 @@ class ReplyAndMentionTest {
         try {
             a.start()
             b.start()
-            val bob = a.peers.first { list -> list.any { it.username == "Bob" && it.online } }
-                .first { it.username == "Bob" }
-            val alice = b.peers.first { list -> list.any { it.username == "Alice" && it.online } }
-                .first { it.username == "Alice" }
+            val bob = waitForPeer(a, "Bob") ?: throw AssertionError("a 未发现 Bob")
+            val alice = waitForPeer(b, "Alice") ?: throw AssertionError("b 未发现 Alice")
 
             val originalId = a.sendText(bob.id, "原始消息")
             val recvDeadline = System.currentTimeMillis() + 8_000
@@ -394,6 +381,99 @@ class ReplyAndMentionTest {
             }
             val gReply = b.chatStore.messages.value[groupId]?.firstOrNull { it.body == "群引用" }
             assertEquals(originalGroup?.id, gReply?.replyToId, "群聊引用回复应正确传递")
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+}
+
+
+/** 带超时的发现等待：返回 null 表示超时（挂起时用于诊断） */
+private suspend fun waitForPeer(engine: SynaEngine, username: String, timeoutMs: Long = 12_000): com.syna.net.Peer? {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    while (System.currentTimeMillis() < deadline) {
+        val p = engine.peers.value.firstOrNull { it.username == username && it.online }
+        if (p != null) return p
+        delay(200)
+    }
+    println("[WAIT-DEBUG] 等待 $username 超时，当前 peers: ${engine.peers.value.map { "${it.username}/${it.online}" }}")
+    return null
+}
+
+class StabilityTest {
+
+    private fun newEngine(name: String, scope: CoroutineScope, mode: com.syna.core.ConnectionMode = com.syna.core.ConnectionMode.AUTO): SynaEngine {
+        val settings = SettingsRepository(MapSettings())
+        settings.username = name
+        settings.connectionMode = mode
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+    }
+
+    @Test
+    fun twoInstancesOnSameHostChatViaUdp() = runBlocking {
+        // 模拟同一台电脑跑两个实例：各自独立的 UDP 数据端口（动态端口），互不冲突
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("UdpAlice", scopeA, com.syna.core.ConnectionMode.UDP)
+        val b = newEngine("UdpBob", scopeB, com.syna.core.ConnectionMode.UDP)
+        try {
+            a.start()
+            b.start()
+            val bob = waitForPeer(a, "UdpBob") ?: throw AssertionError("a 未发现 UdpBob")
+            val alice = waitForPeer(b, "UdpAlice") ?: throw AssertionError("b 未发现 UdpAlice")
+
+            // 双方应通过公告学习到对方的独立 UDP 端口
+            println("[UDP-DEBUG] A 视角 B udpPort=${bob.addr.udpPort}")
+            println("[UDP-DEBUG] B 视角 A udpPort=${alice.addr.udpPort}")
+
+            // UDP 模式下互发消息（TCP 不参与）
+            val received = mutableListOf<String>()
+            val job = scopeB.launch {
+                b.incoming.collect { event ->
+                    if (event is IncomingEvent.PeerFrame && event.frame.type == FrameType.TEXT) {
+                        received.add(event.frame.body ?: "")
+                    }
+                }
+            }
+            val aRaw = mutableListOf<String>()
+            val aJob = scopeA.launch {
+                a.rawIncoming.collect { f -> aRaw.add("${f.type}:${f.body?.take(20)}") }
+            }
+            a.sendText(bob.id, "UDP 通道你好")
+            b.sendText(alice.id, "UDP 通道回话")
+            val deadline = System.currentTimeMillis() + 8_000
+            while (received.size < 1 && System.currentTimeMillis() < deadline) delay(200)
+            assertTrue(received.any { it == "UDP 通道你好" }, "UDP 通道应能互相收发: $received")
+            val aReceived = a.chatStore.messages.value[bob.id]?.any { it.body == "UDP 通道回话" } == true
+            println("[UDP-DEBUG] A raw: $aRaw")
+            println("[UDP-DEBUG] A store: ${a.chatStore.messages.value.keys} ${a.chatStore.messages.value.values.flatten().map { it.body }}")
+            assertTrue(aReceived, "A 应通过 UDP 收到 B 的消息")
+            job.cancel()
+            aJob.cancel()
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun oversizedFileRejected() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = newEngine("OversizedAlice", scopeA)
+        val b = newEngine("OversizedBob", scopeB)
+        try {
+            a.start()
+            b.start()
+            val bob = waitForPeer(a, "OversizedBob") ?: throw AssertionError("a 未发现 OversizedBob")
+
+            // 超过 200MB 的"文件"应被拒绝且不产生消息
+            val huge = ByteArray(com.syna.net.MAX_FILE_SIZE_BYTES + 1)
+            a.sendFile(bob.id, "huge.bin", huge)
+            delay(500)
+            assertTrue(a.chatStore.messages.value[bob.id].orEmpty().none { it.fileName == "huge.bin" }, "超大文件不应发送")
+            assertTrue(b.chatStore.messages.value[a.userId].orEmpty().none { it.fileName == "huge.bin" }, "接收方不应收到超大文件")
         } finally {
             a.stop(); b.stop()
             scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()

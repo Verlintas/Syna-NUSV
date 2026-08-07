@@ -31,6 +31,9 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
     override val localTcpPort: Int
         get() = server?.localPort ?: 0
 
+    override val localUdpPort: Int
+        get() = 0
+
     override fun start() {
         val ss = ServerSocket(0)
         server = ss

@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.syna.net.SynaEngine
+import com.syna.ui.MaxWidthContainer
 
 @Composable
 fun ContactsScreen(
@@ -39,7 +40,8 @@ fun ContactsScreen(
 ) {
     val peers by engine.peers.collectAsState()
 
-    Column(modifier = modifier.fillMaxSize()) {
+    MaxWidthContainer(modifier = modifier) {
+        Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -145,5 +147,6 @@ fun ContactsScreen(
                 }
             }
         }
+    }
     }
 }

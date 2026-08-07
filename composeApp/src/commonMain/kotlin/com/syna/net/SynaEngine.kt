@@ -124,6 +124,7 @@ class SynaEngine(
             device = device,
             tcpPort = tcp.localTcpPort,
             version = version,
+            udpPort = udp.localUdpPort,
         )
         val discovery = createDiscoveryService(announcement, discoveryIntervalMs).also { it.start() }
 
@@ -229,11 +230,35 @@ class SynaEngine(
                     event.copyWith(frame.copy(body = plain))
                 } catch (e: Exception) {
                     synaLog("Crypto") { "decrypt FAILED from=${frame.from.take(6)} type=${frame.type}: ${e.message}" }
+                    // UDP 通道可能丢失过对方的公钥帧：主动请求重发，保证自愈
+                    sendKeyRequest(frame.from)
                     event
                 }
+            } else {
+                // 没有对方的公钥（UDP 下 KEY 帧可能丢失）：请求重发
+                sendKeyRequest(frame.from)
             }
         }
         return event
+    }
+
+    private suspend fun sendKeyRequest(peerId: String) {
+        if (serverSession != null) {
+            sendServerKeyFrame()
+            return
+        }
+        val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
+        val frame = TransportFrame(
+            type = FrameType.REQ_KEY,
+            from = userId,
+            to = peerId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+        )
+        try {
+            send(peer, frame)
+        } catch (e: Exception) {
+        }
     }
 
     private suspend fun handleChatFrame(frame: TransportFrame) {
@@ -368,6 +393,15 @@ class SynaEngine(
                 typingM.updateMap { it + (conversationId to (System.currentTimeMillis() to frame.from)) }
             }
             FrameType.RECALL -> frame.body?.let { msgId -> chatStore.markRecalledByMsgId(msgId) }
+            FrameType.REQ_KEY -> {
+                // 对方请求我们的公钥：立即发送（绕过 30s 节流）
+                if (serverSession != null) {
+                    sendServerKeyFrame()
+                } else {
+                    val peer = peersM.value.firstOrNull { it.id == frame.from } ?: return
+                    sendKeyFrame(frame.from, peer.addr)
+                }
+            }
             FrameType.FILE_CHUNK -> handleFileChunk(frame)
             FrameType.ANNOUNCEMENT -> {
                 val ann = try {
@@ -852,8 +886,12 @@ class SynaEngine(
         }
     }
 
-    /** 发送文件/图片：64KB 分块，支持 1:1 / 局域网群 / 服务器群 */
+    /** 发送文件/图片：64KB 分块，支持 1:1 / 局域网群 / 服务器群；单文件上限 200MB 防内存溢出 */
     suspend fun sendFile(conversationId: String, fileName: String, bytes: ByteArray, mimeType: String = "application/octet-stream") {
+        if (bytes.size > MAX_FILE_SIZE_BYTES) {
+            synaLog("File") { "拒绝发送超大文件 ${fileName} (${bytes.size}B > 200MB)" }
+            return
+        }
         val chunkSize = 64 * 1024
         val totalChunks = ((bytes.size + chunkSize - 1) / chunkSize).coerceAtLeast(1)
         val fileId = newMsgId()
@@ -1013,7 +1051,7 @@ class SynaEngine(
                 id = ann.id,
                 username = ann.username,
                 device = ann.device,
-                addr = PeerAddr(ip, ann.tcpPort),
+                addr = PeerAddr(ip, ann.tcpPort, ann.udpPort),
                 version = ann.version,
                 lastSeen = now,
                 online = online,
@@ -1100,6 +1138,7 @@ class SynaEngine(
             device = device,
             tcpPort = tcp?.localTcpPort ?: 0,
             version = version,
+            udpPort = udp?.localUdpPort ?: UDP_DATA_PORT,
         )
         discovery?.let {
             it.stop()
@@ -1238,7 +1277,7 @@ class SynaEngine(
         id = ann.id,
         username = ann.username,
         device = ann.device,
-        addr = PeerAddr(ip, ann.tcpPort),
+        addr = PeerAddr(ip, ann.tcpPort, ann.udpPort),
         version = ann.version,
         lastSeen = System.currentTimeMillis(),
         online = true,

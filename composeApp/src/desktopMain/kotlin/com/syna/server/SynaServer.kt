@@ -80,7 +80,7 @@ class SynaServer(
     }
 
     private fun publishMembers() {
-        membersM.value = memberMap.values.toList()
+        synchronized(memberMap) { membersM.value = memberMap.values.toList() }
     }
 
     private fun publishMessageCount() {
@@ -150,7 +150,7 @@ class SynaServer(
             val authFrame = session.receiveFrame() ?: return
             if (authFrame.type != FrameType.SRV_AUTH) return
             val auth = synaJson.decodeFromString(ServerAuth.serializer(), authFrame.body ?: return)
-            if (auth.userId in banned) {
+            if (synchronized(banned) { auth.userId in banned }) {
                 log("[SynaServer] 拒绝封禁用户: ${auth.username} (${auth.userId.take(6)})")
                 return
             }
@@ -162,7 +162,7 @@ class SynaServer(
 
             // 3. 注册成员 + 广播加入
             val isNew = auth.userId !in memberMap
-            memberMap[auth.userId] = ServerMember(auth.userId, auth.username, auth.publicKeyB64)
+            synchronized(memberMap) { memberMap[auth.userId] = ServerMember(auth.userId, auth.username, auth.publicKeyB64) }
             publishMembers()
             log("[SynaServer] 成员加入: ${auth.username} (${auth.userId.take(6)})${if (isNew) "" else " 重新连接"}")
             if (isNew) {
@@ -195,7 +195,7 @@ class SynaServer(
                         ServerAuthOk(
                             groupId = groupId,
                             groupName = groupName,
-                            members = memberMap.values.toList(),
+                            members = synchronized(memberMap) { memberMap.values.toList() },
                             history = messages.toList(),
                         ),
                     ),
@@ -231,7 +231,7 @@ class SynaServer(
                 log("[SynaServer] 成员离开: $uid")
                 val remaining = sessions.any { it.userId == uid }
                 if (!remaining) {
-                    memberMap.remove(uid)
+                    synchronized(memberMap) { memberMap.remove(uid) }
                     publishMembers()
                     broadcast(
                         TransportFrame(
@@ -285,11 +285,13 @@ class SynaServer(
             }
             FrameType.GROUP_MESSAGE, FrameType.KEY, FrameType.TEXT, FrameType.READ,
             FrameType.GROUP_JOIN, FrameType.GROUP_LEAVE, FrameType.EPHEMERAL_SESSION,
-            FrameType.TYPING, FrameType.FILE_CHUNK, FrameType.ANNOUNCEMENT,
+            FrameType.TYPING, FrameType.FILE_CHUNK, FrameType.ANNOUNCEMENT, FrameType.REQ_KEY,
             -> {
                 if (frame.type == FrameType.KEY) {
-                    memberMap[frame.from]?.let {
-                        memberMap[frame.from] = it.copy(publicKeyB64 = frame.body)
+                    synchronized(memberMap) {
+                        memberMap[frame.from]?.let {
+                            memberMap[frame.from] = it.copy(publicKeyB64 = frame.body)
+                        }
                     }
                 }
                 if (frame.type == FrameType.GROUP_MESSAGE || frame.type == FrameType.KEY) {
@@ -386,7 +388,7 @@ class SynaServer(
         try {
             if (Files.exists(bansFile)) {
                 val ids = synaJson.decodeFromString<List<String>>(Files.readString(bansFile))
-                banned.addAll(ids)
+                synchronized(banned) { banned.addAll(ids) }
             }
         } catch (e: Exception) {
             log("[SynaServer] 封禁列表读取失败: ${e.message}")
@@ -402,18 +404,18 @@ class SynaServer(
     }
 
     private fun publishBans() {
-        bannedM.value = banned.toList()
+        synchronized(banned) { bannedM.value = banned.toList() }
     }
 
     /** 踢出并封禁成员（GUI 调用） */
     fun kickUser(userId: String) {
         if (userId in banned) return
-        banned.add(userId)
+        synchronized(banned) { banned.add(userId) }
         saveBans()
         publishBans()
         // 发送踢出通知并断开连接
         val session = synchronized(sessions) { sessions.firstOrNull { it.userId == userId } }
-        val member = memberMap[userId]
+        val member = synchronized(memberMap) { memberMap[userId] }
         val kickFrame = TransportFrame(
             type = FrameType.GROUP_KICK,
             from = groupId,
@@ -439,7 +441,7 @@ class SynaServer(
     }
 
     fun unbanUser(userId: String) {
-        banned.remove(userId)
+        synchronized(banned) { banned.remove(userId) }
         saveBans()
         publishBans()
         log("[SynaServer] 已解除封禁: ${userId.take(6)}")

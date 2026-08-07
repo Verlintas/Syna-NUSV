@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.decodeToImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.produceState
@@ -90,7 +91,11 @@ fun ChatScreen(
     val chatMessages = messages[peerId] ?: emptyList()
     val announcement by engine.serverAnnouncement.collectAsState()
 
-    Column(modifier = modifier.fillMaxSize()) {
+    androidx.compose.foundation.layout.BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        // 气泡最大宽度：屏宽 72%，上限 560dp（手机/平板/桌面通用）
+        val bubbleMaxWidth = (maxWidth * com.syna.ui.BUBBLE_MAX_WIDTH_RATIO)
+            .coerceAtMost(com.syna.ui.BUBBLE_ABSOLUTE_MAX_DP.dp)
+    Column(modifier = Modifier.fillMaxSize()) {
         // 服务器群公告条
         val ann = announcement
         if (ann != null && ann.groupId == peerId && ann.text.isNotBlank()) {
@@ -224,6 +229,7 @@ fun ChatScreen(
                     senderName = group?.memberNames?.get(message.senderId) ?: message.senderId,
                     onLongClick = { recallTarget = message.id },
                     allMessages = chatMessages,
+                    maxBubbleWidth = bubbleMaxWidth,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -413,6 +419,7 @@ fun ChatScreen(
             )
         }
     }
+    } // BoxWithConstraints
 }
 
 @Composable
@@ -456,6 +463,7 @@ private fun MessageBubble(
     senderName: String = "",
     onLongClick: () -> Unit = {},
     allMessages: List<ChatMessage> = emptyList(),
+    maxBubbleWidth: Dp = 280.dp,
 ) {
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
@@ -479,7 +487,7 @@ private fun MessageBubble(
             }
             Box(
                 modifier = Modifier
-                    .widthIn(max = 280.dp)
+                    .widthIn(max = maxBubbleWidth)
                     .clip(
                         RoundedCornerShape(
                             topStart = if (isMine) 16.dp else 4.dp,
@@ -540,7 +548,7 @@ private fun MessageBubble(
                                             bitmap = bmp,
                                             contentDescription = message.fileName,
                                             modifier = Modifier
-                                                .widthIn(max = 220.dp)
+                                                .widthIn(max = maxBubbleWidth * 0.8f)
                                                 .clip(RoundedCornerShape(8.dp)),
                                         )
                                     } else {

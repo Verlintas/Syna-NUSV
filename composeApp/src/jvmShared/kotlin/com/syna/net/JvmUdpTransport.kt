@@ -26,19 +26,18 @@ class JvmUdpTransport(private val myId: String) : ConnectionManager {
     override val localTcpPort: Int
         get() = 0
 
+    // UDP 数据通道端口：每实例独立（临时端口），通过发现公告广播，支持同机多实例
+    override val localUdpPort: Int
+        get() = socket?.localPort ?: 0
+
     override fun start() {
         try {
             val s = DatagramSocket(null)
             s.setOption(java.net.StandardSocketOptions.SO_REUSEADDR, true)
-            try {
-                s.setOption(java.net.StandardSocketOptions.SO_REUSEPORT, true)
-            } catch (_: Exception) {
-            }
-            s.bind(java.net.InetSocketAddress(UDP_DATA_PORT))
+            s.bind(java.net.InetSocketAddress(0))
             socket = s
             scope.launch { receiveLoop(s) }
         } catch (_: SocketException) {
-        } catch (_: java.nio.channels.AlreadyBoundException) {
         }
     }
 
@@ -71,7 +70,7 @@ class JvmUdpTransport(private val myId: String) : ConnectionManager {
                 bytes,
                 bytes.size,
                 InetAddress.getByName(addr.ip),
-                UDP_DATA_PORT,
+                addr.udpPort,
             )
             s.send(packet)
         }

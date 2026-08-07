@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.syna.core.ConnectionMode
 import com.syna.net.SynaEngine
+import com.syna.ui.MaxWidthContainer
 import com.syna.ui.theme.ThemeMode
 
 @Composable
@@ -45,8 +46,9 @@ fun SettingsScreen(
     tempChatEnabled: Boolean,
     tempChatTtlHours: Int,
 ) {
+    MaxWidthContainer(modifier = modifier) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
@@ -216,6 +218,7 @@ fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(24.dp))
+    }
     }
 }
 
