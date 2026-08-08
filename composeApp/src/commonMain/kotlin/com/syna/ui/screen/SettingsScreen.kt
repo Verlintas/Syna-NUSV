@@ -72,6 +72,10 @@ fun SettingsScreen(
     e2eEnabled: Boolean,
     tempChatEnabled: Boolean,
     tempChatTtlHours: Int,
+    shieldEnabled: Boolean,
+    shieldScreenProtection: Boolean,
+    onShieldEnabledChange: (Boolean) -> Unit,
+    onShieldScreenProtectionChange: (Boolean) -> Unit,
 ) {
     MaxWidthContainer(modifier = modifier) {
     Column(
@@ -259,6 +263,46 @@ fun SettingsScreen(
                 },
             )
         }
+        Spacer(Modifier.height(16.dp))
+
+        SectionTitle("Mirtazapine Shield")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onShieldEnabledChange(!shieldEnabled) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("🛡 实时安全监测与应用锁", style = MaterialTheme.typography.bodyLarge)
+                Text(
+                    "检测 Root/模拟器/调试/VPN变更/后台切换/监控类应用，发现威胁即锁定应用，需生物识别解锁",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = shieldEnabled, onCheckedChange = onShieldEnabledChange)
+        }
+        if (shieldEnabled) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onShieldScreenProtectionChange(!shieldScreenProtection) }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("防截屏保护", style = MaterialTheme.typography.bodyLarge)
+                    Text("阻止其他应用截取/录屏本应用画面", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Switch(checked = shieldScreenProtection, onCheckedChange = onShieldScreenProtectionChange)
+            }
+        }
+        Text(
+            "能力边界：应用层无法检测系统级预装监控/企业 MDM（设备所有者权限），本功能不声称能隔绝此类监测。桌面端仅提供闲置自动锁定。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("权限")

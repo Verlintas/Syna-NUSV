@@ -26,11 +26,23 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import com.syna.shield.AndroidShieldEngine
 
 class MainActivity : ComponentActivity() {
+    override fun onResume() {
+        super.onResume()
+        // 注册给 Mirtazapine Shield（生物识别宿主与防截屏）
+        AndroidShieldEngine.attach(this)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        AndroidShieldEngine.detach()
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {

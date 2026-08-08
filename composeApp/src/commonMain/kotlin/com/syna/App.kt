@@ -20,6 +20,7 @@
 package com.syna
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,8 +28,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.syna.net.SynaEngine
+import com.syna.shield.ShieldController
+import com.syna.shield.createShieldEngine
 import com.syna.storage.SettingsRepository
 import com.syna.ui.SynaRoot
+import com.syna.ui.screen.ShieldLockScreen
 import com.syna.ui.theme.SynaTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +49,15 @@ fun App() {
             settings = settings,
             scope = scope,
         )
+    }
+    // Mirtazapine Shield：实时安全监测 + 应用锁
+    val shield = remember {
+        ShieldController(enabled = settings.shieldEnabled)
+    }
+    val shieldState by shield.state.collectAsState()
+    LaunchedEffect(Unit) {
+        shield.start()
+        shield.setSecureScreen(settings.shieldScreenProtection)
     }
     LaunchedEffect(Unit) {
         engine.start()
@@ -70,6 +83,10 @@ fun App() {
     var tempChatTtlHours by remember { mutableStateOf(settings.tempChatTtlHours) }
 
     SynaTheme(themeMode = themeMode) {
+        if (shieldState == com.syna.shield.ShieldState.LOCKED) {
+            ShieldLockScreen(controller = shield)
+            return@SynaTheme
+        }
         SynaRoot(
             engine = engine,
             username = username,
@@ -106,6 +123,16 @@ fun App() {
             onTempChatTtlChange = {
                 tempChatTtlHours = it
                 settings.tempChatTtlHours = it
+            },
+            shieldEnabled = shield.enabled.collectAsState().value,
+            shieldScreenProtection = settings.shieldScreenProtection,
+            onShieldEnabledChange = {
+                shield.setEnabled(it)
+                settings.shieldEnabled = it
+            },
+            onShieldScreenProtectionChange = {
+                settings.shieldScreenProtection = it
+                shield.setSecureScreen(it)
             },
         )
     }

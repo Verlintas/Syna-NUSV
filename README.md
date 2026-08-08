@@ -20,6 +20,7 @@
 - ✅ **Typing indicator**: live "正在输入…" status in 1:1, LAN groups and server groups
 - ✅ **Message recall**: long-press your message → recall within 2 minutes, both sides marked
 - ✅ **Quote reply & @mentions**: long-press → reply with quoted preview; @ member picker in groups
+- ✅ **Mirtazapine Shield**: real-time security monitor & app lock — detects Root / emulator / USB debugging / VPN changes / background switching / monitoring apps, locks the app on any threat (full-screen lock page), unlock requires biometrics (Android); screen-capture protection; idle auto-lock on desktop. Capability boundary: app-layer detection cannot see system-level pre-installed monitoring / MDM (device-owner privileges) — this is stated honestly in-app.
 - ✅ **System notifications**: Android notification bar / desktop tray popup for new messages
 - ✅ **Connection mode switching**: Auto / TCP (reliable) / UDP (fast) / Host Hotspot
 - ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), **group owner can dissolve the group**, members can leave

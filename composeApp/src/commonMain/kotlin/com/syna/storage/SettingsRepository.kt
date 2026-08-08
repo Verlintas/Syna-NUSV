@@ -73,6 +73,18 @@ class SettingsRepository(private val settings: Settings = Settings()) {
             settings.putInt(KEY_TEMP_CHAT_TTL_HOURS, value)
         }
 
+    var shieldEnabled: Boolean
+        get() = settings.getBoolean(KEY_SHIELD_ENABLED, false)
+        set(value) {
+            settings.putBoolean(KEY_SHIELD_ENABLED, value)
+        }
+
+    var shieldScreenProtection: Boolean
+        get() = settings.getBoolean(KEY_SHIELD_SCREEN_PROTECTION, true)
+        set(value) {
+            settings.putBoolean(KEY_SHIELD_SCREEN_PROTECTION, value)
+        }
+
     var blockedPeerIds: List<String>
         get() {
             val raw = settings.getStringOrNull(KEY_BLOCKED_PEERS)
@@ -92,5 +104,7 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         const val KEY_TEMP_CHAT_ENABLED = "temp_chat_enabled"
         const val KEY_TEMP_CHAT_TTL_HOURS = "temp_chat_ttl_hours"
         const val KEY_BLOCKED_PEERS = "blocked_peers"
+        const val KEY_SHIELD_ENABLED = "shield_enabled"
+        const val KEY_SHIELD_SCREEN_PROTECTION = "shield_screen_protection"
     }
 }
