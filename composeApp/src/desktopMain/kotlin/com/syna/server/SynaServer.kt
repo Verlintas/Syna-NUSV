@@ -124,8 +124,10 @@ class SynaServer(
             serverSocket?.close()
         } catch (_: Exception) {
         }
-        sessions.forEach { it.close() }
-        sessions.clear()
+        // 加锁遍历关闭，避免与 handleClient 的并发 remove 竞争（ConcurrentModificationException）
+        val toClose = synchronized(sessions) { sessions.toList() }
+        toClose.forEach { it.close() }
+        synchronized(sessions) { sessions.clear() }
         scope.coroutineContext[Job]?.cancel()
     }
 

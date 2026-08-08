@@ -38,6 +38,8 @@ import kotlinx.coroutines.withContext
 actual fun createTcpTransport(myId: String, myPublicKeyB64: String): ConnectionManager =
     JvmTcpTransport(myId, myPublicKeyB64)
 
+private const val MAX_CONNECTIONS = 64
+
 class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: String) : ConnectionManager {
 
     private val incomingM = MutableSharedFlow<IncomingEvent>(extraBufferCapacity = 256)
@@ -46,6 +48,7 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var server: ServerSocket? = null
     private val outbound = ConcurrentHashMap<String, Socket>()
+    private val activeConnections = java.util.concurrent.atomic.AtomicInteger(0)
 
     override val localTcpPort: Int
         get() = server?.localPort ?: 0
@@ -93,10 +96,24 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
             val socket = try {
                 ss.accept()
             } catch (e: IOException) {
-                e.printStackTrace()
-                return
+                return // 服务器关闭或异常，正常退出
             }
-            scope.launch { readLoop(socket) }
+            // 并发连接数上限，防止异常场景资源耗尽
+            if (activeConnections.incrementAndGet() > MAX_CONNECTIONS) {
+                activeConnections.decrementAndGet()
+                try {
+                    socket.close()
+                } catch (_: Exception) {
+                }
+                continue
+            }
+            scope.launch {
+                try {
+                    readLoop(socket)
+                } finally {
+                    activeConnections.decrementAndGet()
+                }
+            }
         }
     }
 
@@ -121,6 +138,8 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
         } catch (_: IOException) {
         } catch (_: Exception) {
         } finally {
+            // 连接结束：清理 outbound 中已失效的 socket（防止死 socket 泄漏）
+            outbound.entries.removeIf { it.value === socket }
             try {
                 socket.close()
             } catch (_: Exception) {
@@ -194,7 +213,8 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
         }
     }
 
-    override fun stop() {        try {
+    override fun stop() {
+        try {
             server?.close()
         } catch (_: Exception) {
         }

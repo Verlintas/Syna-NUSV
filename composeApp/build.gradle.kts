@@ -47,6 +47,16 @@ kotlin {
                 implementation(kotlin("test"))
             }
         }
+        // 测试稳定性：大堆（200MB 文件测试）、每类独立 JVM、串行避免多播/端口竞争
+        tasks.withType<Test>().configureEach {
+            maxHeapSize = "2g"
+            forkEvery = 1
+            maxParallelForks = 1
+            testLogging {
+                showStandardStreams = true
+                events("failed")
+            }
+        }
 
         commonMain.dependencies {
             implementation(compose.runtime)
