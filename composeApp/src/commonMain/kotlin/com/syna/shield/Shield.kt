@@ -95,6 +95,16 @@ enum class ShieldThreat(
         "检测到安全设置被篡改",
         "Shield 安全设置或数据存储疑似被外部修改/清除，已强制恢复保护",
     ),
+    WATCHDOG_TRIP(
+        "watchdog",
+        "检测到监测循环停滞",
+        "Shield 监测心跳停滞或看门狗触发，疑似检测线程被外部暂停/挂钩，已强制锁定",
+    ),
+    BRUTE_FORCE(
+        "bruteforce",
+        "检测到暴力解锁尝试",
+        "生物识别连续失败多次，疑似非本人尝试解锁，已释放会话密钥并进入高度警戒",
+    ),
     INACTIVE(
         "inactive",
         "设备闲置",
@@ -125,6 +135,9 @@ enum class ShieldAction(val label: String) {
     UNLOCKED("解锁"),
     SELF_DESTRUCT("本地数据已销毁"),
     DISABLED("Shield 已停用"),
+    KEY_RELEASED("会话密钥已释放"),
+    HONEYPOT("假锁模式已启用"),
+    WATCHDOG("看门狗触发"),
 }
 
 /** 威胁分级：严重级威胁（root/凭据/设备管理/调试）解锁后若未消除会自动再锁 */
@@ -135,6 +148,8 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.DEVICE_ADMIN_CHANGE,
     ShieldThreat.SHIELD_TAMPERED,
     ShieldThreat.FRIDA_DETECTED,
+    ShieldThreat.WATCHDOG_TRIP,
+    ShieldThreat.BRUTE_FORCE,
     -> ThreatSeverity.CRITICAL
 
     ShieldThreat.EMULATOR_DETECTED,
@@ -194,8 +209,194 @@ expect fun shieldUsageAccessGranted(): Boolean
 expect fun requestUsageAccessPermission()
 
 /**
+ * Shield 心跳门禁（fail-closed 核心，源码公开亦有效）：
+ * - 检测引擎每轮更新心跳（时间戳 + HMAC 指纹，随机化节拍）。
+ * - 解密路径（聊天记录/审计日志）在执行前检查门禁新鲜度：
+ *   心跳停滞（检测线程被暂停/杀死/hook）→ 拒绝解密，等效锁定。
+ * - 锁定即释放：LOCKED 状态下门禁失效且内存会话能力被释放；
+ *   解锁后由引擎重新驱动心跳恢复。
+ * 攻击者即便掌握全部源码，也必须让"解密"与"心跳"同时伪装成功，
+ * 任何伪装都是注入行为本身，会落入注入检测/看门狗覆盖面。
+ */
+object ShieldGate {
+    const val STALE_MS = 12_000L
+
+    private val hmacKey = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+
+    @Volatile
+    private var armed = false
+
+    @Volatile
+    private var lockedOut = false
+
+    @Volatile
+    private var lastBeat = 0L
+
+    @Volatile
+    private var lastFingerprint = ""
+
+    /** 启用门禁（Shield 启动时调用，同时给出首个有效心跳） */
+    fun arm() {
+        armed = true
+        lockedOut = false
+        beat()
+    }
+
+    /** 关闭门禁（Shield 停用时调用，解密完全放行） */
+    fun disarm() {
+        armed = false
+        lockedOut = false
+        lastBeat = 0L
+        lastFingerprint = ""
+    }
+
+    /** 检测引擎节拍：每轮扫描调用一次 */
+    fun beat() {
+        if (!armed || lockedOut) return
+        val t = System.currentTimeMillis()
+        lastBeat = t
+        lastFingerprint = hmacOf(t)
+    }
+
+    /** 锁定即释放：时间戳清零 + 指纹置乱，门禁立即失效（会话密钥能力释放） */
+    fun releaseSession() {
+        lockedOut = true
+        lastBeat = 0L
+        lastFingerprint = ""
+    }
+
+    /** 解锁恢复：门禁回到"等待引擎心跳"状态 */
+    fun restoreSession() {
+        lockedOut = false
+        if (armed) beat()
+    }
+
+    /** 门禁是否放行解密（fail-closed：任何异常均拒绝） */
+    fun isFresh(): Boolean {
+        if (!armed) return true
+        if (lockedOut) return false
+        if (lastBeat == 0L) return false
+        if (System.currentTimeMillis() - lastBeat > STALE_MS) return false
+        // 指纹校验：防止攻击者只冻结时间戳
+        if (hmacOf(lastBeat) != lastFingerprint) return false
+        return true
+    }
+
+    /** 上次有效心跳时间（面板展示） */
+    fun lastBeatAt(): Long = lastBeat
+
+    private fun hmacOf(value: Long): String {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(hmacKey, "HmacSHA256"))
+        return mac.doFinal(java.nio.ByteBuffer.allocate(8).putLong(value).array())
+            .joinToString("") { "%02x".format(it) }
+    }
+}
+
+/**
+ * 看门狗环形哨兵（Watchdog Ring）：
+ * 3 个独立守护线程环形互盯（W1 盯 W2 的槽、W2 盯 W3、W3 盯 W1），
+ * 随机间隔节拍。任一被盯槽位心跳停滞/指纹失效 → 触发锁定回调。
+ * 检测线程被杀 → 其槽位停滞被相邻看门狗发现；
+ * 看门狗被逐个暂停 → 其槽位同样停滞被相邻看门狗发现（环形闭合）；
+ * 全部被杀 → 引擎心跳也随之停滞 → ShieldGate 门禁 fail-closed。
+ */
+internal class WatchdogRing(
+    private val onTrip: () -> Unit,
+) {
+    private class Slot {
+        @Volatile
+        var ts = 0L
+
+        @Volatile
+        var fp = ""
+
+        private val key = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+
+        fun beat() {
+            val t = System.currentTimeMillis()
+            ts = t
+            fp = hmacOf(t)
+        }
+
+        fun isStale(): Boolean {
+            if (ts == 0L) return false
+            if (System.currentTimeMillis() - ts > ShieldGate.STALE_MS) return true
+            return hmacOf(ts) != fp
+        }
+
+        private fun hmacOf(value: Long): String {
+            val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+            mac.init(javax.crypto.spec.SecretKeySpec(key, "HmacSHA256"))
+            return mac.doFinal(java.nio.ByteBuffer.allocate(8).putLong(value).array())
+                .joinToString("") { "%02x".format(it) }
+        }
+    }
+
+    private val slots = Array(3) { Slot() }
+    private val threads = mutableListOf<Thread>()
+    private val rand = java.security.SecureRandom()
+
+    @Volatile
+    var trips = 0
+        private set
+
+    fun start() {
+        if (threads.isNotEmpty()) return
+        for (i in 0 until 3) {
+            val idx = i
+            val t = Thread({ loop(idx) }, "syna-watchdog-$idx")
+            t.isDaemon = true
+            t.start()
+            threads += t
+        }
+    }
+
+    fun stop() {
+        threads.forEach { it.interrupt() }
+        threads.clear()
+    }
+
+    private fun loop(idx: Int) {
+        while (!Thread.currentThread().isInterrupted) {
+            try {
+                Thread.sleep(4_000L + rand.nextInt(3_001).toLong())
+            } catch (e: InterruptedException) {
+                return
+            }
+            val target = (idx + 1) % 3
+            if (slots[target].isStale()) {
+                trips++
+                try {
+                    onTrip()
+                } catch (e: Exception) {
+                }
+            } else {
+                slots[idx].beat()
+            }
+        }
+    }
+}
+
+/** Shield 运行健康状态（设置页实时面板数据） */
+data class ShieldHealth(
+    val gateArmed: Boolean,
+    val gateFresh: Boolean,
+    val lastBeatAt: Long,
+    val watchdogTrips: Int,
+    val watchdogAlive: Boolean,
+    val biometricFailCount: Int,
+    val lastCheckAt: Long,
+)
+
+/**
  * Shield 控制器：收集威胁、管理状态机、审计时间线。
  * 策略：任一威胁上报即锁定；解锁后若存在严重级威胁，30 秒内未消除将自动重新锁定。
+ * 加固（开源公开仍有效）：
+ * - ShieldGate 心跳门禁：解密路径 fail-closed，检测线程被暂停即等效锁定；
+ * - WatchdogRing：环形哨兵互盯，任何线程停滞立即锁定；
+ * - 注入类威胁（Frida/篡改）进入假锁模式：密钥真实释放，解锁需连续多次验证；
+ * - 生物识别连续失败触发暴力防护与自毁。
  */
 class ShieldController(
     enabled: Boolean,
@@ -206,6 +407,15 @@ class ShieldController(
     private val stateM = MutableStateFlow(if (enabled) ShieldState.ARMED else ShieldState.UNLOCKED)
     val state: StateFlow<ShieldState> = stateM.asStateFlow()
 
+    private val watchdog = WatchdogRing { watchdogTrip() }
+
+    // 假锁模式（Honeypot）：注入类威胁激活；外观与真锁一致，但密钥已真实释放，
+    // 且解锁需连续多次生物识别验证（攻击者无生物特征 → 无法脱身，审计留痕）
+    private val honeypotM = MutableStateFlow(false)
+    val honeypot: StateFlow<Boolean> = honeypotM.asStateFlow()
+    private var honeypotStreak = 0
+    private val HONEYPOT_REQUIRED_STREAK = 3
+
     // 状态内存防篡改：每次变更同步 HMAC 签名值，关键路径校验一致性，
     // 防止攻击者直接改写内存中的状态绕过锁定。
     private val ShieldConfigGuardHmacKey: ByteArray = ByteArray(32).also {
@@ -215,8 +425,16 @@ class ShieldController(
     private var stateHmac = hmacOf(stateM.value.name)
 
     private fun setState(newState: ShieldState) {
+        val prev = stateM.value
         stateM.value = newState
         stateHmac = hmacOf(newState.name)
+        // 锁定即释放会话密钥；解除锁定恢复门禁（等待引擎心跳）
+        if (newState == ShieldState.LOCKED && prev != ShieldState.LOCKED) {
+            ShieldGate.releaseSession()
+            recordEvent(ShieldThreat.INACTIVE, ShieldAction.KEY_RELEASED)
+        } else if (newState != ShieldState.LOCKED && prev == ShieldState.LOCKED) {
+            ShieldGate.restoreSession()
+        }
     }
 
     private fun hmacOf(value: String): String {
@@ -258,15 +476,32 @@ class ShieldController(
     private var selfDestructCallback: (() -> Unit)? = null
     private var destructedFor: String? = null
 
+    // 生物识别失败计数（暴力防护；持久化防重启清零）
+    private val biometricFailsM = MutableStateFlow(loadBiometricFails())
+    val biometricFails: StateFlow<Int> = biometricFailsM.asStateFlow()
+
+    // 健康状态（实时面板）
+    private val healthM = MutableStateFlow(
+        ShieldHealth(false, false, 0L, 0, false, 0, System.currentTimeMillis()),
+    )
+    val health: StateFlow<ShieldHealth> = healthM.asStateFlow()
+    private var healthJob: Job? = null
+
     fun start() {
         if (!enabledM.value) return
         current = this
+        ShieldGate.arm()
+        watchdog.start()
         loadPersistedEvents()
         engine.start()
+        startHealthLoop()
     }
 
     fun stop() {
         engine.stop()
+        watchdog.stop()
+        healthJob?.cancel()
+        ShieldGate.disarm()
         if (current === this) current = null
     }
 
@@ -276,16 +511,42 @@ class ShieldController(
         if (!on) {
             unlockExpiryJob?.cancel()
             relockJob?.cancel()
+            healthJob?.cancel()
         }
         if (on) {
             setState(ShieldState.ARMED)
             threatsM.value = emptyList()
             current = this
+            ShieldGate.arm()
+            watchdog.start()
             engine.start()
+            startHealthLoop()
         } else {
             engine.stop()
+            watchdog.stop()
+            ShieldGate.disarm()
             setState(ShieldState.UNLOCKED)
             if (current === this) current = null
+        }
+    }
+
+    /** 实时健康循环（3s 刷新面板数据） */
+    private fun startHealthLoop() {
+        healthJob?.cancel()
+        healthJob = scope.launch {
+            while (true) {
+                val now = System.currentTimeMillis()
+                healthM.value = ShieldHealth(
+                    gateArmed = true,
+                    gateFresh = ShieldGate.isFresh(),
+                    lastBeatAt = ShieldGate.lastBeatAt(),
+                    watchdogTrips = watchdog.trips,
+                    watchdogAlive = watchdog.trips == 0,
+                    biometricFailCount = biometricFailsM.value,
+                    lastCheckAt = now,
+                )
+                delay(3_000L)
+            }
         }
     }
 
@@ -339,6 +600,12 @@ class ShieldController(
         val advisoryOnly = threat == ShieldThreat.CLOCK_CHANGED || threat == ShieldThreat.WEAK_LOCK
         if (!advisoryOnly) {
             if (threat != ShieldThreat.INACTIVE) {
+                // 注入类威胁 → 假锁模式（Honeypot）：外观与真锁一致，密钥真实释放
+                if (threat == ShieldThreat.FRIDA_DETECTED || threat == ShieldThreat.SHIELD_TAMPERED) {
+                    honeypotM.value = true
+                    honeypotStreak = 0
+                    recordEvent(threat, ShieldAction.HONEYPOT)
+                }
                 setState(ShieldState.LOCKED)
                 recordEvent(threat, ShieldAction.LOCKED)
             } else if (current.isEmpty() || (current.size == 1 && current.first() == ShieldThreat.INACTIVE)) {
@@ -346,6 +613,13 @@ class ShieldController(
                 recordEvent(threat, ShieldAction.LOCKED)
             }
         }
+    }
+
+    /** 看门狗触发：检测/哨兵线程停滞 → 强制锁定（无论威胁列表状态） */
+    private fun watchdogTrip() {
+        if (!enabledM.value) return
+        recordEvent(ShieldThreat.WATCHDOG_TRIP, ShieldAction.WATCHDOG)
+        reportThreat(ShieldThreat.WATCHDOG_TRIP)
     }
 
     fun clearThreat(threat: ShieldThreat) {
@@ -367,11 +641,80 @@ class ShieldController(
         }
         engine.requestBiometricUnlock { granted ->
             if (granted) {
-                setState(ShieldState.UNLOCKED)
-                recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
-                scheduleRelockIfCritical()
-                scheduleUnlockExpiry()
+                if (honeypotM.value) {
+                    // 假锁模式：一次验证不够——连续成功多次才放行（攻击者无生物特征）
+                    honeypotStreak++
+                    recordEvent(ShieldThreat.FRIDA_DETECTED, ShieldAction.HONEYPOT)
+                    if (honeypotStreak >= HONEYPOT_REQUIRED_STREAK) {
+                        honeypotM.value = false
+                        honeypotStreak = 0
+                        setState(ShieldState.UNLOCKED)
+                        recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
+                        scheduleRelockIfCritical()
+                        scheduleUnlockExpiry()
+                    }
+                    // 未达次数：保持锁定（密钥保持释放）
+                } else {
+                    // 解锁成功：清零暴力失败计数
+                    biometricFailsM.value = 0
+                    persistBiometricFails(0)
+                    setState(ShieldState.UNLOCKED)
+                    recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
+                    scheduleRelockIfCritical()
+                    scheduleUnlockExpiry()
+                }
+            } else {
+                onBiometricFailed()
             }
+        }
+    }
+
+    /**
+     * 生物识别失败处理：连续失败 [BIOMETRIC_FAIL_LIMIT] 次 → 暴力防护：
+     * 释放会话密钥（门禁失效）+ 触发自毁协议（若启用）+ 锁定。
+     * 计数加密持久化，重启无法清零绕过。
+     */
+    fun onBiometricFailed() {
+        if (!enabledM.value) return
+        val fails = biometricFailsM.value + 1
+        biometricFailsM.value = fails
+        persistBiometricFails(fails)
+        if (fails >= BIOMETRIC_FAIL_LIMIT) {
+            biometricFailsM.value = 0
+            persistBiometricFails(0)
+            val current = threatsM.value
+            if (ShieldThreat.BRUTE_FORCE !in current) {
+                threatsM.value = current + ShieldThreat.BRUTE_FORCE
+            }
+            recordEvent(ShieldThreat.BRUTE_FORCE, ShieldAction.DETECTED)
+            maybeSelfDestruct(ShieldThreat.BRUTE_FORCE)
+            setState(ShieldState.LOCKED)
+            recordEvent(ShieldThreat.BRUTE_FORCE, ShieldAction.LOCKED)
+        }
+    }
+
+    private fun biometricFailsFile(): String = "$eventsFile.fails"
+
+    private fun persistBiometricFails(count: Int) {
+        try {
+            val enc = ShieldStorageKey.encrypt(count.toString().toByteArray())
+            val file = java.io.File(biometricFailsFile())
+            if (enc != null) {
+                file.writeBytes(enc)
+            } else {
+                file.delete()
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun loadBiometricFails(): Int {
+        return try {
+            val file = java.io.File(biometricFailsFile())
+            if (!file.exists()) return 0
+            ShieldStorageKey.decrypt(file.readBytes())?.decodeToString()?.toIntOrNull() ?: 0
+        } catch (e: Exception) {
+            0
         }
     }
 
@@ -516,6 +859,7 @@ class ShieldController(
         const val UNLOCK_TTL_MS = 5 * 60_000L // 解锁有效期：5 分钟自动再锁
         const val MAX_EVENTS = 100
         const val GENESIS_HASH = "genesis" // 哈希链起点
+        const val BIOMETRIC_FAIL_LIMIT = 5
 
         /** 进程级当前实例（供通知隐藏等模块读取锁定状态） */
         @Volatile

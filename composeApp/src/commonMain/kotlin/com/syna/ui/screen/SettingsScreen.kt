@@ -77,6 +77,9 @@ fun SettingsScreen(
     tempChatTtlHours: Int,
     shieldEnabled: Boolean,
     onShieldEnabledChange: (Boolean) -> Unit,
+    shieldHealth: com.syna.shield.ShieldHealth,
+    shieldEvents: List<com.syna.shield.ShieldEvent>,
+    shieldHoneypot: Boolean,
 ) {
     MaxWidthContainer(modifier = modifier) {
     Column(
@@ -329,6 +332,14 @@ fun SettingsScreen(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (shieldEnabled) {
+            Spacer(Modifier.height(16.dp))
+            ShieldLivePanel(
+                health = shieldHealth,
+                events = shieldEvents,
+                honeypot = shieldHoneypot,
+            )
+        }
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("权限")
@@ -406,6 +417,115 @@ private fun formatSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0 / 1024.0)} MB"
     bytes >= 1024 -> "${"%.1f".format(bytes / 1024.0)} KB"
     else -> "$bytes B"
+}
+
+/** ◇Mirtazapine Shield 实时状态面板：门禁/看门狗/失败计数/最近审计 */
+@Composable
+private fun ShieldLivePanel(
+    health: com.syna.shield.ShieldHealth,
+    events: List<com.syna.shield.ShieldEvent>,
+    honeypot: Boolean,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("实时监测状态", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(6.dp))
+        // 门禁（fail-closed 核心）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (health.gateFresh) "✅ 监测心跳正常（解密门禁放行）"
+                else "⚠️ 监测心跳停滞（解密已拒绝，fail-closed 生效）",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (health.gateFresh) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // 看门狗哨兵
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (health.watchdogAlive) "✅ 看门狗哨兵正常（环形互盯 · 随机节拍）"
+                else "🔴 看门狗已触发 ${health.watchdogTrips} 次（检测线程停滞）",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (health.watchdogAlive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // 假锁模式
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                if (honeypot) "⚠️ 假锁模式已激活（注入类威胁，密钥已释放）"
+                else "✅ 假锁模式未激活",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (honeypot) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // 暴力防护计数
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val fails = health.biometricFailCount
+            Text(
+                if (fails == 0) "✅ 生物识别失败计数：0（上限 ${com.syna.shield.ShieldController.BIOMETRIC_FAIL_LIMIT}）"
+                else "⚠️ 生物识别失败计数：$fails（上限 ${com.syna.shield.ShieldController.BIOMETRIC_FAIL_LIMIT}，达到后释放密钥并自毁）",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (fails == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // 最近审计
+        Spacer(Modifier.height(4.dp))
+        Text("最近审计事件", style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        if (events.isEmpty()) {
+            Text(
+                "暂无审计记录",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            events.takeLast(6).reversed().forEach { event ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 1.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = java.time.Instant.ofEpochMilli(event.ts)
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss")),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.width(64.dp),
+                    )
+                    Text(
+                        text = "${event.threat.title} · ${event.action.label}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable

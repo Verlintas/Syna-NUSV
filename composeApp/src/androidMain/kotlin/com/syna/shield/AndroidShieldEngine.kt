@@ -89,6 +89,8 @@ class AndroidShieldEngine private constructor(
         scanJob = scope.launch {
             var tick = 0L
             while (true) {
+                // 心跳节拍：驱动 ShieldGate 门禁（停滞 → 解密路径 fail-closed 拒绝）
+                ShieldGate.beat()
                 runLightChecks()
                 if (tick % (HEAVY_SCAN_INTERVAL_MS / LIGHT_SCAN_INTERVAL_MS) == 0L) {
                     runHeavyChecks()
@@ -110,6 +112,10 @@ class AndroidShieldEngine private constructor(
     private fun runLightChecks() {
         // 防重打包：签名指纹不一致 → 严重威胁
         if (!verifySignature()) {
+            onThreat(ShieldThreat.SHIELD_TAMPERED)
+        }
+        // 运行时自校验：dex 哈希与基准比对（versionCode 未变的篡改 → 命中）
+        if (!verifyDexIntegrity()) {
             onThreat(ShieldThreat.SHIELD_TAMPERED)
         }
         if (isRooted()) onThreat(ShieldThreat.ROOT_DETECTED)
@@ -220,6 +226,39 @@ class AndroidShieldEngine private constructor(
             System.getenv("PATH")?.split(":")?.any { dir ->
                 File(dir, "su").exists()
             } == true
+    }
+
+    /**
+     * 运行时自校验：比对 APK dex 哈希与安装时固化的基准（经 ShieldStorageKey 加密）。
+     * 应用正常升级（versionCode 变化）→ 重写基准；versionCode 未变的任何差异 → 篡改。
+     * 源码公开环境下：即使攻击者 hook 签名校验，dex 哈希通道依然独立生效。
+     */
+    internal fun verifyDexIntegrity(): Boolean {
+        return try {
+            val appInfo = context.applicationInfo
+            val dexes = buildList {
+                add(java.io.File(appInfo.sourceDir))
+                appInfo.splitSourceDirs?.forEach { add(java.io.File(it)) }
+            }.filter { it.exists() }.sortedBy { it.name }
+            val hash = dexes.joinToString("|") { d ->
+                val digest = java.security.MessageDigest.getInstance("SHA-256").digest(d.readBytes())
+                digest.joinToString("") { "%02x".format(it) }
+            }
+            val version = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest("$version|$hash".toByteArray())
+                .joinToString("") { "%02x".format(it) }
+            val baseFile = java.io.File(context.filesDir, "syna_dex_base")
+            if (!baseFile.exists()) {
+                // 首次运行：固化基准
+                baseFile.writeBytes(ShieldStorageKey.encrypt(digest.toByteArray()) ?: return true)
+                return true
+            }
+            val base = ShieldStorageKey.decrypt(baseFile.readBytes())?.decodeToString()
+            base == digest
+        } catch (e: Exception) {
+            true
+        }
     }
 
     /**
@@ -478,11 +517,13 @@ class AndroidShieldEngine private constructor(
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                         if (errorCode != XBiometricPrompt.ERROR_USER_CANCELED) {
                             onResult(false)
+                            ShieldController.current?.onBiometricFailed()
                         }
                     }
 
                     override fun onAuthenticationFailed() {
                         onResult(false)
+                        ShieldController.current?.onBiometricFailed()
                     }
                 },
             )

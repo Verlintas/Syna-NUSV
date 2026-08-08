@@ -54,6 +54,8 @@ actual object ShieldStorageKey {
     }
 
     actual fun decrypt(payload: ByteArray): ByteArray? {
+        // Shield 门禁（fail-closed）：心跳停滞（检测线程被暂停/杀死）→ 拒绝解密
+        if (!ShieldGate.isFresh()) return null
         val key = keystoreKey() ?: return null
         if (payload.size <= NONCE_LEN) return null
         return try {

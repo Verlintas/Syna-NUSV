@@ -5,6 +5,8 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ShieldTest {
@@ -154,7 +156,7 @@ class ShieldBugfixTest {
         // 新实例应恢复全部事件（哈希链校验通过）——需 start() 触发加载
         val c2 = ShieldController(enabled = true, eventsPathOverride = path)
         c2.start()
-        assertEquals(5, c2.events.value.size, "哈希链完整的审计事件应全部恢复")
+        assertEquals(c1.events.value.size, c2.events.value.size, "哈希链完整的审计事件应全部恢复")
         c2.stop()
 
         // 篡改最后一条（内容段改坏）→ 哈希不匹配 → 链断裂 → 受损记录不可载入
@@ -166,7 +168,7 @@ class ShieldBugfixTest {
         file.writeText(lines.joinToString("\n") + "\n")
         val c3 = ShieldController(enabled = true, eventsPathOverride = path)
         c3.start()
-        assertTrue(c3.events.value.size < 5, "篡改记录后链条断裂，受损记录不应载入")
+        assertTrue(c3.events.value.size < c1.events.value.size, "篡改记录后链条断裂，受损记录不应载入")
         c3.stop()
     }
 
@@ -196,5 +198,99 @@ class ShieldBugfixTest {
         // 不崩溃且不载入损坏记录
         assertTrue(c.events.value.isEmpty(), "损坏记录不应载入")
         c.stop()
+    }
+}
+
+class ShieldHardeningTest {
+
+    private fun tempPath(): String =
+        java.nio.file.Files.createTempDirectory("syna-shield-harden")
+            .resolve("events.jsonl").toString()
+
+    @Test
+    fun gateBlocksDecryptWhenHeartbeatStalls() {
+        val path = tempPath()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path)
+        controller.start()
+        // 启动即心跳 → 门禁放行
+        assertTrue(ShieldGate.isFresh(), "启动后门禁应放行")
+        // 锁定 → 会话密钥释放 → 门禁拒绝（fail-closed）
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertFalse(ShieldGate.isFresh(), "锁定后门禁应拒绝解密")
+        // 解锁 → 门禁恢复
+        controller.requestUnlock()
+        assertTrue(ShieldGate.isFresh(), "解锁后门禁应恢复放行")
+        controller.stop()
+        ShieldGate.disarm()
+    }
+
+    @Test
+    fun watchdogTripForcesLock() = runBlocking {
+        val path = tempPath()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path)
+        controller.start()
+        controller.reportThreat(ShieldThreat.WATCHDOG_TRIP)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        assertTrue(ShieldThreat.WATCHDOG_TRIP in controller.threats.value)
+        controller.stop()
+        ShieldGate.disarm()
+    }
+
+    @Test
+    fun honeypotRequiresRepeatedVerification() = runBlocking {
+        val path = tempPath()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path)
+        controller.start()
+        // 注入类威胁 → 假锁模式
+        controller.reportThreat(ShieldThreat.FRIDA_DETECTED)
+        assertTrue(controller.state.value == ShieldState.LOCKED)
+        assertTrue(controller.honeypot.value, "注入类威胁应进入假锁模式")
+        assertFalse(ShieldGate.isFresh(), "假锁模式下密钥应已释放")
+
+        // 前两次验证通过仍保持锁定（攻击者无生物特征无法脱身）
+        controller.requestUnlock()
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        controller.requestUnlock()
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        // 连续 3 次后放行（真用户逃生通道）
+        controller.requestUnlock()
+        assertEquals(ShieldState.UNLOCKED, controller.state.value)
+        assertFalse(controller.honeypot.value)
+        controller.stop()
+        ShieldGate.disarm()
+    }
+
+    @Test
+    fun bruteForceProtectionTriggers() = runBlocking {
+        val path = tempPath()
+        var destructCount = 0
+        val controller = ShieldController(enabled = true, eventsPathOverride = path)
+        controller.configureSelfDestruct(enabled = true) { destructCount++ }
+        controller.start()
+        repeat(ShieldController.BIOMETRIC_FAIL_LIMIT) {
+            controller.onBiometricFailed()
+        }
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        assertTrue(ShieldThreat.BRUTE_FORCE in controller.threats.value)
+        assertEquals(1, destructCount, "暴力尝试应触发自毁协议")
+        controller.stop()
+        ShieldGate.disarm()
+    }
+
+    @Test
+    fun auditLogUnreadableWhileLocked() = runBlocking {
+        val path = tempPath()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path)
+        controller.start()
+        val plain = "审计测试内容"
+        val enc = ShieldStorageKey.encrypt(plain.toByteArray())
+        assertNotNull(enc)
+        // 正常：可解密
+        assertEquals(plain, ShieldStorageKey.decrypt(enc!!)?.decodeToString())
+        // 锁定（释放会话）→ 解密拒绝（fail-closed）
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertNull(ShieldStorageKey.decrypt(enc), "锁定状态下解密应被门禁拒绝")
+        controller.stop()
+        ShieldGate.disarm()
     }
 }

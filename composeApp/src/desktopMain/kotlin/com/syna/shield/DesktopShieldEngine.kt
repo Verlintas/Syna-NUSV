@@ -24,6 +24,7 @@ class DesktopShieldEngine(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastActivity = 0L
     private var idleTimer: Timer? = null
+    private var beatTimer: Timer? = null
     private var lastMouseEvent: MouseEvent? = null
     private var lastScreenCount: Int? = null
 
@@ -42,6 +43,10 @@ class DesktopShieldEngine(
         } catch (e: Exception) {
         }
         lastScreenCount = screenCount()
+        // 心跳节拍：驱动 ShieldGate 门禁（桌面检测线程被暂停 → 解密 fail-closed 拒绝）
+        beatTimer = Timer(2_000) {
+            ShieldGate.beat()
+        }.apply { start() }
         idleTimer = Timer(IDLE_CHECK_MS.toInt()) {
             val now = System.currentTimeMillis()
             if (now - lastActivity > IDLE_LOCK_MS) {
@@ -67,6 +72,8 @@ class DesktopShieldEngine(
     override fun stop() {
         idleTimer?.stop()
         idleTimer = null
+        beatTimer?.stop()
+        beatTimer = null
     }
 
     override fun onForeground() {

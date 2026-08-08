@@ -60,6 +60,9 @@ fun App() {
         ShieldController(enabled = settings.shieldEnabled)
     }
     val shieldState by shield.state.collectAsState()
+    val shieldHealth by shield.health.collectAsState()
+    val shieldEvents by shield.events.collectAsState()
+    val shieldHoneypot by shield.honeypot.collectAsState()
     LaunchedEffect(Unit) {
         shield.start()
         // 自我保护：启动时检测安全设置是否被篡改/存储被清除
@@ -118,6 +121,9 @@ fun App() {
             return@SynaTheme
         }
         SynaRoot(
+            shieldHealth = shieldHealth,
+            shieldEvents = shieldEvents,
+            shieldHoneypot = shieldHoneypot,
             engine = engine,
             username = username,
             connectionMode = connectionMode,
