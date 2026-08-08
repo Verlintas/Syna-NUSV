@@ -32,8 +32,9 @@
 - ✅ **Offline messages**: messages queue locally when the target is offline and are flushed automatically when they come back online
 - ✅ **Auto-reconnect**: TCP heartbeat keep-alive + on-demand reconnection
 - ✅ **Private server (Minecraft-style)**: run your own headless chat server on Windows / macOS / Linux, join by `IP:port + password` from anywhere
-  - Persistent history on the server — late joiners pull the full backlog automatically
-  - Password-derived AES-GCM channel + password-derived group key encryption
+  - Persistent history on the server (E2E ciphertext only; readable by members online at send time)
+  - Password-derived AES-GCM channel — **tunnel relays (frp/ngrok) see only ciphertext**
+  - **End-to-end encrypted group messages** (X25519) — the server operator cannot read live messages
   - **Server management**: kick & ban members (persistent blacklist), group announcements, GUI dashboard or headless CLI
   - Burn-after-reading messages are purged from the server history too
   - **NAT traversal**: just map the server port to the public internet with any tunnel tool (frp / ngrok / Tailscale) — the client only needs the public `address:port`
@@ -61,7 +62,9 @@ composeApp/
 - Frame: `{type, from, to, msgId, ts, body, enc, burn}` JSON via kotlinx.serialization
 - Frame types: HELLO / KEY / TEXT / GROUP_MESSAGE / GROUP_INVITE / GROUP_JOIN / GROUP_LEAVE / READ / BURN_ACK / PING / PONG / SRV_HELLO / SRV_AUTH / SRV_AUTH_OK / SRV_LEAVE
 - LAN E2E encryption: public key is carried in the HELLO frame on TCP connect; peers reply with their own KEY. Session keys are derived from `sorted(peerIds)` so both sides always agree.
-- Server security model: the server sends a salt in `SRV_HELLO`; both sides derive an AES-GCM channel key from the server password (HKDF-SHA256). Group messages use a password-derived group key, so any member who knows the password can decrypt history — the private-server trust model. Metadata routing stays visible to the server operator.
+- Server security model: the server sends a salt in `SRV_HELLO`; both sides derive an **AES-GCM channel key** from the server password (HKDF-SHA256) — all traffic is authenticated and encrypted, so a **passive relay (frp/ngrok tunnel operator) sees only ciphertext and cannot read anything**.
+- **Group messages are end-to-end encrypted between members** (X25519 session keys): the server relays one ciphertext copy per member and never possesses the decryption keys — **the server operator cannot read live messages**. The server only persists encrypted frames, so history is readable only by members online at send time (late joiners see the backlog from the moment they join). The password-derived group key remains only as a compatibility fallback for old clients.
+- Metadata routing stays visible to the server operator.
 
 ## Private Server (Syna Server)
 
