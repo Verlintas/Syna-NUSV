@@ -76,6 +76,9 @@ class AndroidShieldEngine private constructor(
 
     private var activeActivity: Activity? = null
     private var currentActivityHolder: ((Activity?) -> Unit)? = null
+    private var lastAdminSignature: String? = null
+    private var lastAccessibilitySignature: String? = null
+    private var lastBiometricState: Int? = null
 
     override fun start() {
         scanJob = scope.launch {
@@ -99,6 +102,9 @@ class AndroidShieldEngine private constructor(
         if (isDebugMode()) onThreat(ShieldThreat.DEBUG_MODE)
         if (hasMonitoringApps()) onThreat(ShieldThreat.MONITORING_APP)
         if (hasAbusiveAccessibility()) onThreat(ShieldThreat.ACCESSIBILITY_ABUSE)
+        checkDeviceAdminChange()
+        checkAccessibilityChange()
+        checkCredentialChange()
         // VPN 变更由回调单独触发
     }
 
@@ -158,6 +164,52 @@ class AndroidShieldEngine private constructor(
         return enabled.contains("com.teamviewer") ||
             enabled.contains("com.anydesk") ||
             enabled.contains("screenrecord")
+    }
+
+    /** 设备管理状态变更检测：新的设备管理应用激活（MDM 接管预警） */
+    private fun checkDeviceAdminChange() {
+        try {
+            val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+            val admins = dpm.activeAdmins ?: emptyList()
+            val signature = admins.sortedBy { it.flattenToString() }.joinToString("|")
+            val prev = lastAdminSignature
+            if (prev != null && prev != signature) {
+                onThreat(ShieldThreat.DEVICE_ADMIN_CHANGE)
+            }
+            lastAdminSignature = signature
+        } catch (e: Exception) {
+        }
+    }
+
+    /** 无障碍服务列表变更检测（新增/移除无障碍服务） */
+    private fun checkAccessibilityChange() {
+        try {
+            val enabled = Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+            ) ?: ""
+            val prev = lastAccessibilitySignature
+            if (prev != null && prev != enabled) {
+                onThreat(ShieldThreat.ACCESSIBILITY_ABUSE)
+            }
+            lastAccessibilitySignature = enabled
+        } catch (e: Exception) {
+        }
+    }
+
+    /** 生物识别/凭据变更检测：生物识别可用状态变化（被移除/禁用）提示设备可能易主 */
+    private fun checkCredentialChange() {
+        try {
+            val bm = context.getSystemService(Context.BIOMETRIC_SERVICE) as android.hardware.biometrics.BiometricManager
+            val state = bm.canAuthenticate(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            val prev = lastBiometricState
+            if (prev != null && prev != state && prev == android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS) {
+                // 生物识别从可用变为不可用：凭据可能被移除或设备被刷机
+                onThreat(ShieldThreat.CREDENTIAL_CHANGED)
+            }
+            lastBiometricState = state
+        } catch (e: Exception) {
+        }
     }
 
     private fun monitorVpn() {

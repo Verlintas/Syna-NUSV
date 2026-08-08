@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -30,6 +31,7 @@ import com.syna.shield.ShieldState
 /** Mirtazapine Shield 锁定页：威胁消除前不可进入应用 */
 @Composable
 fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier) {
+    // 自我保护：桌面端拦截 ESC/返回键，防止绕过锁定页（Android 端由 MainActivity 拦截系统返回键）
     val state by controller.state.collectAsState()
     val threats by controller.threats.collectAsState()
 
@@ -37,6 +39,10 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF1A0E0E))
+            .onPreviewKeyEvent {
+                // 锁定期间拦截全部按键（含 ESC/返回），锁定页仅需触摸/点击交互
+                true
+            }
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,

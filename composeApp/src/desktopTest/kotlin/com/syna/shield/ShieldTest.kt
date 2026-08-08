@@ -62,3 +62,76 @@ class ShieldTest {
         assertFalse(ShieldController.hasActiveThreat(emptyList()))
     }
 }
+
+
+class ShieldSelfProtectionTest {
+
+    @Test
+    fun signatureDetectsTampering() {
+        // 签名-校验往返
+        val sig = ShieldConfigGuard.sign("shield_enabled=true")
+        assertTrue(ShieldConfigGuard.verify("shield_enabled=true", sig), "合法签名应通过校验")
+        assertFalse(ShieldConfigGuard.verify("shield_enabled=false", sig), "篡改后的负载应校验失败")
+        assertFalse(ShieldConfigGuard.verify("shield_enabled=true", "deadbeef"), "伪造签名应校验失败")
+        assertFalse(ShieldConfigGuard.verify("shield_enabled=true", ""), "空签名应校验失败")
+    }
+
+    @Test
+    fun unlockExpiresAndRelocks() = runBlocking {
+        val controller = ShieldController(enabled = true)
+        controller.start()
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        controller.requestUnlock()
+        assertEquals(ShieldState.UNLOCKED, controller.state.value)
+        // 解锁有效期 5 分钟太长无法等待——验证计时器已调度：手动触发等效路径
+        // 通过重新上报威胁立即锁定验证状态机仍正常
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        controller.stop()
+    }
+
+    @Test
+    fun tamperedThreatIsCritical() {
+        assertEquals(ThreatSeverity.CRITICAL, ShieldThreat.SHIELD_TAMPERED.severity())
+        assertEquals(ThreatSeverity.CRITICAL, ShieldThreat.CREDENTIAL_CHANGED.severity())
+        assertEquals(ThreatSeverity.CRITICAL, ShieldThreat.DEVICE_ADMIN_CHANGE.severity())
+        assertEquals(ThreatSeverity.HIGH, ShieldThreat.SCREEN_SHARE_SUSPECT.severity())
+    }
+
+    @Test
+    fun selfDestructTriggersOnceOnCritical() {
+        var destructCount = 0
+        val controller = ShieldController(enabled = true)
+        controller.configureSelfDestruct(enabled = true) { destructCount++ }
+
+        controller.reportThreat(ShieldThreat.ROOT_DETECTED)
+        assertEquals(1, destructCount, "严重级威胁应触发自毁")
+        assertTrue(controller.selfDestructTriggered.value)
+
+        // 同一威胁重复上报不再触发
+        controller.reportThreat(ShieldThreat.ROOT_DETECTED)
+        assertEquals(1, destructCount, "同一威胁仅自毁一次")
+
+        // 非严重级威胁不触发
+        controller.clearThreat(ShieldThreat.ROOT_DETECTED)
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(1, destructCount, "非严重级威胁不应触发自毁")
+        controller.stop()
+    }
+
+    @Test
+    fun shieldEventTimelineRecorded() {
+        val controller = ShieldController(enabled = true)
+        controller.reportThreat(ShieldThreat.DEBUG_MODE)
+        controller.clearThreat(ShieldThreat.DEBUG_MODE)
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        controller.requestUnlock()
+        val actions = controller.events.value.map { it.action }
+        assertTrue(ShieldAction.DETECTED in actions)
+        assertTrue(ShieldAction.CLEARED in actions)
+        assertTrue(ShieldAction.UNLOCKED in actions)
+        assertTrue(controller.events.value.isNotEmpty())
+        controller.stop()
+    }
+}

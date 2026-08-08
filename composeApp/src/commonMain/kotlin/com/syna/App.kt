@@ -31,6 +31,8 @@ import com.syna.net.SynaEngine
 import com.syna.shield.ShieldController
 import com.syna.shield.createShieldEngine
 import com.syna.storage.SettingsRepository
+import com.syna.storage.clearReceivedFiles
+import com.syna.util.notifyMessage
 import com.syna.ui.SynaRoot
 import com.syna.ui.screen.ShieldLockScreen
 import com.syna.ui.theme.SynaTheme
@@ -57,7 +59,17 @@ fun App() {
     val shieldState by shield.state.collectAsState()
     LaunchedEffect(Unit) {
         shield.start()
+        // 自我保护：启动时检测安全设置是否被篡改/存储被清除
+        if (settings.shieldTampered) {
+            shield.reportThreat(com.syna.shield.ShieldThreat.SHIELD_TAMPERED)
+        }
         shield.setSecureScreen(settings.shieldScreenProtection)
+        // 自毁协议：疑似破解时销毁本地聊天记录与接收文件
+        shield.configureSelfDestruct(enabled = settings.shieldSelfDestruct) {
+            engine.chatStore.clearAllHistory()
+            clearReceivedFiles()
+            notifyMessage("🛡 Mirtazapine Shield", "检测到疑似破解迹象，本地聊天记录与接收文件已自动销毁")
+        }
     }
     LaunchedEffect(Unit) {
         engine.start()
@@ -126,13 +138,30 @@ fun App() {
             },
             shieldEnabled = shield.enabled.collectAsState().value,
             shieldScreenProtection = settings.shieldScreenProtection,
-            onShieldEnabledChange = {
-                shield.setEnabled(it)
-                settings.shieldEnabled = it
+            shieldSelfDestruct = settings.shieldSelfDestruct,
+            onShieldEnabledChange = { on ->
+                if (on) {
+                    // 开启：直接启用
+                    shield.setEnabled(true)
+                    settings.shieldEnabled = true
+                } else {
+                    // 关闭：需生物识别验证（防被绕过/误关）
+                    shield.disableWithVerification {
+                        settings.shieldEnabled = false
+                    }
+                }
             },
             onShieldScreenProtectionChange = {
                 settings.shieldScreenProtection = it
                 shield.setSecureScreen(it)
+            },
+            onShieldSelfDestructChange = {
+                settings.shieldSelfDestruct = it
+                shield.configureSelfDestruct(enabled = it) {
+                    engine.chatStore.clearAllHistory()
+                    clearReceivedFiles()
+                    notifyMessage("🛡 Mirtazapine Shield", "检测到疑似破解迹象，本地聊天记录与接收文件已自动销毁")
+                }
             },
         )
     }

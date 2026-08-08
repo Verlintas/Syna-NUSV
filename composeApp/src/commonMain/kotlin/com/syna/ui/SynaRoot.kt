@@ -74,8 +74,10 @@ fun SynaRoot(
     onTempChatTtlChange: (Int) -> Unit,
     shieldEnabled: Boolean,
     shieldScreenProtection: Boolean,
+    shieldSelfDestruct: Boolean,
     onShieldEnabledChange: (Boolean) -> Unit,
     onShieldScreenProtectionChange: (Boolean) -> Unit,
+    onShieldSelfDestructChange: (Boolean) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     val conversations by engine.chatStore.conversations.collectAsState()
@@ -181,8 +183,10 @@ fun SynaRoot(
                 onTempChatTtlChange = onTempChatTtlChange,
                 shieldEnabled = shieldEnabled,
                 shieldScreenProtection = shieldScreenProtection,
+                shieldSelfDestruct = shieldSelfDestruct,
                 onShieldEnabledChange = onShieldEnabledChange,
                 onShieldScreenProtectionChange = onShieldScreenProtectionChange,
+                onShieldSelfDestructChange = onShieldSelfDestructChange,
             )
         }
     }

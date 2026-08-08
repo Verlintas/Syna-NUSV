@@ -35,6 +35,22 @@ class MainActivity : ComponentActivity() {
         AndroidShieldEngine.attach(this)
     }
 
+    // 自我保护：Shield 锁定期间拦截系统返回键，防止绕过锁定页
+    private val shieldBackCallback = object : androidx.activity.OnBackPressedCallback(true) {
+        override fun handleOnBackPressed() {
+            if (com.syna.shield.ShieldController.current?.state?.value == com.syna.shield.ShieldState.LOCKED) {
+                // 锁定期间吞掉返回键
+            } else {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
+        }
+    }
+
+    init {
+        onBackPressedDispatcher.addCallback(this, shieldBackCallback)
+    }
+
     override fun onPause() {
         super.onPause()
         AndroidShieldEngine.detach()

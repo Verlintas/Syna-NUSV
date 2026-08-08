@@ -25,6 +25,7 @@ class DesktopShieldEngine(
     private var lastActivity = 0L
     private var idleTimer: Timer? = null
     private var lastMouseEvent: MouseEvent? = null
+    private var lastScreenCount: Int? = null
 
     override fun start() {
         lastActivity = System.currentTimeMillis()
@@ -40,10 +41,18 @@ class DesktopShieldEngine(
             )
         } catch (e: Exception) {
         }
+        lastScreenCount = screenCount()
         idleTimer = Timer(IDLE_CHECK_MS.toInt()) {
-            if (System.currentTimeMillis() - lastActivity > IDLE_LOCK_MS) {
+            val now = System.currentTimeMillis()
+            if (now - lastActivity > IDLE_LOCK_MS) {
                 onThreat(ShieldThreat.INACTIVE)
             }
+            // 屏幕数量变化：外接显示器/投屏（投影、屏幕共享的常见前置）
+            val current = screenCount()
+            if (lastScreenCount != null && current != lastScreenCount) {
+                onThreat(ShieldThreat.SCREEN_SHARE_SUSPECT)
+            }
+            lastScreenCount = current
         }.apply { start() }
     }
 
@@ -54,6 +63,12 @@ class DesktopShieldEngine(
 
     override fun onForeground() {
         lastActivity = System.currentTimeMillis()
+    }
+
+    private fun screenCount(): Int = try {
+        java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.size
+    } catch (e: Exception) {
+        0
     }
 
     override fun onBackground() {

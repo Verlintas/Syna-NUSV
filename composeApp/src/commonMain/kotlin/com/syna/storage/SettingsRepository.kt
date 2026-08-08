@@ -20,6 +20,7 @@
 package com.syna.storage
 
 import com.russhwolf.settings.Settings
+import com.syna.shield.ShieldConfigGuard
 import com.syna.core.ConnectionMode
 import com.syna.ui.theme.ThemeMode
 
@@ -74,15 +75,21 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         }
 
     var shieldEnabled: Boolean
-        get() = settings.getBoolean(KEY_SHIELD_ENABLED, false)
+        get() = readShieldValue(KEY_SHIELD_ENABLED, KEY_SHIELD_ENABLED_SIG, false)
         set(value) {
-            settings.putBoolean(KEY_SHIELD_ENABLED, value)
+            writeShieldValue(KEY_SHIELD_ENABLED, KEY_SHIELD_ENABLED_SIG, value)
+        }
+
+    var shieldSelfDestruct: Boolean
+        get() = readShieldValue(KEY_SHIELD_SELF_DESTRUCT, KEY_SHIELD_SELF_DESTRUCT_SIG, false)
+        set(value) {
+            writeShieldValue(KEY_SHIELD_SELF_DESTRUCT, KEY_SHIELD_SELF_DESTRUCT_SIG, value)
         }
 
     var shieldScreenProtection: Boolean
-        get() = settings.getBoolean(KEY_SHIELD_SCREEN_PROTECTION, true)
+        get() = readShieldValue(KEY_SHIELD_SCREEN_PROTECTION, KEY_SHIELD_SCREEN_PROTECTION_SIG, true)
         set(value) {
-            settings.putBoolean(KEY_SHIELD_SCREEN_PROTECTION, value)
+            writeShieldValue(KEY_SHIELD_SCREEN_PROTECTION, KEY_SHIELD_SCREEN_PROTECTION_SIG, value)
         }
 
     var blockedPeerIds: List<String>
@@ -93,6 +100,32 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         set(value) {
             settings.putString(KEY_BLOCKED_PEERS, value.distinct().joinToString("\n"))
         }
+
+    /** 篡改检测结果：由 App 启动时检查 */
+    var shieldTampered: Boolean = false
+        private set
+
+    private fun readShieldValue(key: String, sigKey: String, default: Boolean): Boolean {
+        val raw = settings.getStringOrNull(key)
+        if (raw == null) {
+            // 无记录（首次运行）
+            return default
+        }
+        val sig = settings.getStringOrNull(sigKey) ?: ""
+        val valid = ShieldConfigGuard.verify(raw, sig)
+        if (!valid) {
+            // 设置被篡改或密钥被清除：强制启用保护
+            shieldTampered = true
+            return if (key == KEY_SHIELD_SCREEN_PROTECTION) true else default || key == KEY_SHIELD_ENABLED
+        }
+        return raw == "true"
+    }
+
+    private fun writeShieldValue(key: String, sigKey: String, value: Boolean) {
+        val raw = value.toString()
+        settings.putString(key, raw)
+        settings.putString(sigKey, ShieldConfigGuard.sign(raw))
+    }
 
     private companion object {
         const val KEY_USER_ID = "user_id"
@@ -105,6 +138,10 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         const val KEY_TEMP_CHAT_TTL_HOURS = "temp_chat_ttl_hours"
         const val KEY_BLOCKED_PEERS = "blocked_peers"
         const val KEY_SHIELD_ENABLED = "shield_enabled"
+        const val KEY_SHIELD_ENABLED_SIG = "shield_enabled_sig"
         const val KEY_SHIELD_SCREEN_PROTECTION = "shield_screen_protection"
+        const val KEY_SHIELD_SCREEN_PROTECTION_SIG = "shield_screen_protection_sig"
+        const val KEY_SHIELD_SELF_DESTRUCT = "shield_self_destruct"
+        const val KEY_SHIELD_SELF_DESTRUCT_SIG = "shield_self_destruct_sig"
     }
 }

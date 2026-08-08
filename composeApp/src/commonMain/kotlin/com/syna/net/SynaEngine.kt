@@ -317,7 +317,7 @@ class SynaEngine(
                     chatStore.markAllRead(frame.from)
                     sendReceipt(frame.from, frame.msgId)
                 } else {
-                    notifyMessage(
+                    notifyMessageSafe(
                         peerName,
                         if (frame.burn) "[阅后即焚消息]" else (frame.body ?: "").take(80),
                     )
@@ -352,7 +352,7 @@ class SynaEngine(
                     if (chatStore.activeConversationId.value == groupId) {
                         chatStore.markAllRead(groupId)
                     } else {
-                        notifyMessage(
+                        notifyMessageSafe(
                             "${group.name} · $senderName",
                             if (frame.burn) "[阅后即焚消息]" else (frame.body ?: "").take(80),
                         )
@@ -1100,6 +1100,15 @@ class SynaEngine(
                 preview = if (kind == MessageKind.IMAGE) "🖼 ${assembler.fileName}" else "📄 ${assembler.fileName}",
             )
             synaLog("File") { "received ${assembler.fileName} (${assembler.fileSize}B) -> $path" }
+        }
+    }
+
+    /** 通知发送：Shield 锁定期间不泄露消息内容 */
+    private fun notifyMessageSafe(title: String, body: String) {
+        if (com.syna.shield.ShieldController.isLocked) {
+            notifyMessage("🔒 Syna 已锁定", "收到新消息（Shield 锁定期间不显示内容）")
+        } else {
+            notifyMessage(title, body)
         }
     }
 

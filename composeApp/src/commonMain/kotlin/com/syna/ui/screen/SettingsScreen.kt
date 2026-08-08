@@ -74,8 +74,10 @@ fun SettingsScreen(
     tempChatTtlHours: Int,
     shieldEnabled: Boolean,
     shieldScreenProtection: Boolean,
+    shieldSelfDestruct: Boolean,
     onShieldEnabledChange: (Boolean) -> Unit,
     onShieldScreenProtectionChange: (Boolean) -> Unit,
+    onShieldSelfDestructChange: (Boolean) -> Unit,
 ) {
     MaxWidthContainer(modifier = modifier) {
     Column(
@@ -224,6 +226,7 @@ fun SettingsScreen(
         val historySize = engine.chatStore.historyFileSize()
         val filesSize = receivedFilesSize()
         var confirmClear by remember { mutableStateOf(false) }
+        var confirmSelfDestruct by remember { mutableStateOf(false) }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -296,6 +299,35 @@ fun SettingsScreen(
                     Text("阻止其他应用截取/录屏本应用画面", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = shieldScreenProtection, onCheckedChange = onShieldScreenProtectionChange)
+            }
+        }
+        if (shieldEnabled) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { confirmSelfDestruct = !confirmSelfDestruct }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("💥 破解自毁协议", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "检测到严重级破解迹象（Root/调试/凭据变更/设备管理接管）时，自动销毁本地全部聊天记录与接收文件",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = shieldSelfDestruct, onCheckedChange = onShieldSelfDestructChange)
+            }
+            if (confirmSelfDestruct) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { confirmSelfDestruct = false },
+                    title = { Text("自毁协议警告") },
+                    text = { Text("开启后，一旦检测到严重级破解迹象，本地聊天记录与接收文件将被立即销毁且不可恢复（不影响对方）。请确认你理解该风险。") },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { confirmSelfDestruct = false }) { Text("知道了") }
+                    },
+                )
             }
         }
         Text(
