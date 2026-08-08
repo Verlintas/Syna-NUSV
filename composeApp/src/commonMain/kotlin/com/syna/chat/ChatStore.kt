@@ -19,9 +19,16 @@
  */
 package com.syna.chat
 
+import com.syna.storage.ChatPersistence
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 enum class MessageStatus {
     SENDING,
@@ -63,7 +70,10 @@ data class Conversation(
     val unreadCount: Int,
 )
 
-class ChatStore {
+class ChatStore(private val persistence: ChatPersistence? = null) {
+
+    private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var rewriteJob: Job? = null
 
     private val messagesM = MutableStateFlow<Map<String, List<ChatMessage>>>(emptyMap())
     val messages: StateFlow<Map<String, List<ChatMessage>>> = messagesM.asStateFlow()
@@ -72,6 +82,38 @@ class ChatStore {
     val conversations: StateFlow<List<Conversation>> = conversationsM.asStateFlow()
 
     val activeConversationId = MutableStateFlow<String?>(null)
+
+    init {
+        // 启动时从本地文件恢复聊天记录（多端持久化）
+        persistence?.load()?.let { loaded ->
+            if (loaded.isNotEmpty()) {
+                val grouped = loaded.groupBy { it.conversationId }
+                messagesM.value = grouped
+                grouped.forEach { (conversationId, list) ->
+                    val last = list.last()
+                    conversationsM.updateList { convs ->
+                        convs + Conversation(
+                            peerId = conversationId,
+                            peerName = conversationId,
+                            lastMessage = last.body,
+                            lastTs = last.ts,
+                            unreadCount = 0,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /** 消息变更后防抖重写本地文件（500ms 合并批量操作） */
+    private fun scheduleRewrite() {
+        if (persistence == null) return
+        rewriteJob?.cancel()
+        rewriteJob = persistScope.launch {
+            delay(500)
+            persistence.rewrite(messagesM.value)
+        }
+    }
 
     fun addIncoming(peerId: String, peerName: String, msg: ChatMessage, preview: String = msg.body) {
         messagesM.updateMap { it + (peerId to (it[peerId] ?: emptyList()) + msg) }
@@ -82,7 +124,9 @@ class ChatStore {
             lastTs = msg.ts,
             unreadDelta = if (activeConversationId.value == peerId) 0 else 1,
         )
+        scheduleRewrite()
     }
+
 
     fun addOutgoing(peerId: String, peerName: String, msg: ChatMessage) {
         messagesM.updateMap { it + (peerId to (it[peerId] ?: emptyList()) + msg) }
@@ -93,7 +137,9 @@ class ChatStore {
             lastTs = msg.ts,
             unreadDelta = 0,
         )
+        scheduleRewrite()
     }
+
 
     fun updateStatus(msgId: String, status: MessageStatus) {
         messagesM.updateMap { map ->
@@ -101,6 +147,7 @@ class ChatStore {
                 list.map { if (it.id == msgId) it.copy(status = status) else it }
             }
         }
+        scheduleRewrite()
     }
 
     fun updateProgress(msgId: String, progress: Int) {
@@ -117,6 +164,7 @@ class ChatStore {
                 list.map { if (it.id == msgId) it.copy(recalled = true, body = "[消息已撤回]") else it }
             }
         }
+        scheduleRewrite()
     }
 
     fun messageById(msgId: String): ChatMessage? =
@@ -139,6 +187,7 @@ class ChatStore {
         } else {
             refreshPreview(conversationId, remaining)
         }
+        scheduleRewrite()
     }
 
     private fun refreshPreview(conversationId: String, remaining: List<ChatMessage>) {
