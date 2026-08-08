@@ -232,7 +232,17 @@ class SynaEngine(
             else -> Unit
         }
         if (frame.enc && frame.type != FrameType.KEY && frame.type != FrameType.HELLO) {
-            // 服务器群消息：使用密码派生的群密钥（所有成员共享），保证历史可解密
+            // 优先 E2E（成员间会话密钥）解密；失败则尝试群密钥（兼容旧客户端/旧历史）
+            val peerKey = peerKeysM.value[frame.from]
+            if (peerKey != null) {
+                try {
+                    val session = SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(frame.from))
+                    val plain = SynaCrypto.decrypt(session, frame.body ?: "")
+                    return event.copyWith(frame.copy(body = plain))
+                } catch (e: Exception) {
+                    // E2E 失败，可能是群密钥加密的旧消息
+                }
+            }
             val serverGroup = serverSession?.takeIf { it.groupId == frame.to }
             if (serverGroup != null) {
                 return try {
@@ -240,25 +250,18 @@ class SynaEngine(
                     event.copyWith(frame.copy(body = plain))
                 } catch (e: Exception) {
                     synaLog("Crypto") { "group decrypt FAILED from=${frame.from.take(6)}: ${e.message}" }
-                    event
-                }
-            }
-            val peerKey = peerKeysM.value[frame.from]
-            if (peerKey != null) {
-                return try {
-                    val session = SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(frame.from))
-                    val plain = SynaCrypto.decrypt(session, frame.body ?: "")
-                    event.copyWith(frame.copy(body = plain))
-                } catch (e: Exception) {
-                    synaLog("Crypto") { "decrypt FAILED from=${frame.from.take(6)} type=${frame.type}: ${e.message}" }
                     // UDP 通道可能丢失过对方的公钥帧：主动请求重发，保证自愈
                     sendKeyRequest(frame.from)
                     event
                 }
-            } else {
-                // 没有对方的公钥（UDP 下 KEY 帧可能丢失）：请求重发
-                sendKeyRequest(frame.from)
             }
+            if (peerKey != null) {
+                synaLog("Crypto") { "decrypt FAILED from=${frame.from.take(6)} type=${frame.type}" }
+                sendKeyRequest(frame.from)
+                return event
+            }
+            // 没有对方的公钥（UDP 下 KEY 帧可能丢失）：请求重发
+            sendKeyRequest(frame.from)
         }
         return event
     }
@@ -284,6 +287,8 @@ class SynaEngine(
 
     private suspend fun handleChatFrame(frame: TransportFrame) {
         if (frame.from == userId) return
+        // 同一条消息的多份密文副本（服务器 E2E 广播）只处理一次
+        if (frame.msgId.isNotEmpty() && chatStore.messageById(frame.msgId) != null) return
         val peerName = peersM.value.firstOrNull { it.id == frame.from }?.username ?: frame.from
         when (frame.type) {
             FrameType.TEXT -> {
@@ -671,25 +676,57 @@ class SynaEngine(
         val msgId = newMsgId()
         val serverSession = serverSession
         if (serverSession != null && serverSession.groupId == groupId) {
-            // 服务器群：单帧发送，密码派生群密钥加密，服务器中继并持久化
-            val frame = TransportFrame(
-                type = FrameType.GROUP_MESSAGE,
-                from = userId,
-                to = groupId,
-                msgId = msgId,
-                ts = System.currentTimeMillis(),
-                body = if (settings.e2eEnabled) {
-                    SynaCrypto.encrypt(serverSession.groupKey, text)
-                } else text,
-                enc = settings.e2eEnabled,
-                burn = burn,
-                replyTo = replyTo,
-                mentions = mentions,
-            )
-            try {
-                serverSession.channel.send(frame)
-            } catch (e: Exception) {
-                synaLog("Server") { "group send failed: ${e.message}" }
+            // 服务器群 E2E：对每个成员用其 X25519 会话密钥加密一份（msgId 相同）。
+            // 服务器广播全部密文副本（各自只能解自己的）并持久化一份——
+            // 服务器管理员与公网中转方无法解密任何消息内容。
+            val ciphers = group.memberIds.filter { it != userId }.mapNotNull { memberId ->
+                val peerKey = peerKeysM.value[memberId]
+                if (peerKey != null) {
+                    SynaCrypto.encrypt(
+                        SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(memberId)),
+                        text,
+                    )
+                } else null
+            }
+            val frames: List<TransportFrame>
+            if (ciphers.isNotEmpty()) {
+                frames = ciphers.map { cipher ->
+                    TransportFrame(
+                        type = FrameType.GROUP_MESSAGE,
+                        from = userId,
+                        to = groupId,
+                        msgId = msgId,
+                        ts = System.currentTimeMillis(),
+                        body = cipher,
+                        enc = true,
+                        burn = burn,
+                        replyTo = replyTo,
+                        mentions = mentions,
+                    )
+                }
+            } else {
+                // 尚无成员密钥（首条消息前）：明文发送一份
+                frames = listOf(
+                    TransportFrame(
+                        type = FrameType.GROUP_MESSAGE,
+                        from = userId,
+                        to = groupId,
+                        msgId = msgId,
+                        ts = System.currentTimeMillis(),
+                        body = text,
+                        enc = false,
+                        burn = burn,
+                        replyTo = replyTo,
+                        mentions = mentions,
+                    ),
+                )
+            }
+            frames.forEach { frame ->
+                try {
+                    serverSession.channel.send(frame)
+                } catch (e: Exception) {
+                    synaLog("Server") { "group send failed: ${e.message}" }
+                }
             }
             chatStore.addOutgoing(
                 peerId = groupId,

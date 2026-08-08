@@ -28,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -146,27 +147,33 @@ class ServerTest {
             val ra = a.joinServer("127.0.0.1", port, "test-secret")
             val groupId = ra.getOrThrow()
 
-            // A 发送两条消息
+            // A 发送消息（E2E 加密，仅当时在线成员可解密）
             val keyDeadline = System.currentTimeMillis() + 8_000
             while (a.peerKeys.value.isEmpty() && System.currentTimeMillis() < keyDeadline) delay(200)
-            a.sendGroupText(groupId, "历史消息一")
-            a.sendGroupText(groupId, "历史消息二")
-            delay(1_500)
+            a.sendGroupText(groupId, "在线消息一")
 
-            // C 后加入，应拉取到历史
+            // C 后加入（E2E 模型下，加入前的历史不可见——服务器只存密文）
             val rc = c.joinServer("127.0.0.1", port, "test-secret")
             assertTrue(rc.isSuccess, "C 应能加入")
             assertEquals(groupId, rc.getOrThrow())
+            // 历史回放不应包含 A 的 E2E 密文（C 无对应会话密钥，无法解密且不显示密文）
+            val historyBodies = c.chatStore.messages.value[groupId].orEmpty().map { it.body }
+            assertTrue("在线消息一" !in historyBodies, "加入前的 E2E 历史对 C 不可见: $historyBodies")
 
-            val historyDeadline = System.currentTimeMillis() + 8_000
-            while (System.currentTimeMillis() < historyDeadline) {
+            // C 加入后 A 再发消息，C 应能实时收到（E2E 密钥交换完成后）
+            val cKeyDeadline = System.currentTimeMillis() + 8_000
+            while (c.peerKeys.value.values.isEmpty() && System.currentTimeMillis() < cKeyDeadline) delay(200)
+            a.sendGroupText(groupId, "C 加入后的消息")
+            val liveDeadline = System.currentTimeMillis() + 8_000
+            while (System.currentTimeMillis() < liveDeadline) {
                 val msgs = c.chatStore.messages.value[groupId].orEmpty()
-                if (msgs.count { it.body == "历史消息一" || it.body == "历史消息二" } == 2) break
+                if (msgs.any { it.body == "C 加入后的消息" }) break
                 delay(200)
             }
-            val bodies = c.chatStore.messages.value[groupId].orEmpty().map { it.body }
-            assertTrue("历史消息一" in bodies, "C 应收到历史消息一: $bodies")
-            assertTrue("历史消息二" in bodies, "C 应收到历史消息二: $bodies")
+            assertTrue(
+                c.chatStore.messages.value[groupId].orEmpty().any { it.body == "C 加入后的消息" },
+                "C 加入后应能实时收到 E2E 消息",
+            )
         } finally {
             server.stop()
             a.stop()
@@ -223,16 +230,13 @@ class ServerTest {
             }
             assertTrue(b.chatStore.messages.value[groupId].orEmpty().none { it.body == "这条会烧掉" }, "B 侧焚毁消息应消失")
 
-            // C 后加入：历史里不应有焚毁消息，但应有普通消息
-            c.joinServer("127.0.0.1", port, "test-secret")
-            val historyDeadline = System.currentTimeMillis() + 8_000
-            while (System.currentTimeMillis() < historyDeadline) {
-                val bodies = c.chatStore.messages.value[groupId].orEmpty().map { it.body }
-                if ("普通消息" in bodies) break
-                delay(200)
-            }
+            // C 后加入：E2E 模型下历史密文对 C 不可见（服务器不持有解密能力）
+            val rc = c.joinServer("127.0.0.1", port, "test-secret")
+            assertTrue(rc.isSuccess, "C 应能加入")
+            delay(1_500)
             val bodies = c.chatStore.messages.value[groupId].orEmpty().map { it.body }
-            assertTrue("普通消息" in bodies, "普通消息应保留在服务器历史")
+            // 历史不可见：不显示密文、不显示焚毁消息（服务器侧的焚毁清除逻辑仍有效）
+            assertTrue("普通消息" !in bodies, "历史密文对 C 不可见（E2E 模型）")
             assertTrue("这条会烧掉" !in bodies, "阅后即焚消息不应残留在服务器历史")
         } finally {
             server.stop()

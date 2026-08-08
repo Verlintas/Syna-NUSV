@@ -315,7 +315,8 @@ class SynaServer(
                         }
                     }
                 }
-                if (frame.type == FrameType.GROUP_MESSAGE || frame.type == FrameType.KEY) {
+                // 仅持久化加密的群消息（明文回退帧不落库，服务器不留存可读内容）与公钥帧
+                if ((frame.type == FrameType.GROUP_MESSAGE && frame.enc) || frame.type == FrameType.KEY) {
                     persistMessage(frame)
                 }
                 broadcast(frame, except = session)
@@ -374,8 +375,9 @@ class SynaServer(
     }
 
     private suspend fun broadcast(frame: TransportFrame, except: ClientSession?) {
+        // 只发给已认证的会话：认证完成前（channelKey 未设置）收到广播会污染握手
         val targets = synchronized(sessions) {
-            sessions.filter { it !== except && it.isOpen() }
+            sessions.filter { it !== except && it.isOpen() && it.userId != null }
         }
         targets.forEach { session ->
             try {
