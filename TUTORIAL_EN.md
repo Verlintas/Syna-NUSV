@@ -91,9 +91,12 @@ A private server is a persistent group chat hosted by you — like a Minecraft s
 # CLI mode (headless) — good for servers / remote machines
 java -jar syna-server.jar -p 45880 -w YourSecretPassword -g "My Group"
 
-# GUI mode — visual dashboard
-java -jar syna-server.jar --ui
+# Launcher (GUI) — auto-launches on any machine with a display;
+# falls back to headless CLI on servers
+java -jar syna-server.jar            # auto-launches the launcher
+java -jar syna-server.jar --launcher # force launcher mode
 ```
+The launcher keeps its config in `~/.syna-server/launcher.json`, offers one-click start/stop, live status (port, LAN addresses, member list, history count, scrolling logs), **crash auto-restart** (3s), **start at login** (macOS / Linux / Windows), an open-data-folder button, and server moderation (kick / ban / announcements).
 
 **2. All options**
 

@@ -27,7 +27,11 @@ import java.nio.file.Path
 import kotlinx.coroutines.runBlocking
 
 fun main(args: Array<String>) {
-    if (args.contains("--ui") || args.contains("-ui")) {
+    val hasGuiFlag = args.contains("--ui") || args.contains("-ui") || args.contains("--launcher")
+    val hasCliArgs = args.any { it.startsWith("-") && it != "--ui" && it != "-ui" && it != "--launcher" }
+
+    // 显式参数优先；无参数时：有图形环境 → 启动器 GUI，无头环境 → CLI
+    if (hasGuiFlag || (!hasCliArgs && hasDisplay())) {
         val config = parseArgs(args)
         serverUiMain(config)
         return
@@ -35,10 +39,20 @@ fun main(args: Array<String>) {
     serverCliMain(args)
 }
 
+/** 检测是否有图形环境（远程/无头服务器上自动走 CLI） */
+private fun hasDisplay(): Boolean {
+    return try {
+        !java.awt.GraphicsEnvironment.isHeadless() &&
+            (java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().screenDevices.isNotEmpty())
+    } catch (e: Exception) {
+        false
+    }
+}
+
 /** CLI 无头模式 */
 private fun serverCliMain(args: Array<String>) {
     val config = parseArgs(args)
-    println("Syna 私人聊天服务器 v0.3.0 启动中…（带界面模式: 加 --ui 参数）")
+    println("Syna 私人聊天服务器 v0.3.0 启动中…（带界面模式: 加 --ui 参数，或直接双击运行进入启动器）")
     val server = SynaServer(
         port = config.port,
         password = config.password,
@@ -54,14 +68,14 @@ private fun serverCliMain(args: Array<String>) {
     }
 }
 
-/** GUI 界面模式 */
+/** GUI 界面模式（启动器） */
 private fun serverUiMain(config: ServerConfig) {
     val controller = ServerController()
     application {
         Window(
             onCloseRequest = ::exitApplication,
-            title = "Syna 私人聊天服务器",
-            state = rememberWindowState(width = 680.dp, height = 760.dp),
+            title = "Syna 私人聊天服务器启动器",
+            state = rememberWindowState(width = 720.dp, height = 820.dp),
         ) {
             ServerUiScreen(controller = controller, initialConfig = config)
         }
@@ -110,7 +124,8 @@ private fun printHelp() {
           -g, --group <名称>       群名称（默认 "Syna 私服"）
           -d, --data-dir <路径>    数据目录（默认 ./syna-server-data，消息持久化于此）
               --history <条数>     历史消息条数上限（默认 200）
-              --ui                 使用图形界面（配置、状态、成员、日志一目了然）
+              --ui / --launcher      使用启动器图形界面（配置持久化、一键启停、崩溃自动重启、开机自启）
+        无参数运行            有图形环境自动进入启动器；无头环境自动走命令行
 
         内网穿透（公网访问）:
           服务器只需监听端口；用任意外网隧道工具把端口映射到公网即可，

@@ -72,11 +72,17 @@ Run your own persistent group chat server on any JVM machine — Windows / macOS
 java -jar syna-server.jar -p 45880 -w YourSecretPassword -g "My Group"
 ```
 
-**② GUI mode** — visual dashboard for everyone else:
+**② Launcher (GUI)** — visual launcher for everyone else; just run with no arguments on a machine with a display:
 ```bash
-java -jar syna-server.jar --ui
+java -jar syna-server.jar            # auto-launches the launcher on desktop; falls back to CLI headless
+java -jar syna-server.jar --launcher # force launcher mode
 ```
-The UI shows live status: running port, LAN access addresses, member list, history count, and a scrolling log console — configure and start/stop the server with a click.
+The launcher provides:
+- **Persistent config** — port / password / group / data dir saved to `~/.syna-server/launcher.json`, restored on next launch
+- **One-click start / stop**, live status (port, LAN addresses, member list, history count, scrolling logs)
+- **Crash auto-restart** — the server is pulled back up 3s after an unexpected exit (manual stop is never restarted)
+- **Start at login** — macOS LaunchAgent / Linux autostart / Windows Startup folder, toggle in the UI
+- **Open data folder** button, server moderation (kick/ban/announcements)
 
 ```
 # options

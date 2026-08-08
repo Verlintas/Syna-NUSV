@@ -95,9 +95,11 @@ adb install composeApp/build/outputs/apk/debug/composeApp-debug.apk
 # 命令行模式（无头）—— 适合服务器 / 远程机器
 java -jar syna-server.jar -p 45880 -w 你的密码 -g "群名称"
 
-# 图形界面模式 —— 可视化仪表盘
-java -jar syna-server.jar --ui
+# 启动器（图形界面）—— 有显示环境时无参数运行自动进入；服务器上自动回退无头 CLI
+java -jar syna-server.jar            # 自动进入启动器
+java -jar syna-server.jar --launcher # 强制启动器模式
 ```
+启动器配置持久化于 `~/.syna-server/launcher.json`，提供一键启停、实时状态（端口/局域网地址/成员/历史条数/滚动日志）、**崩溃自动重启**（3 秒）、**开机自启**（macOS / Linux / Windows）、打开数据目录，以及服务器管理（踢人 / 封禁 / 公告）。
 
 **2. 所有参数**
 

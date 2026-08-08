@@ -44,6 +44,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -59,15 +61,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-class ServerController {
+class ServerController(
+    private val configStore: LauncherConfigStore = LauncherConfigStore(),
+    var config: LauncherConfig = configStore.load(),
+) {
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
     private var server: SynaServer? = null
     private var linkJob: kotlinx.coroutines.Job? = null
+    private var crashWatchJob: kotlinx.coroutines.Job? = null
+    private var manualStop = true
 
     val isRunning = kotlinx.coroutines.flow.MutableStateFlow(false)
     val members = kotlinx.coroutines.flow.MutableStateFlow<List<com.syna.net.ServerMember>>(emptyList())
@@ -76,10 +84,14 @@ class ServerController {
     val boundPort = kotlinx.coroutines.flow.MutableStateFlow(0)
     val addressesText = kotlinx.coroutines.flow.MutableStateFlow("")
     val bannedUsers = kotlinx.coroutines.flow.MutableStateFlow<List<String>>(emptyList())
+    val autoRestartOn = kotlinx.coroutines.flow.MutableStateFlow(config.autoRestart)
+    val autoStartOn = kotlinx.coroutines.flow.MutableStateFlow(config.autoStart)
 
-    fun start(port: Int, password: String, groupName: String, dataDir: String) {
+    /** 用当前配置启动；[fromCrash] 为 true 时忽略手动停止标记 */
+    fun start(fromCrash: Boolean = false) {
         if (server != null) return
-        val s = SynaServer(port, password, groupName, Path.of(dataDir))
+        manualStop = false
+        val s = SynaServer(config.port, config.password, config.groupName, Path.of(config.dataDir))
         server = s
         linkJob = scope.launch {
             launch { s.members.collect { members.value = it } }
@@ -91,12 +103,30 @@ class ServerController {
         s.start()
         boundPort.value = s.boundPort
         addressesText.value = s.localAddressesText()
+        watchCrash()
+    }
+
+    /** 崩溃/意外退出自动重启：isRunning 变 false 且未手动停止时 3 秒后拉起 */
+    private fun watchCrash() {
+        crashWatchJob?.cancel()
+        crashWatchJob = scope.launch {
+            isRunning.collect { running ->
+                if (!running && !manualStop && autoRestartOn.value && server != null) {
+                    logLine("[SynaLauncher] 服务器意外退出，3 秒后自动重启…")
+                    delay(3_000)
+                    if (!manualStop && autoRestartOn.value && server == null) {
+                        start(fromCrash = true)
+                    }
+                }
+            }
+        }
     }
 
     fun stop() {
+        manualStop = true
         server?.stop()
         server = null
-        linkJob?.cancel()
+        crashWatchJob?.cancel()
         isRunning.value = false
     }
 
@@ -105,6 +135,44 @@ class ServerController {
     fun unban(userId: String) = server?.unbanUser(userId)
 
     fun announce(text: String) = server?.setAnnouncement(text)
+
+    fun setAutoRestart(on: Boolean) {
+        config.autoRestart = on
+        autoRestartOn.value = on
+        configStore.save(config)
+    }
+
+    fun setAutoStart(on: Boolean) {
+        config.autoStart = on
+        autoStartOn.value = on
+        if (on) AutoStartManager.enable(config) else AutoStartManager.disable()
+        configStore.save(config)
+    }
+
+    fun saveConfig() {
+        configStore.save(config)
+    }
+
+    fun openDataDir() {
+        try {
+            val dir = Path.of(config.dataDir)
+            Files.createDirectories(dir)
+            val abs = dir.toAbsolutePath().toString()
+            val os = System.getProperty("os.name").lowercase()
+            val cmd = when {
+                os.contains("mac") -> listOf("open", abs)
+                os.contains("win") -> listOf("explorer", abs)
+                else -> listOf("xdg-open", abs)
+            }
+            ProcessBuilder(cmd).start()
+        } catch (e: Exception) {
+            logLine("[SynaLauncher] 打开数据目录失败: ${e.message}")
+        }
+    }
+
+    private fun logLine(msg: String) {
+        logs.value = logs.value + msg
+    }
 }
 
 @Composable
@@ -118,11 +186,13 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
     val addressesText by controller.addressesText.collectAsState()
     val logListState = rememberLazyListState()
 
-    var port by remember { mutableStateOf(initialConfig.port.toString()) }
-    var password by remember { mutableStateOf(initialConfig.password) }
-    var groupName by remember { mutableStateOf(initialConfig.groupName) }
-    var dataDir by remember { mutableStateOf(initialConfig.dataDir) }
+    var port by remember { mutableStateOf(controller.config.port.toString()) }
+    var password by remember { mutableStateOf(controller.config.password) }
+    var groupName by remember { mutableStateOf(controller.config.groupName) }
+    var dataDir by remember { mutableStateOf(controller.config.dataDir) }
     var announcementInput by remember { mutableStateOf("") }
+    val autoRestart by controller.autoRestartOn.collectAsState()
+    val autoStart by controller.autoStartOn.collectAsState()
 
     // 日志自动滚动到底部
     LaunchedEffect(logs.size) {
@@ -193,7 +263,7 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-                Row {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     if (running) {
                         OutlinedButton(onClick = { controller.stop() }) {
                             Text("停止服务器")
@@ -201,14 +271,49 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
                     } else {
                         Button(
                             onClick = {
-                                val p = port.toIntOrNull() ?: 45880
-                                controller.start(p, password.ifEmpty { "syna" }, groupName.ifEmpty { "Syna 私服" }, dataDir)
+                                controller.config.port = port.toIntOrNull() ?: 45880
+                                controller.config.password = password.ifEmpty { "syna" }
+                                controller.config.groupName = groupName.ifEmpty { "Syna 私服" }
+                                controller.config.dataDir = dataDir
+                                controller.saveConfig()
+                                controller.start()
                             },
                         ) {
                             Text("启动服务器")
                         }
                     }
+                    Spacer(Modifier.width(12.dp))
+                    TextButton(onClick = { controller.openDataDir() }, enabled = running) {
+                        Text("打开数据目录")
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    TextButton(
+                        onClick = {
+                            controller.config.port = port.toIntOrNull() ?: 45880
+                            controller.config.password = password.ifEmpty { "syna" }
+                            controller.config.groupName = groupName.ifEmpty { "Syna 私服" }
+                            controller.config.dataDir = dataDir
+                            controller.saveConfig()
+                        },
+                    ) {
+                        Text("保存配置")
+                    }
                 }
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("崩溃自动重启", style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    Switch(checked = autoRestart, onCheckedChange = { controller.setAutoRestart(it) })
+                    Spacer(Modifier.width(16.dp))
+                    Text("开机自启", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(6.dp))
+                    Switch(checked = autoStart, onCheckedChange = { controller.setAutoStart(it) })
+                }
+                Text(
+                    "配置自动保存于 ${LauncherConfigStore.defaultConfigPath()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
         }
         Spacer(Modifier.height(10.dp))
