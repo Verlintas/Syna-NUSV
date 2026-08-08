@@ -135,7 +135,7 @@ val serverFatJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "com.syna.server.ServerMainKt"
-        attributes["Implementation-Version"] = "0.3.0"
+        attributes["Implementation-Version"] = "0.3.1"
     }
     from(kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs)
     from(configurations.getByName("desktopRuntimeClasspath").map { file ->
@@ -151,4 +151,39 @@ val runServer by tasks.registering(JavaExec::class) {
     classpath = kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs +
         kotlin.targets.getByName("desktop").compilations.getByName("main").runtimeDependencyFiles
     mainClass.set("com.syna.server.ServerMainKt")
+}
+
+// ===== 服务器启动器独立应用（jpackage，双击即用）=====
+val launcherAppImage by tasks.registering(Exec::class) {
+    group = "server"
+    description = "用 jpackage 生成服务器启动器独立应用（macOS .app / Windows 目录 / Linux 目录）"
+    dependsOn(serverFatJar)
+    val inputDir = layout.buildDirectory.dir("server/launcher-input")
+    val destDir = layout.buildDirectory.dir("launcher")
+    val osName = System.getProperty("os.name").lowercase()
+    val icon = when {
+        osName.contains("mac") -> rootProject.file("assets/icons/Syna.icns")
+        osName.contains("win") -> rootProject.file("assets/icons/Syna.ico")
+        else -> rootProject.file("assets/icons/Syna-512.png")
+    }
+    doFirst {
+        val input = inputDir.get().asFile
+        input.mkdirs()
+        file(serverFatJar.get().archiveFile).copyTo(input.resolve("syna-server.jar"), overwrite = true)
+        val dest = destDir.get().asFile
+        // jpackage 不覆盖已存在目录，先清理上次产物
+        delete(dest.resolve("SynaServer.app"))
+        delete(dest.resolve("SynaServer"))
+        dest.mkdirs()
+    }
+    commandLine(
+        "jpackage",
+        "--type", "app-image",
+        "--input", inputDir.get().asFile.absolutePath,
+        "--main-jar", "syna-server.jar",
+        "--name", "SynaServer",
+        "--icon", icon.absolutePath,
+        "--app-version", "1.0.0",
+        "--dest", destDir.get().asFile.absolutePath,
+    )
 }
