@@ -34,3 +34,13 @@ expect fun FilePickerButton(
     onFilePicked: (name: String, bytes: ByteArray) -> Unit,
     modifier: Modifier = Modifier,
 )
+
+/**
+ * 图片选择按钮：Android 走系统相册（Photo Picker，无需存储权限）；
+ * 桌面端复用文件对话框（可继续选择任意文件，功能不裁剪）。
+ */
+@Composable
+expect fun ImagePickerButton(
+    onImagePicked: (name: String, bytes: ByteArray) -> Unit,
+    modifier: Modifier = Modifier,
+)

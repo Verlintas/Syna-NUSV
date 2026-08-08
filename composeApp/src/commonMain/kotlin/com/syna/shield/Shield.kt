@@ -174,6 +174,12 @@ expect fun clearOwnClipboard()
 /** 清除本应用的全部通知（自毁时调用，不留痕迹） */
 expect fun clearNotifications()
 
+/** 是否已授予使用情况访问权限（增强前台应用检测） */
+expect fun shieldUsageAccessGranted(): Boolean
+
+/** 引导用户授予使用情况访问权限（跳系统设置；桌面端 no-op） */
+expect fun requestUsageAccessPermission()
+
 /**
  * Shield 控制器：收集威胁、管理状态机、审计时间线。
  * 策略：任一威胁上报即锁定；解锁后若存在严重级威胁，30 秒内未消除将自动重新锁定。

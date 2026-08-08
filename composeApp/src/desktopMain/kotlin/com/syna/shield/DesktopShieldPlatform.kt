@@ -10,6 +10,12 @@ actual fun clearNotifications() {
     // 桌面端无系统通知中心清理接口
 }
 
+actual fun shieldUsageAccessGranted(): Boolean = false
+
+actual fun requestUsageAccessPermission() {
+    // 桌面端无使用情况访问概念
+}
+
 actual fun clearOwnClipboard() {
     try {
         // 清空系统剪贴板（桌面端无"仅清除本应用"语义，直接清空）

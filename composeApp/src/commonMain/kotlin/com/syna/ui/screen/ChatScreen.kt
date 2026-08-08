@@ -29,9 +29,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -68,7 +71,7 @@ import com.syna.chat.ChatMessage
 import com.syna.chat.MessageKind
 import com.syna.chat.MessageStatus
 import com.syna.net.SynaEngine
-import com.syna.util.FilePickerButton
+import com.syna.util.ImagePickerButton
 import com.syna.util.formatDate
 import com.syna.util.formatTime
 import com.syna.util.isSameDay
@@ -379,8 +382,8 @@ fun ChatScreen(
                     .padding(10.dp),
             )
             Spacer(Modifier.size(6.dp))
-            FilePickerButton(
-                onFilePicked = { name, bytes ->
+            ImagePickerButton(
+                onImagePicked = { name, bytes ->
                     scope.launch {
                         engine.sendFile(peerId, name, bytes, mimeTypeFromName(name))
                     }
@@ -596,21 +599,38 @@ private fun MessageBubble(
                         color = textColor.copy(alpha = 0.7f),
                     )
                 } else {
-                    // 引用回复预览
+                    // 引用回复预览（独立引用块 + 左侧竖条，双端可见且不与正文重叠）
                     val quoted = message.replyToId?.let { id -> allMessages.firstOrNull { it.id == id } }
                     if (quoted != null && !quoted.recalled) {
-                        Text(
-                            text = "↩ ${quoted.body.take(30)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = textColor.copy(alpha = 0.7f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .padding(bottom = 2.dp)
-                                .background(if (isMine) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.15f) else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                                .padding(horizontal = 6.dp, vertical = 3.dp)
-                                .clip(RoundedCornerShape(4.dp)),
-                        )
+                        val quoteBg = if (isMine) {
+                            androidx.compose.ui.graphics.Color.White.copy(alpha = 0.18f)
+                        } else {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
+                        }
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Box(
+                                modifier = Modifier
+                                    .width(3.dp)
+                                    .fillMaxHeight()
+                                    .background(if (isMine) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.5f) else MaterialTheme.colorScheme.primary),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "↩ 引用",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = textColor.copy(alpha = 0.75f),
+                                )
+                                Text(
+                                    text = quoted.body,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = textColor.copy(alpha = 0.95f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
                     }
                     Row {
                         if (message.burnAfterReading) {

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
@@ -50,6 +51,8 @@ import com.syna.ui.MaxWidthContainer
 import com.syna.ui.theme.ThemeMode
 import com.syna.util.PermissionState
 import com.syna.util.notificationPermissionState
+import com.syna.shield.requestUsageAccessPermission
+import com.syna.shield.shieldUsageAccessGranted
 import com.syna.storage.clearReceivedFiles
 import com.syna.storage.receivedFilesSize
 import com.syna.util.rememberNotificationPermissionRequester
@@ -268,7 +271,7 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(16.dp))
 
-        SectionTitle("Mirtazapine Shield")
+        SectionTitle("◇Mirtazapine Shield")
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -277,9 +280,9 @@ fun SettingsScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("🛡 实时安全监测与应用锁", style = MaterialTheme.typography.bodyLarge)
+                Text("◇ 实时安全监测与应用锁", style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    "检测 Root/模拟器/调试/VPN变更/后台切换/监控类应用，发现威胁即锁定应用，需生物识别解锁",
+                    "检测 Root/模拟器/调试/Frida/凭据变更/设备管理接管/监控类应用，发现威胁即锁定，需生物识别解锁",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -287,19 +290,26 @@ fun SettingsScreen(
             Switch(checked = shieldEnabled, onCheckedChange = onShieldEnabledChange)
         }
         if (shieldEnabled) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onShieldScreenProtectionChange(!shieldScreenProtection) }
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("防截屏保护", style = MaterialTheme.typography.bodyLarge)
-                    Text("阻止其他应用截取/录屏本应用画面", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Switch(checked = shieldScreenProtection, onCheckedChange = onShieldScreenProtectionChange)
-            }
+            ShieldSubOption(
+                checked = shieldScreenProtection,
+                onToggle = { onShieldScreenProtectionChange(!shieldScreenProtection) },
+                title = "防截屏保护",
+                detail = "阻止其他应用截取/录屏本应用画面",
+            )
+            ShieldSubOption(
+                checked = shieldSelfDestruct,
+                onToggle = { onShieldSelfDestructChange(!shieldSelfDestruct) },
+                title = "💥 破解自毁协议",
+                detail = "严重级破解迹象（Root/调试/凭据/设备管理/设置篡改）时自动销毁本地记录",
+            )
+            // 护盾权限授权：使用情况访问增强前台检测
+            val usageGranted = shieldUsageAccessGranted()
+            ShieldSubOption(
+                checked = usageGranted,
+                onToggle = { requestUsageAccessPermission() },
+                title = "使用情况访问授权",
+                detail = "授权后可实时感知前台应用切换与监控应用运行，反应更迅速",
+            )
         }
         if (shieldEnabled) {
             Row(
@@ -409,6 +419,31 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun ShieldSubOption(
+    checked: Boolean,
+    onToggle: () -> Unit,
+    title: String,
+    detail: String,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.Checkbox(
+            checked = checked,
+            onCheckedChange = { onToggle() },
+        )
+        Spacer(Modifier.width(6.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium)
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
 private fun formatSize(bytes: Long): String = when {
     bytes >= 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0 / 1024.0)} MB"
     bytes >= 1024 -> "${"%.1f".format(bytes / 1024.0)} KB"

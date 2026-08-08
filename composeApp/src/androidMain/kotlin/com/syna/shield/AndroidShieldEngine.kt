@@ -43,7 +43,9 @@ class AndroidShieldEngine private constructor(
 ) : ShieldEngine {
 
     companion object {
-        const val SCAN_INTERVAL_MS = 10_000L
+        const val LIGHT_SCAN_INTERVAL_MS = 3_000L
+        const val HEAVY_SCAN_INTERVAL_MS = 15_000L
+        const val SCAN_INTERVAL_MS = 3_000L
         const val BACKGROUND_SWITCH_THRESHOLD_MS = 1_500L
         private var instance: AndroidShieldEngine? = null
 
@@ -80,10 +82,17 @@ class AndroidShieldEngine private constructor(
     private var lastBiometricState: Int? = null
 
     override fun start() {
+        // 反应更快：轻量检测（root/frida/调试/凭据/签名）每 3s 一次，
+        // 重量级检测（应用枚举/无障碍/设备管理）每 15s 一次
         scanJob = scope.launch {
+            var tick = 0L
             while (true) {
-                runThreatChecks()
-                delay(SCAN_INTERVAL_MS)
+                runLightChecks()
+                if (tick % (HEAVY_SCAN_INTERVAL_MS / LIGHT_SCAN_INTERVAL_MS) == 0L) {
+                    runHeavyChecks()
+                }
+                tick++
+                delay(LIGHT_SCAN_INTERVAL_MS)
             }
         }
         monitorVpn()
@@ -95,7 +104,8 @@ class AndroidShieldEngine private constructor(
         scanJob = null
     }
 
-    private fun runThreatChecks() {
+    /** 轻量高频检测（3s）：注入/调试/签名类，反应迅速 */
+    private fun runLightChecks() {
         // 防重打包：签名指纹不一致 → 严重威胁
         if (!verifySignature()) {
             onThreat(ShieldThreat.SHIELD_TAMPERED)
@@ -104,12 +114,46 @@ class AndroidShieldEngine private constructor(
         if (hasFrida() || detectProcessInjection()) onThreat(ShieldThreat.FRIDA_DETECTED)
         if (isEmulator()) onThreat(ShieldThreat.EMULATOR_DETECTED)
         if (isDebugMode()) onThreat(ShieldThreat.DEBUG_MODE)
+        checkCredentialChange()
+        checkForegroundApp()
+        // VPN 变更由回调单独触发
+    }
+
+    /** 重量级低频检测（15s）：应用枚举类 */
+    private fun runHeavyChecks() {
         if (hasMonitoringApps()) onThreat(ShieldThreat.MONITORING_APP)
         if (hasAbusiveAccessibility()) onThreat(ShieldThreat.ACCESSIBILITY_ABUSE)
         checkDeviceAdminChange()
         checkAccessibilityChange()
-        checkCredentialChange()
-        // VPN 变更由回调单独触发
+    }
+
+    /**
+     * 前台应用感知（需使用情况访问授权）：
+     * 监控类应用正在前台运行时，立即触发高威胁锁定——比单纯"已安装"信号更强。
+     */
+    private fun checkForegroundApp() {
+        if (!shieldUsageAccessGranted()) return
+        try {
+            val usm = context.getSystemService(Context.USAGE_STATS_SERVICE) as android.app.usage.UsageStatsManager
+            val end = System.currentTimeMillis()
+            val events = usm.queryEvents(end - 60_000L, end)
+            var foreground: String? = null
+            var lastTs = 0L
+            val event = android.app.usage.UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                if (event.eventType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND && event.timeStamp >= lastTs) {
+                    foreground = event.packageName
+                    lastTs = event.timeStamp
+                }
+            }
+            foreground?.let { pkg ->
+                if (KNOWN_MONITORING_FRAGMENTS.any { pkg.contains(it, ignoreCase = true) }) {
+                    onThreat(ShieldThreat.MONITORING_APP)
+                }
+            }
+        } catch (e: Exception) {
+        }
     }
 
     // ===== 检测源（纯逻辑抽取，便于单元测试） =====

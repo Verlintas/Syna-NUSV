@@ -40,6 +40,35 @@ actual fun saveReceivedFile(fileName: String, bytes: ByteArray): String {
 actual fun readFileBytes(path: String): ByteArray = Files.readAllBytes(Paths.get(path))
 
 @Composable
+actual fun ImagePickerButton(
+    onImagePicked: (name: String, bytes: ByteArray) -> Unit,
+    modifier: Modifier,
+) {
+    // 桌面端复用文件对话框（可继续选择任意文件，功能不裁剪）
+    TextButton(
+        onClick = {
+            Thread {
+                val dialog = FileDialog(null as Frame?, "选择图片", FileDialog.LOAD)
+                dialog.isVisible = true
+                val dir = dialog.directory
+                val file = dialog.file
+                if (dir != null && file != null) {
+                    try {
+                        val f = java.io.File(dir, file)
+                        onImagePicked(f.name, f.readBytes())
+                    } catch (e: Exception) {
+                        println("[Syna:Image] 读取失败: ${e.message}")
+                    }
+                }
+            }.start()
+        },
+        modifier = modifier,
+    ) {
+        Text("🖼")
+    }
+}
+
+@Composable
 actual fun FilePickerButton(
     onFilePicked: (name: String, bytes: ByteArray) -> Unit,
     modifier: Modifier,

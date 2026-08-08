@@ -114,3 +114,71 @@ actual fun FilePickerButton(
         Text("📎")
     }
 }
+
+
+@Composable
+actual fun ImagePickerButton(
+    onImagePicked: (name: String, bytes: ByteArray) -> Unit,
+    modifier: Modifier,
+) {
+    val context = SynaApp.context
+    // 系统相册（Photo Picker）：Android 13+ 系统级、无需任何权限；低版本自动回退
+    val launcher = rememberLauncherForActivityResult(
+        ActivityResultContracts.GetContent(),
+    ) { uri ->
+        if (uri != null) {
+            val (name, size) = try {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    var n: String? = null
+                    var s = -1L
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        if (nameIdx >= 0) n = cursor.getString(nameIdx)
+                        if (sizeIdx >= 0 && !cursor.isNull(sizeIdx)) s = cursor.getLong(sizeIdx)
+                    }
+                    n to s
+                } ?: ("photo.jpg" to -1L)
+            } catch (e: Exception) {
+                "photo.jpg" to -1L
+            }
+            if (size > com.syna.net.MAX_FILE_SIZE_BYTES) {
+                try {
+                    android.widget.Toast.makeText(context, "图片过大（上限 200MB）", android.widget.Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                }
+                return@rememberLauncherForActivityResult
+            }
+            Thread {
+                try {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null) {
+                        onImagePicked(name ?: "photo.jpg", bytes)
+                    }
+                } catch (e: Throwable) {
+                    println("[Syna:Image] 读取失败: ${e.message}")
+                    try {
+                        android.widget.Toast.makeText(context, "图片读取失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (e2: Exception) {
+                    }
+                }
+            }.start()
+        }
+    }
+    TextButton(
+        onClick = {
+            try {
+                launcher.launch("image/*")
+            } catch (e: Throwable) {
+                println("[Syna:Image] 相册启动失败: ${e.message}")
+                try {
+                    android.widget.Toast.makeText(context, "无法打开相册: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                } catch (e2: Exception) {
+                }
+            }
+        },
+        modifier = modifier,
+    ) {
+        Text("🖼")
+    }
+}
