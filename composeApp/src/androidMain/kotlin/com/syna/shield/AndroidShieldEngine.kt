@@ -152,9 +152,11 @@ class AndroidShieldEngine private constructor(
      * 期望值来自 BuildConfig（构建注入）；被重打包/重新签名后必然不匹配。
      */
     internal fun verifySignature(): Boolean {
+        // debug 构建跳过签名校验（避免开发/测试包被锁定页拦截）
+        if (com.syna.BuildConfig.DEBUG) return true
         val expected = com.syna.BuildConfig.SYNA_SIGNATURE_HASH
         if (expected == "REPLACE_WITH_RELEASE_HASH") {
-            // 开发构建（未注入期望值）：跳过校验
+            // 未注入期望值：跳过校验
             return true
         }
         val actual = signatureHash() ?: return false

@@ -35,6 +35,25 @@ import java.awt.event.MouseEvent
 import javax.swing.ImageIcon
 
 fun main() = application {
+    // 全局崩溃日志：启动异常时写入 ~/.syna/crash.log
+    Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+        try {
+            val file = java.io.File(
+                java.io.File(System.getProperty("user.home") ?: ".", ".syna"),
+                "crash.log",
+            )
+            file.parentFile?.mkdirs()
+            java.io.FileWriter(file, true).use { w ->
+                w.write(
+                    "${System.currentTimeMillis()} [${thread.name}] " +
+                        "${throwable::class.java.name}: ${throwable.message}\n" +
+                        throwable.stackTraceToString() + "\n\n",
+                )
+            }
+        } catch (e: Exception) {
+        }
+        throwable.printStackTrace()
+    }
     var windowVisible by mutableStateOf(true)
     var trayReady = false
 

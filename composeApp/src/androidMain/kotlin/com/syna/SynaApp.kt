@@ -26,6 +26,21 @@ class SynaApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        // 全局崩溃日志：启动异常时写入文件，便于排查"打不开"
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                val file = java.io.File(filesDir, "crash.log")
+                java.io.FileWriter(file, true).use { w ->
+                    w.write(
+                        "${System.currentTimeMillis()} [${thread.name}] " +
+                            "${throwable::class.java.name}: ${throwable.message}\n" +
+                            throwable.stackTraceToString() + "\n\n",
+                    )
+                }
+            } catch (e: Exception) {
+            }
+            android.util.Log.e("Syna", "Uncaught exception", throwable)
+        }
     }
 
     companion object {
