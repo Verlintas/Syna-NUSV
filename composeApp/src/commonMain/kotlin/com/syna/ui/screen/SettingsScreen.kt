@@ -37,7 +37,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -47,6 +50,8 @@ import com.syna.ui.MaxWidthContainer
 import com.syna.ui.theme.ThemeMode
 import com.syna.util.PermissionState
 import com.syna.util.notificationPermissionState
+import com.syna.storage.clearReceivedFiles
+import com.syna.storage.receivedFilesSize
 import com.syna.util.rememberNotificationPermissionRequester
 
 @Composable
@@ -211,6 +216,51 @@ fun SettingsScreen(
         Text("临时聊天关闭时，会话记录将保留在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
 
+        SectionTitle("存储")
+        val historySize = engine.chatStore.historyFileSize()
+        val filesSize = receivedFilesSize()
+        var confirmClear by remember { mutableStateOf(false) }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "聊天记录: ${formatSize(historySize)} · 接收文件: ${formatSize(filesSize)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    "清除后本地聊天记录与接收的文件将被删除（不影响对方）",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            TextButton(onClick = { confirmClear = true }) {
+                Text("清除本地记录", color = MaterialTheme.colorScheme.error)
+            }
+        }
+        if (confirmClear) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { confirmClear = false },
+                title = { Text("清除本地记录") },
+                text = { Text("将删除全部本地聊天记录与接收的文件（约 ${formatSize(historySize + filesSize)}），此操作不可恢复。确定继续？") },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        confirmClear = false
+                        engine.chatStore.clearAllHistory()
+                        clearReceivedFiles()
+                    }) { Text("清除", color = MaterialTheme.colorScheme.error) }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { confirmClear = false }) { Text("取消") }
+                },
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+
         SectionTitle("权限")
         val permState = notificationPermissionState()
         val requestPermission = rememberNotificationPermissionRequester()
@@ -280,6 +330,13 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
     }
     }
+}
+
+@Composable
+private fun formatSize(bytes: Long): String = when {
+    bytes >= 1024 * 1024 -> "${"%.1f".format(bytes / 1024.0 / 1024.0)} MB"
+    bytes >= 1024 -> "${"%.1f".format(bytes / 1024.0)} KB"
+    else -> "$bytes B"
 }
 
 @Composable

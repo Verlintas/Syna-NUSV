@@ -99,6 +99,12 @@ fun ChatMessage.toPersist(): PersistMessage = PersistMessage(
 /** 聊天记录持久化路径（多端分平台：Android 应用私有目录 / 桌面用户目录） */
 expect fun chatPersistencePath(): String
 
+/** 接收文件目录占用大小（字节），用于存储清理展示 */
+expect fun receivedFilesSize(): Long
+
+/** 清除接收的文件（清空接收文件目录） */
+expect fun clearReceivedFiles()
+
 /**
  * 聊天记录 JSONL 文件持久化（零依赖、跨平台一致）：
  * 启动加载全部消息，变更后全量重写（保留最近 [MAX_MESSAGES] 条防无限增长）。
@@ -130,10 +136,29 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
             }
             val file = Path.of(path)
             Files.createDirectories(file.parent)
-            Files.writeString(file, if (lines.isEmpty()) "" else "$lines\n")
+            // FileOutputStream：Android 的 java.nio.Files 无 write(Path, byte[]) 重载
+            java.io.FileOutputStream(file.toFile()).use { out ->
+                out.write(if (lines.isEmpty()) ByteArray(0) else "$lines\n".toByteArray())
+            }
         } catch (e: Exception) {
             println("[Syna:Persist] 写入失败: ${e.message}")
         }
+    }
+
+    /** 清除本地聊天记录文件 */
+    fun clear() {
+        try {
+            Files.deleteIfExists(Path.of(path))
+        } catch (e: Exception) {
+            println("[Syna:Persist] 清除失败: ${e.message}")
+        }
+    }
+
+    /** 聊天记录文件占用（字节） */
+    fun fileSize(): Long = try {
+        Files.size(Path.of(path))
+    } catch (e: Exception) {
+        0L
     }
 
     companion object {

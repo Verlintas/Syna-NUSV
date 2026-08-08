@@ -233,6 +233,17 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         }
     }
 
+    /** 清除本地全部聊天记录（内存 + 持久化文件） */
+    fun clearAllHistory() {
+        messagesM.value = emptyMap()
+        conversationsM.value = emptyList()
+        activeConversationId.value = null
+        persistence?.clear()
+    }
+
+    /** 聊天记录文件占用（字节） */
+    fun historyFileSize(): Long = persistence?.fileSize() ?: 0L
+
     fun removeConversation(conversationId: String) {
         messagesM.updateMap { it - conversationId }
         conversationsM.updateList { list -> list.filterNot { it.peerId == conversationId } }
