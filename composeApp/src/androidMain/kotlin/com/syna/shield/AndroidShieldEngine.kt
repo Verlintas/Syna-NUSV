@@ -80,6 +80,8 @@ class AndroidShieldEngine private constructor(
     private var lastAdminSignature: String? = null
     private var lastAccessibilitySignature: String? = null
     private var lastBiometricState: Int? = null
+    private var lastWallClock: Long? = null
+    private var lastElapsed: Long? = null
 
     override fun start() {
         // 反应更快：轻量检测（root/frida/调试/凭据/签名）每 3s 一次，
@@ -125,6 +127,35 @@ class AndroidShieldEngine private constructor(
         if (hasAbusiveAccessibility()) onThreat(ShieldThreat.ACCESSIBILITY_ABUSE)
         checkDeviceAdminChange()
         checkAccessibilityChange()
+    }
+
+    /** 时钟跳变检测：墙钟与系统运行计时偏差 > 5 分钟 → 低危提示（审计与消息时效受影响） */
+    private fun checkClockChange() {
+        try {
+            val wall = System.currentTimeMillis()
+            val elapsed = android.os.SystemClock.elapsedRealtime()
+            if (lastWallClock != null && lastElapsed != null) {
+                val wallDelta = wall - lastWallClock!!
+                val elapsedDelta = elapsed - lastElapsed!!
+                if (kotlin.math.abs(wallDelta - elapsedDelta) > 5 * 60_000L) {
+                    onThreat(ShieldThreat.CLOCK_CHANGED)
+                }
+            }
+            lastWallClock = wall
+            lastElapsed = elapsed
+        } catch (e: Exception) {
+        }
+    }
+
+    /** 锁屏未启用提示：无锁屏则生物识别不可用（低危提示，不锁定） */
+    private fun checkWeakLock() {
+        try {
+            val km = context.getSystemService(Context.KEYGUARD_SERVICE) as android.app.KeyguardManager
+            if (!km.isKeyguardSecure) {
+                onThreat(ShieldThreat.WEAK_LOCK)
+            }
+        } catch (e: Exception) {
+        }
     }
 
     /**

@@ -80,6 +80,16 @@ enum class ShieldThreat(
         "检测到注入框架",
         "检测到 Frida/调试注入框架，应用进程可能被动态挂钩与流量读取",
     ),
+    CLOCK_CHANGED(
+        "clock",
+        "检测到系统时间异常变更",
+        "系统时钟被大幅调整，可能影响安全审计与消息时效",
+    ),
+    WEAK_LOCK(
+        "weaklock",
+        "设备未启用锁屏",
+        "设备未设置锁屏，生物识别保护不可用，会话安全等级降低",
+    ),
     SHIELD_TAMPERED(
         "tampered",
         "检测到安全设置被篡改",
@@ -135,7 +145,10 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     -> ThreatSeverity.HIGH
 
     ShieldThreat.VPN_CHANGE -> ThreatSeverity.MEDIUM
-    ShieldThreat.INACTIVE -> ThreatSeverity.LOW
+    ShieldThreat.INACTIVE,
+    ShieldThreat.CLOCK_CHANGED,
+    ShieldThreat.WEAK_LOCK,
+    -> ThreatSeverity.LOW
 }
 
 enum class ShieldState {
@@ -322,12 +335,16 @@ class ShieldController(
         }
         recordEvent(threat, ShieldAction.DETECTED)
         maybeSelfDestruct(threat)
-        if (threat != ShieldThreat.INACTIVE) {
-            setState(ShieldState.LOCKED)
-            recordEvent(threat, ShieldAction.LOCKED)
-        } else if (current.isEmpty() || (current.size == 1 && current.first() == ShieldThreat.INACTIVE)) {
-            setState(ShieldState.LOCKED)
-            recordEvent(threat, ShieldAction.LOCKED)
+        // 低危提示类威胁（时钟跳变/未启用锁屏）仅记录审计，不强制锁定，避免误锁
+        val advisoryOnly = threat == ShieldThreat.CLOCK_CHANGED || threat == ShieldThreat.WEAK_LOCK
+        if (!advisoryOnly) {
+            if (threat != ShieldThreat.INACTIVE) {
+                setState(ShieldState.LOCKED)
+                recordEvent(threat, ShieldAction.LOCKED)
+            } else if (current.isEmpty() || (current.size == 1 && current.first() == ShieldThreat.INACTIVE)) {
+                setState(ShieldState.LOCKED)
+                recordEvent(threat, ShieldAction.LOCKED)
+            }
         }
     }
 
@@ -440,7 +457,11 @@ class ShieldController(
                 } catch (e: Exception) {
                     GENESIS_HASH
                 }
-                val content = com.syna.net.synaJson.encodeToString(ShieldEvent.serializer(), event)
+                val plain = com.syna.net.synaJson.encodeToString(ShieldEvent.serializer(), event)
+                // 审计内容加密存储（密钥同聊天记录密钥），哈希链基于密文
+                val content = ShieldStorageKey.encrypt(plain.toByteArray())
+                    ?.let { java.util.Base64.getEncoder().encodeToString(it) }
+                    ?: plain
                 val hash = sha256("$prevHash|$content")
                 file.appendText("$content|$prevHash|$hash\n")
             } catch (e: Exception) {
@@ -471,7 +492,13 @@ class ShieldController(
                     if (prevHash != expectedPrev) return@forEach
                     val recomputed = sha256("$prevHash|$content")
                     if (recomputed != hash) return@forEach
-                    val event = com.syna.net.synaJson.decodeFromString(ShieldEvent.serializer(), content)
+                    val plainText = try {
+                        val bytes = java.util.Base64.getDecoder().decode(content)
+                        ShieldStorageKey.decrypt(bytes)?.decodeToString()
+                    } catch (e: Exception) {
+                        null
+                    } ?: content
+                    val event = com.syna.net.synaJson.decodeFromString(ShieldEvent.serializer(), plainText)
                     persisted.add(event)
                     expectedPrev = hash
                 } catch (e: Exception) {

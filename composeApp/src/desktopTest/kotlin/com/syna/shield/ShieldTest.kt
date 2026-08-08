@@ -157,10 +157,12 @@ class ShieldBugfixTest {
         assertEquals(5, c2.events.value.size, "哈希链完整的审计事件应全部恢复")
         c2.stop()
 
-        // 篡改最后一条 → 链断裂 → 该条之后不可载入
+        // 篡改最后一条（内容段改坏）→ 哈希不匹配 → 链断裂 → 受损记录不可载入
         val file = java.io.File(path)
         val lines = file.readLines().toMutableList()
-        lines[lines.size - 1] = lines.last().replace("VPN", "XXXX")
+        val last = lines.last()
+        val parts = last.split("|")
+        lines[lines.size - 1] = "tampered-content|${parts[parts.size - 2]}|${parts[parts.size - 1]}"
         file.writeText(lines.joinToString("\n") + "\n")
         val c3 = ShieldController(enabled = true, eventsPathOverride = path)
         c3.start()
