@@ -10,7 +10,7 @@ data class LauncherConfig(
     var port: Int = 45880,
     var password: String = "syna",
     var groupName: String = "Syna 私服",
-    var dataDir: String = "./syna-server-data",
+    var dataDir: String = Path.of(System.getProperty("user.home") ?: ".", ".syna-server-data").toString(),
     var autoRestart: Boolean = false,
     var autoStart: Boolean = false,
 )
@@ -24,7 +24,12 @@ class LauncherConfigStore(
     fun load(): LauncherConfig {
         return try {
             if (Files.exists(file)) {
-                synaJson.decodeFromString(LauncherConfig.serializer(), Files.readString(file))
+                synaJson.decodeFromString(LauncherConfig.serializer(), Files.readString(file)).also { cfg ->
+                    // 旧配置中的相对数据目录归一化为绝对路径（.app 启动时工作目录不定）
+                    if (!Path.of(cfg.dataDir).isAbsolute) {
+                        cfg.dataDir = Path.of(System.getProperty("user.home") ?: ".", ".syna-server-data").toString()
+                    }
+                }
             } else {
                 LauncherConfig()
             }

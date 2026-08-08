@@ -87,23 +87,30 @@ class ServerController(
     val autoRestartOn = kotlinx.coroutines.flow.MutableStateFlow(config.autoRestart)
     val autoStartOn = kotlinx.coroutines.flow.MutableStateFlow(config.autoStart)
 
-    /** 用当前配置启动；[fromCrash] 为 true 时忽略手动停止标记 */
+    /** 用当前配置启动；启动失败（如端口占用）记录日志不崩溃 */
     fun start(fromCrash: Boolean = false) {
         if (server != null) return
         manualStop = false
-        val s = SynaServer(config.port, config.password, config.groupName, Path.of(config.dataDir))
-        server = s
-        linkJob = scope.launch {
-            launch { s.members.collect { members.value = it } }
-            launch { s.messageCount.collect { messageCount.value = it } }
-            launch { s.logs.collect { logs.value = it } }
-            launch { s.isRunning.collect { isRunning.value = it } }
-            launch { s.bannedUsers.collect { bannedUsers.value = it } }
+        try {
+            val s = SynaServer(config.port, config.password, config.groupName, Path.of(config.dataDir))
+            server = s
+            linkJob = scope.launch {
+                launch { s.members.collect { members.value = it } }
+                launch { s.messageCount.collect { messageCount.value = it } }
+                launch { s.logs.collect { logs.value = it } }
+                launch { s.isRunning.collect { isRunning.value = it } }
+                launch { s.bannedUsers.collect { bannedUsers.value = it } }
+            }
+            s.start()
+            boundPort.value = s.boundPort
+            addressesText.value = s.localAddressesText()
+            watchCrash()
+        } catch (e: Exception) {
+            server = null
+            isRunning.value = false
+            manualStop = true
+            logLine("[SynaLauncher] 启动失败: ${e.message}")
         }
-        s.start()
-        boundPort.value = s.boundPort
-        addressesText.value = s.localAddressesText()
-        watchCrash()
     }
 
     /** 崩溃/意外退出自动重启：isRunning 变 false 且未手动停止时 3 秒后拉起 */
@@ -309,7 +316,7 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
                     Switch(checked = autoStart, onCheckedChange = { controller.setAutoStart(it) })
                 }
                 Text(
-                    "配置自动保存于 ${LauncherConfigStore.defaultConfigPath()}",
+                    "配置自动保存于 ${LauncherConfigStore.defaultConfigPath()}（密码为明文存储，请妥善保管）",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -363,9 +370,9 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
                                 Text(
                                     text = "踢出",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
+                                    color = if (running) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline,
                                     modifier = Modifier
-                                        .clickable { controller.kick(member.id) }
+                                        .clickable(enabled = running) { controller.kick(member.id) }
                                         .padding(horizontal = 8.dp, vertical = 4.dp),
                                 )
                             }
@@ -383,9 +390,9 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
                             Text(
                                 text = "解除",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                                 modifier = Modifier
-                                    .clickable { controller.unban(id) }
+                                    .clickable(enabled = running) { controller.unban(id) }
                                     .padding(horizontal = 8.dp, vertical = 2.dp),
                             )
                         }
@@ -404,12 +411,15 @@ fun ServerUiScreen(controller: ServerController, initialConfig: ServerConfig) {
                         singleLine = true,
                     )
                     Spacer(Modifier.width(8.dp))
-                    Button(onClick = {
-                        if (announcementInput.isNotBlank()) {
-                            controller.announce(announcementInput)
-                            announcementInput = ""
-                        }
-                    }) { Text("发布") }
+                    Button(
+                        onClick = {
+                            if (announcementInput.isNotBlank()) {
+                                controller.announce(announcementInput)
+                                announcementInput = ""
+                            }
+                        },
+                        enabled = running,
+                    ) { Text("发布") }
                 }
             }
         }

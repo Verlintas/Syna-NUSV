@@ -31,10 +31,13 @@ fun main(args: Array<String>) {
     val hasCliArgs = args.any { it.startsWith("-") && it != "--ui" && it != "-ui" && it != "--launcher" }
 
     // 显式参数优先；无参数时：有图形环境 → 启动器 GUI，无头环境 → CLI
-    if (hasGuiFlag || (!hasCliArgs && hasDisplay())) {
+    if ((hasGuiFlag || (!hasCliArgs && hasDisplay())) && hasDisplay()) {
         val config = parseArgs(args)
         serverUiMain(config)
         return
+    }
+    if (hasGuiFlag && !hasDisplay()) {
+        println("警告: 当前环境无图形显示（headless），已回退到命令行模式")
     }
     serverCliMain(args)
 }
@@ -61,7 +64,13 @@ private fun serverCliMain(args: Array<String>) {
         historyLimit = config.historyLimit,
     )
     runBlocking {
-        server.start()
+        try {
+            server.start()
+        } catch (e: Exception) {
+            println("[SynaServer] 启动失败: ${e.message}")
+            println("[SynaServer] 常见原因: 端口被占用（换个端口: -p <port>）或数据目录不可写")
+            kotlin.system.exitProcess(1)
+        }
         while (true) {
             kotlinx.coroutines.delay(86_400_000L)
         }

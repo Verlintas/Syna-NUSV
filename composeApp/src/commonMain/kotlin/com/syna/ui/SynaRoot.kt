@@ -20,6 +20,9 @@
 package com.syna.ui
 
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Person
@@ -79,12 +82,15 @@ fun SynaRoot(
         )
     }
 
+    val safePadding = Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+
     val chatTarget = chatPeerId
     if (chatTarget != null) {
         ChatScreen(
             peerId = chatTarget,
             engine = engine,
             onBack = { chatPeerId = null },
+            modifier = safePadding,
         )
         return
     }
@@ -97,6 +103,7 @@ fun SynaRoot(
                 creatingGroup = false
                 chatPeerId = groupId
             },
+            modifier = safePadding,
         )
         return
     }
@@ -109,11 +116,13 @@ fun SynaRoot(
                 joiningServer = false
                 chatPeerId = groupId
             },
+            modifier = safePadding,
         )
         return
     }
 
     Scaffold(
+        modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing),
         bottomBar = {
             NavigationBar {
                 tabs.forEachIndexed { index, tab ->
