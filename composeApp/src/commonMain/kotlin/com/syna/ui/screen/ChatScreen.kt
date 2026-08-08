@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,7 +69,9 @@ import com.syna.chat.MessageKind
 import com.syna.chat.MessageStatus
 import com.syna.net.SynaEngine
 import com.syna.util.FilePickerButton
+import com.syna.util.formatDate
 import com.syna.util.formatTime
+import com.syna.util.isSameDay
 import com.syna.util.readFileBytes
 import kotlinx.coroutines.launch
 
@@ -93,6 +96,7 @@ fun ChatScreen(
     var input by remember { mutableStateOf("") }
     var burn by remember { mutableStateOf(engine.settings.burnAfterReadingEnabled) }
     var recallTarget by remember { mutableStateOf<String?>(null) }
+    var forwardTarget by remember { mutableStateOf<ChatMessage?>(null) }
     var replyingTo by remember { mutableStateOf<ChatMessage?>(null) }
     var mentionTarget by remember { mutableStateOf(false) }
     var pendingMention by remember { mutableStateOf<String?>(null) }
@@ -240,7 +244,25 @@ fun ChatScreen(
             reverseLayout = true,
             contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 8.dp),
         ) {
-            items(chatMessages.reversed(), key = { it.id }) { message ->
+            itemsIndexed(chatMessages.reversed(), key = { _, m -> m.id }) { index, message ->
+                // 日期分隔线：与上一条（更早的）消息跨天时显示
+                val prev = chatMessages.getOrNull(chatMessages.size - index - 2)
+                if (prev == null || !isSameDay(prev.ts, message.ts)) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = formatDate(message.ts),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                                .padding(horizontal = 10.dp, vertical = 3.dp),
+                        )
+                    }
+                }
                 MessageBubble(
                     message = message,
                     isMine = message.senderId == engine.userId,
@@ -263,6 +285,7 @@ fun ChatScreen(
                 !target.recalled &&
                 System.currentTimeMillis() - target.ts <= 2 * 60_000L
             val canReply = target != null && !target.recalled
+            val canForward = target != null && !target.recalled
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { recallTarget = null },
                 title = { Text("消息操作") },
@@ -296,6 +319,14 @@ fun ChatScreen(
                                     recallTarget = null
                                 },
                             ) { Text("回复") }
+                        }
+                        if (canForward) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    forwardTarget = target
+                                    recallTarget = null
+                                },
+                            ) { Text("转发") }
                         }
                         androidx.compose.material3.TextButton(onClick = { recallTarget = null }) { Text("取消") }
                     }
@@ -434,6 +465,45 @@ fun ChatScreen(
                 },
                 confirmButton = {
                     androidx.compose.material3.TextButton(onClick = { mentionTarget = false }) { Text("取消") }
+                },
+            )
+        }
+
+        // 转发目标选择
+        val forwardMsg = forwardTarget
+        if (forwardMsg != null) {
+            val allConvs = engine.chatStore.conversations.collectAsState().value
+            val forwardGroups = engine.groups.collectAsState().value
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { forwardTarget = null },
+                title = { Text("转发到…") },
+                text = {
+                    Column {
+                        val targets = allConvs.map { it.peerId to it.peerName } +
+                            forwardGroups.filter { g -> g.id !in allConvs.map { it.peerId } }.map { it.id to it.name }
+                        if (targets.isEmpty()) {
+                            Text("暂无可转发会话", style = MaterialTheme.typography.bodySmall)
+                        }
+                        targets.forEach { (id, name) ->
+                            Text(
+                                text = name,
+                                style = MaterialTheme.typography.bodyLarge,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        val msg = forwardMsg
+                                        forwardTarget = null
+                                        if (msg != null) {
+                                            scope.launch { engine.forwardMessage(id, msg) }
+                                        }
+                                    }
+                                    .padding(vertical = 8.dp),
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { forwardTarget = null }) { Text("取消") }
                 },
             )
         }

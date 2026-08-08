@@ -28,12 +28,15 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +74,8 @@ fun SynaRoot(
     onTempChatTtlChange: (Int) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    val conversations by engine.chatStore.conversations.collectAsState()
+    val totalUnread = conversations.sumOf { it.unreadCount }
     var chatPeerId by rememberSaveable { mutableStateOf<String?>(null) }
     var creatingGroup by rememberSaveable { mutableStateOf(false) }
     var joiningServer by rememberSaveable { mutableStateOf(false) }
@@ -129,7 +134,15 @@ fun SynaRoot(
                     NavigationBarItem(
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
-                        icon = tab.icon,
+                        icon = {
+                            if (index == 0 && totalUnread > 0) {
+                                BadgedBox(badge = { Badge { Text(if (totalUnread > 99) "99+" else totalUnread.toString()) } }) {
+                                    tab.icon()
+                                }
+                            } else {
+                                tab.icon()
+                            }
+                        },
                         label = { Text(tab.label) },
                     )
                 }

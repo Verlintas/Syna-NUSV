@@ -19,14 +19,58 @@
  */
 package com.syna
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import java.awt.MenuItem
+import java.awt.PopupMenu
+import java.awt.SystemTray
+import java.awt.TrayIcon
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
+import javax.swing.ImageIcon
 
 fun main() = application {
+    var windowVisible by mutableStateOf(true)
+    var trayReady = false
+
+    // 首次关闭窗口时：最小化到托盘（双击托盘图标恢复；托盘菜单可退出）
+    fun ensureTray(onOpen: () -> Unit, onExit: () -> Unit) {
+        if (trayReady || !SystemTray.isSupported()) return
+        trayReady = true
+        try {
+            val image = ImageIcon(ClassLoader.getSystemResource("icons/logo16.png"))?.image
+                ?: java.awt.image.BufferedImage(1, 1, java.awt.image.BufferedImage.TYPE_INT_ARGB)
+            val menu = PopupMenu()
+            menu.add(MenuItem("打开 Syna").apply { addActionListener { onOpen() } })
+            menu.add(MenuItem("退出").apply { addActionListener { onExit() } })
+            val trayIcon = TrayIcon(image, "Syna 局域网通信").apply {
+                isImageAutoSize = true
+                popupMenu = menu
+                addMouseListener(object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        if (e.clickCount >= 2) onOpen()
+                    }
+                })
+            }
+            SystemTray.getSystemTray().add(trayIcon)
+            println("[Syna] 已最小化到系统托盘（双击图标恢复窗口，托盘菜单可退出）")
+        } catch (e: Exception) {
+            println("[Syna] 托盘初始化失败: ${e.message}")
+        }
+    }
+
     Window(
-        onCloseRequest = ::exitApplication,
+        onCloseRequest = {
+            // 关闭按钮 → 最小化到托盘（继续后台收消息）；托盘菜单"退出"才真正退出
+            windowVisible = false
+            ensureTray(onOpen = { windowVisible = true }, onExit = ::exitApplication)
+        },
+        visible = windowVisible,
         title = "Syna",
         state = rememberWindowState(width = 420.dp, height = 760.dp),
     ) {

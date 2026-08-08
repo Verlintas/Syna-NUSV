@@ -801,6 +801,23 @@ class SynaEngine(
         serverAnnouncementM.value = null
     }
 
+    /** 转发消息到目标会话（1:1 或群聊；文本内容转发） */
+    suspend fun forwardMessage(targetConversationId: String, message: ChatMessage) {
+        if (message.recalled) return
+        val text = when (message.kind) {
+            MessageKind.TEXT -> message.body
+            MessageKind.IMAGE -> "🖼 [图片] ${message.fileName ?: ""}".trim()
+            MessageKind.FILE -> "📄 [文件] ${message.fileName ?: ""}".trim()
+        }
+        if (text.isBlank()) return
+        if (groupsM.value.any { it.id == targetConversationId }) {
+            sendGroupText(targetConversationId, text)
+        } else {
+            sendText(targetConversationId, text)
+        }
+        synaLog("Forward") { "转发 ${message.id.take(8)} -> $targetConversationId" }
+    }
+
     /** 通过 IP:端口 + 密码加入私人服务器群聊 */
     suspend fun joinServer(host: String, port: Int, password: String): Result<String> {
         if (serverStateM.value == ServerState.CONNECTING) return Result.failure(IllegalStateException("正在连接中"))

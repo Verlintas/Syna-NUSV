@@ -20,3 +20,12 @@
 package com.syna.util
 
 expect fun formatTime(ts: Long): String
+
+/** 日期分隔线标签（今天/昨天/M月d日） */
+expect fun formatDate(ts: Long): String
+
+/** 两个时间戳是否同一天 */
+expect fun isSameDay(a: Long, b: Long): Boolean
+
+/** 是否今天 */
+expect fun isToday(ts: Long): Boolean

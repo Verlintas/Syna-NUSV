@@ -170,6 +170,16 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
     fun messageById(msgId: String): ChatMessage? =
         messagesM.value.values.flatten().firstOrNull { it.id == msgId }
 
+    /** 全局关键词搜索（忽略已撤回消息，按时间倒序，最多 50 条） */
+    fun search(query: String): List<ChatMessage> {
+        val q = query.trim()
+        if (q.isEmpty()) return emptyList()
+        return messagesM.value.values.flatten()
+            .filter { !it.recalled && it.body.contains(q, ignoreCase = true) }
+            .sortedByDescending { it.ts }
+            .take(50)
+    }
+
     fun removeMessageById(msgId: String) {
         val map = messagesM.value
         var removedFrom: String? = null
