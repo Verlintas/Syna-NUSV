@@ -1,37 +1,40 @@
 ==================================================================
  SYNA LICENSE AUDIT REPORT
- Date: 2026-08-07T03:48:33Z
+ Date: 2026-08-08T07:21:55Z
  Project license: GNU GPL v3.0
 ==================================================================
 
 ## Runtime classpath (desktop / server jar)
     [OK ] Apache-2.0 The Apache Software License, Version 2.0
-org.jetbrains:annotations:23.0.0
-    [OK ] Apache-2.0 The Apache Software License, Version 2.0
 ----------------------------------------------------------------------------------------------------
 SUMMARY:
-    Apache-2.0 231
+    Apache-2.0 233
 ====================================================================================================
 [OK] No GPL/AGPL/LGPL or unknown-license runtime dependencies found.
 
 ## Runtime classpath (Android debug APK)
-org.jspecify:jspecify:1.0.0
-    [OK ] Apache-2.0 The Apache License, Version 2.0
 ----------------------------------------------------------------------------------------------------
 SUMMARY:
-    Apache-2.0 371
+    Apache-2.0 397
     UNKNOWN    2
 ====================================================================================================
 [!] REVIEW NEEDED for: ['com.google.guava:listenablefuture:1.0', 'com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava']
 
+## New dependencies since v0.3.1 audit
+- androidx.biometric:biometric:1.1.0           -> Apache-2.0
+- androidx.lifecycle:lifecycle-process:*      -> Apache-2.0
+
+## Coverage
+- desktop: 82 artifact groups, 100% in cache, 0 missing
+- android: 129 artifact groups, 100% in cache, 0 missing
+
 ## Manual review notes
 - com.google.guava:listenablefuture:1.0 / 9999.0-empty-to-avoid-conflict-with-guava:
-    POM declares no <licenses> (flagged UNKNOWN by the script). It is an official
-    Google Guava artifact (Apache-2.0 family) pulled in via androidx.concurrent.
-    The 9999.0-empty variant contains no code. => no GPL pollution.
+    POM declares no <licenses> (flagged UNKNOWN by the script). Official Google Guava
+    artifact (Apache-2.0 family) pulled in via androidx.concurrent; the empty variant
+    contains no code. => no GPL pollution.
 
 ## Conclusion
-- All runtime dependencies are Apache-2.0; no GPL/AGPL/LGPL or unknown-license
-  code is linked or bundled. The project can be released under GPL-3.0 without
-  license pollution.
+- All runtime dependencies are Apache-2.0; no GPL/AGPL/LGPL or unknown-license code is
+  linked or bundled. The project can be released under GPL-3.0 without license pollution.
 ==================================================================
