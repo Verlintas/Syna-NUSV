@@ -140,6 +140,7 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 ## Platform Notes
 
 - **Windows**: allow the app through the firewall on first launch (both the GUI client and the server); an MSI installer can be produced with `nativeDistributions` (requires Windows + WiX)
+- **Proxy tools (Clash / FlClash / etc.) with TUN mode**: they can hijack traffic to your own LAN IP (`connect` succeeds but data never arrives). Syna now auto-routes same-machine traffic through loopback (`127.0.0.1`); if cross-device traffic is also broken, add your LAN subnet to the proxy's bypass list or turn off TUN mode. / 代理工具（Clash/FlClash 等）开启 TUN 模式时会劫持发往本机局域网 IP 的流量（连接成功但数据不到）。Syna 已自动将本机互连流量走回环地址；若跨设备也不通，请把局域网网段加入代理白名单或关闭 TUN 模式。
 - **Android 14+**: local network access is restricted; some routers block UDP broadcast (the multicast channel is the fallback)
 - **Group chat (LAN mesh)**: there is no central node — members who are offline miss group messages; the **private server** fixes this with persistence
 - **Message persistence**: LAN chats live in memory; the private server persists history to disk

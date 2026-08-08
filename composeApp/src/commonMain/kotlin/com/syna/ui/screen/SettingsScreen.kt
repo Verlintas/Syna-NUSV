@@ -45,6 +45,9 @@ import com.syna.core.ConnectionMode
 import com.syna.net.SynaEngine
 import com.syna.ui.MaxWidthContainer
 import com.syna.ui.theme.ThemeMode
+import com.syna.util.PermissionState
+import com.syna.util.notificationPermissionState
+import com.syna.util.rememberNotificationPermissionRequester
 
 @Composable
 fun SettingsScreen(
@@ -207,6 +210,44 @@ fun SettingsScreen(
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Text("临时聊天关闭时，会话记录将保留在本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(24.dp))
+
+        SectionTitle("权限")
+        val permState = notificationPermissionState()
+        val requestPermission = rememberNotificationPermissionRequester()
+        when (permState) {
+            PermissionState.NOT_APPLICABLE -> Text(
+                "桌面端无需运行时权限",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            PermissionState.GRANTED -> Text(
+                "✅ 通知权限已授权",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            PermissionState.DENIED -> Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "⚠️ 通知权限未授予，新消息将无法在通知栏提醒",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(onClick = { requestPermission() }) {
+                    Text("重新请求")
+                }
+            }
+        }
+        Text(
+            "若首次请求被拒绝，可在此手动重新触发系统权限弹窗；也可在系统设置中为 Syna 开启通知",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
 
         SectionTitle("已屏蔽的联系人")
         val blocked by engine.blockedContacts.collectAsState()

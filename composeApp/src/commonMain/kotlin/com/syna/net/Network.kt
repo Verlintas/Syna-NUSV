@@ -61,3 +61,6 @@ expect class PlatformNet {
 }
 
 expect fun platformNet(): PlatformNet
+
+/** 本机全部 IPv4 地址（用于识别"发往本机的流量"并归一化为回环地址） */
+expect fun localIpAddresses(): Set<String>

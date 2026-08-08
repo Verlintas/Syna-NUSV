@@ -93,6 +93,7 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
             val socket = try {
                 ss.accept()
             } catch (e: IOException) {
+                e.printStackTrace()
                 return
             }
             scope.launch { readLoop(socket) }

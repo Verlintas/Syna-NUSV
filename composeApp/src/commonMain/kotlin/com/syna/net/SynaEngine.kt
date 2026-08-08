@@ -60,6 +60,8 @@ class SynaEngine(
 
     private val device = platformNet().deviceName()
 
+    private val localIps = localIpAddresses()
+
     private val identity = createIdentityStore().loadOrCreate()
     private val publicKeyB64 = SynaCrypto.publicKeyB64(identity)
 
@@ -159,7 +161,7 @@ class SynaEngine(
             discovery.announcements.collect { (ann, ip) ->
                 if (ann.id != userId && !isBlocked(ann.id)) {
                     updatePeer(ann, ip, System.currentTimeMillis(), online = true)
-                    sendKeyFrame(ann.id, PeerAddr(ip, ann.tcpPort))
+                    sendKeyFrame(ann.id, PeerAddr(normalizePeerIp(ip), ann.tcpPort))
                     flushOutbox(peerFrom(ann, ip))
                 }
             }
@@ -1070,7 +1072,7 @@ class SynaEngine(
                 id = ann.id,
                 username = ann.username,
                 device = ann.device,
-                addr = PeerAddr(ip, ann.tcpPort, ann.udpPort),
+                addr = PeerAddr(normalizePeerIp(ip), ann.tcpPort, ann.udpPort),
                 version = ann.version,
                 lastSeen = now,
                 online = online,
@@ -1167,7 +1169,7 @@ class SynaEngine(
                 d.announcements.collect { (a, ip) ->
                     if (a.id != userId && !isBlocked(a.id)) {
                         updatePeer(a, ip, System.currentTimeMillis(), online = true)
-                        sendKeyFrame(a.id, PeerAddr(ip, a.tcpPort))
+                        sendKeyFrame(a.id, PeerAddr(normalizePeerIp(ip), a.tcpPort))
                         flushOutbox(peerFrom(a, ip))
                     }
                 }
@@ -1296,7 +1298,7 @@ class SynaEngine(
         id = ann.id,
         username = ann.username,
         device = ann.device,
-        addr = PeerAddr(ip, ann.tcpPort, ann.udpPort),
+        addr = PeerAddr(normalizePeerIp(ip), ann.tcpPort, ann.udpPort),
         version = ann.version,
         lastSeen = System.currentTimeMillis(),
         online = true,
@@ -1310,6 +1312,10 @@ class SynaEngine(
         tcp?.stop()
         udp?.stop()
     }
+
+    /** 发往本机 IP 的流量统一走回环地址（规避代理 TUN 劫持、保证同机多实例互通） */
+    private fun normalizePeerIp(ip: String): String =
+        if (ip in localIps) "127.0.0.1" else ip
 
     private fun defaultUsername(): String = "用户-${userId.takeLast(4)}"
 
