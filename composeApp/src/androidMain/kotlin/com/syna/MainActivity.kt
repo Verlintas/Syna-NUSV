@@ -23,12 +23,12 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.syna.shield.AndroidShieldEngine
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     override fun onResume() {
         super.onResume()
         // 注册给 Mirtazapine Shield（生物识别宿主与防截屏）

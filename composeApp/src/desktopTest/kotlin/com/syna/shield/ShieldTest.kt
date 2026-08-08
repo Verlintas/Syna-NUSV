@@ -135,3 +135,64 @@ class ShieldSelfProtectionTest {
         controller.stop()
     }
 }
+
+class ShieldBugfixTest {
+
+    private fun tempEvents(): String =
+        java.nio.file.Files.createTempDirectory("syna-shield-events")
+            .resolve("events.jsonl").toString()
+
+    @Test
+    fun auditHashChainRoundTripAndTamper() = runBlocking {
+        val path = tempEvents()
+        val c1 = ShieldController(enabled = true, eventsPathOverride = path)
+        c1.reportThreat(ShieldThreat.DEBUG_MODE)
+        c1.clearThreat(ShieldThreat.DEBUG_MODE)
+        c1.reportThreat(ShieldThreat.VPN_CHANGE)
+        delay(300) // 等持久化落盘
+
+        // 新实例应恢复全部事件（哈希链校验通过）——需 start() 触发加载
+        val c2 = ShieldController(enabled = true, eventsPathOverride = path)
+        c2.start()
+        assertEquals(5, c2.events.value.size, "哈希链完整的审计事件应全部恢复")
+        c2.stop()
+
+        // 篡改最后一条 → 链断裂 → 该条之后不可载入
+        val file = java.io.File(path)
+        val lines = file.readLines().toMutableList()
+        lines[lines.size - 1] = lines.last().replace("VPN", "XXXX")
+        file.writeText(lines.joinToString("\n") + "\n")
+        val c3 = ShieldController(enabled = true, eventsPathOverride = path)
+        c3.start()
+        assertTrue(c3.events.value.size < 5, "篡改记录后链条断裂，受损记录不应载入")
+        c3.stop()
+    }
+
+    @Test
+    fun disablingShieldCancelsAutoRelock() = runBlocking {
+        val controller = ShieldController(enabled = true)
+        controller.start()
+        controller.reportThreat(ShieldThreat.ROOT_DETECTED)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        // 解锁（严重级会调度 30s 再锁）
+        controller.requestUnlock()
+        assertEquals(ShieldState.UNLOCKED, controller.state.value)
+        // 禁用 Shield：应立即取消再锁与有效期任务，禁用后不会被自动锁定
+        controller.setEnabled(false)
+        delay(2_000)
+        assertEquals(ShieldState.UNLOCKED, controller.state.value, "禁用后不应被自动锁定")
+        controller.stop()
+    }
+
+    @Test
+    fun tamperedPersistedEventsDoNotCrash() = runBlocking {
+        val path = tempEvents()
+        // 写入垃圾行 + 合法格式混合
+        java.io.File(path).writeText("garbage line\n{\"ts\":1,\"threat\":\"DEBUG_MODE\",\"action\":\"DETECTED\"}|abc|def\n")
+        val c = ShieldController(enabled = true, eventsPathOverride = path)
+        c.start()
+        // 不崩溃且不载入损坏记录
+        assertTrue(c.events.value.isEmpty(), "损坏记录不应载入")
+        c.stop()
+    }
+}

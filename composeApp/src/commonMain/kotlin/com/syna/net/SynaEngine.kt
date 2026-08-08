@@ -116,6 +116,7 @@ class SynaEngine(
     ) {
         val chunks = arrayOfNulls<ByteArray>(totalChunks)
         var received = 0
+        var lastUpdate: Long = System.currentTimeMillis()
     }
 
     private val fileAssemblers = mutableMapOf<String, FileAssembler>()
@@ -169,13 +170,13 @@ class SynaEngine(
         scope.launch {
             tcp.incoming.collect { event ->
                 rawIncomingM.emitRaw(event)
-                incomingM.emit(decryptEvent(event))
+                decryptEvent(event)?.let { incomingM.emit(it) }
             }
         }
         scope.launch {
             udp.incoming.collect { event ->
                 rawIncomingM.emitRaw(event)
-                incomingM.emit(decryptEvent(event))
+                decryptEvent(event)?.let { incomingM.emit(it) }
             }
         }
         scope.launch {
@@ -205,7 +206,7 @@ class SynaEngine(
         if (event is IncomingEvent.PeerFrame) emit(event.frame)
     }
 
-    private suspend fun decryptEvent(event: IncomingEvent): IncomingEvent {
+    private suspend fun decryptEvent(event: IncomingEvent): IncomingEvent? {
         if (event !is IncomingEvent.PeerFrame) return event
         val frame = event.frame
         when (frame.type) {
@@ -252,13 +253,14 @@ class SynaEngine(
                     synaLog("Crypto") { "group decrypt FAILED from=${frame.from.take(6)}: ${e.message}" }
                     // UDP 通道可能丢失过对方的公钥帧：主动请求重发，保证自愈
                     sendKeyRequest(frame.from)
-                    event
+                    // 解密失败：丢弃密文（不入库），防止后续真实明文副本被去重跳过
+                    return null
                 }
             }
             if (peerKey != null) {
                 synaLog("Crypto") { "decrypt FAILED from=${frame.from.take(6)} type=${frame.type}" }
                 sendKeyRequest(frame.from)
-                return event
+                return null
             }
             // 没有对方的公钥（UDP 下 KEY 帧可能丢失）：请求重发
             sendKeyRequest(frame.from)
@@ -420,12 +422,13 @@ class SynaEngine(
             }
             FrameType.RECALL -> frame.body?.let { msgId -> chatStore.markRecalledByMsgId(msgId) }
             FrameType.REQ_KEY -> {
-                // 对方请求我们的公钥：立即发送（绕过 30s 节流）
+                // 对方请求我们的公钥：必须无节流直发（sendKeyFrame 有 30s 节流，
+                // 若被拦截则丢失 KEY 的一方永远无法自愈）
                 if (serverSession != null) {
                     sendServerKeyFrame()
                 } else {
                     val peer = peersM.value.firstOrNull { it.id == frame.from } ?: return
-                    sendKeyFrame(frame.from, peer.addr)
+                    sendKeyFrameNow(frame.from, peer.addr)
                 }
             }
             FrameType.FILE_CHUNK -> handleFileChunk(frame)
@@ -908,7 +911,7 @@ class SynaEngine(
     private suspend fun routeServerFrame(frame: TransportFrame) {
         if (frame.from == userId) return
         rawIncomingM.emitRaw(IncomingEvent.PeerFrame(frame.from, frame))
-        incomingM.emit(decryptEvent(IncomingEvent.PeerFrame(frame.from, frame)))
+        decryptEvent(IncomingEvent.PeerFrame(frame.from, frame))?.let { incomingM.emit(it) }
     }
 
     private suspend fun sendServerKeyFrame() {
@@ -1062,6 +1065,7 @@ class SynaEngine(
             assembler.chunks[fc.index] = @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
             kotlin.io.encoding.Base64.Default.decode(fc.dataB64)
             assembler.received++
+            assembler.lastUpdate = System.currentTimeMillis()
         }
         if (assembler.received >= assembler.totalChunks) {
             fileAssemblers.remove(fc.fileId)
@@ -1163,6 +1167,8 @@ class SynaEngine(
         if (effectiveTtl > 0L) {
             chatStore.purgeExpired(effectiveTtl, now)
         }
+        // 清理超过 10 分钟未完成的文件重组（对方断开等场景，防内存泄漏）
+        fileAssemblers.entries.removeIf { (_, a) -> now - a.lastUpdate > 10 * 60_000L }
         // 清理超时的"正在输入"状态（3 秒无更新视为停止输入）
         typingM.updateMap { map ->
             map.filterValues { (ts, _) -> now - ts < 3_000L }
@@ -1292,6 +1298,19 @@ class SynaEngine(
             scheduleBurnPurge(peerId, msgId, ackTo = null, deliverAck = false, delayMs = BURN_ACK_FALLBACK_MS)
         }
         return msgId
+    }
+
+    /** 无节流直发公钥（REQ_KEY 响应专用，绕过 30s 限频） */
+    private suspend fun sendKeyFrameNow(peerId: String, addr: PeerAddr) {
+        val frame = TransportFrame(
+            type = FrameType.KEY,
+            from = userId,
+            to = peerId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = publicKeyB64,
+        )
+        send(Peer(id = peerId, username = "", device = "", addr = addr, version = "", lastSeen = 0, online = true), frame)
     }
 
     private suspend fun sendKeyFrame(peerId: String, addr: PeerAddr) {

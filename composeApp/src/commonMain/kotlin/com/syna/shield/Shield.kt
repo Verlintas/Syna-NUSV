@@ -181,6 +181,7 @@ expect fun clearNotifications()
 class ShieldController(
     enabled: Boolean,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    eventsPathOverride: String? = null,
 ) {
     private val engine: ShieldEngine = createShieldEngine { threat -> reportThreat(threat) }
     private val stateM = MutableStateFlow(if (enabled) ShieldState.ARMED else ShieldState.UNLOCKED)
@@ -227,7 +228,7 @@ class ShieldController(
     private val eventsM = MutableStateFlow<List<ShieldEvent>>(emptyList())
     val events: StateFlow<List<ShieldEvent>> = eventsM.asStateFlow()
 
-    private val eventsFile: String = shieldEventsPath()
+    private val eventsFile: String = eventsPathOverride ?: shieldEventsPath()
 
     private val selfDestructTriggeredM = MutableStateFlow(false)
     val selfDestructTriggered: StateFlow<Boolean> = selfDestructTriggeredM.asStateFlow()
@@ -252,6 +253,11 @@ class ShieldController(
 
     fun setEnabled(on: Boolean) {
         enabledM.value = on
+        // 停用时取消解锁有效期与严重级再锁任务，防止禁用后仍被自动锁定
+        if (!on) {
+            unlockExpiryJob?.cancel()
+            relockJob?.cancel()
+        }
         if (on) {
             setState(ShieldState.ARMED)
             threatsM.value = emptyList()
@@ -415,22 +421,24 @@ class ShieldController(
 
     /** 审计事件追加落盘（重启保留）；哈希链防篡改：每条记录基于上条哈希 */
     private fun persistEvent(event: ShieldEvent) {
-        try {
-            val file = java.io.File(eventsFile)
-            file.parentFile?.mkdirs()
-            val prevHash = try {
-                if (file.exists() && file.length() > 0) {
-                    file.readLines().lastOrNull()?.let { last ->
-                        last.substringAfterLast('|')
-                    } ?: GENESIS_HASH
-                } else GENESIS_HASH
+        synchronized(this) {
+            try {
+                val file = java.io.File(eventsFile)
+                file.parentFile?.mkdirs()
+                val prevHash = try {
+                    if (file.exists() && file.length() > 0) {
+                        file.readLines().lastOrNull()?.let { last ->
+                            last.substringAfterLast('|')
+                        } ?: GENESIS_HASH
+                    } else GENESIS_HASH
+                } catch (e: Exception) {
+                    GENESIS_HASH
+                }
+                val content = com.syna.net.synaJson.encodeToString(ShieldEvent.serializer(), event)
+                val hash = sha256("$prevHash|$content")
+                file.appendText("$content|$prevHash|$hash\n")
             } catch (e: Exception) {
-                GENESIS_HASH
             }
-            val content = com.syna.net.synaJson.encodeToString(ShieldEvent.serializer(), event)
-            val hash = sha256("$prevHash|$content")
-            file.appendText("$content|$prevHash|$hash\n")
-        } catch (e: Exception) {
         }
     }
 
@@ -448,9 +456,11 @@ class ShieldController(
             var expectedPrev = GENESIS_HASH
             file.readLines().forEach { line ->
                 try {
-                    val content = line.substringBeforeLast('|')
-                    val prevHash = line.substringAfterLast('|', "").substringBefore('|')
+                    // 行格式: content|prevHash|hash
+                    val withoutHash = line.substringBeforeLast('|')
                     val hash = line.substringAfterLast('|')
+                    val prevHash = withoutHash.substringAfterLast('|')
+                    val content = withoutHash.substringBeforeLast('|')
                     // 校验链完整性：任一记录被篡改 → 链条断裂 → 停止载入（防伪造审计）
                     if (prevHash != expectedPrev) return@forEach
                     val recomputed = sha256("$prevHash|$content")

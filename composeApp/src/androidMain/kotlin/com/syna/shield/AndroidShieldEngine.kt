@@ -9,7 +9,6 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.provider.Settings
 import android.view.WindowManager
-import androidx.biometric.BiometricManager as XBiometricManager
 import androidx.biometric.BiometricPrompt as XBiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
