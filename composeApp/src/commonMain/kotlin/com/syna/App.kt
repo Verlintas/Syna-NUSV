@@ -75,6 +75,10 @@ fun App() {
             settings.shieldSelfDestruct = true
         }
         shield.setSecureScreen(settings.shieldScreenProtection)
+        shield.setMemoryWipeCallbacks(
+            wipe = { engine.chatStore.releaseMemory() },
+            restore = { engine.chatStore.reloadFromPersistence() },
+        )
         shield.configureSelfDestruct(enabled = settings.shieldSelfDestruct) {
             engine.chatStore.clearAllHistory()
             clearReceivedFiles()

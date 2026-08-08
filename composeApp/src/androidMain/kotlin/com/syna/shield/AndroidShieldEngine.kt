@@ -62,10 +62,12 @@ class AndroidShieldEngine private constructor(
         /** 由 MainActivity 在 onResume/onPause 注册宿主（生物识别与防截屏需要 Activity） */
         fun attach(activity: Activity) {
             instance?.activeActivity = activity
+            instance?.registerScreenCapture(activity)
         }
 
         fun detach() {
             instance?.activeActivity = null
+            instance?.unregisterScreenCapture()
         }
     }
 
@@ -82,6 +84,12 @@ class AndroidShieldEngine private constructor(
     private var lastBiometricState: Int? = null
     private var lastWallClock: Long? = null
     private var lastElapsed: Long? = null
+    private var lastCaSignature: String? = null
+    private var lastGatewayMac: String? = null
+    private var lastGatewayIp: String? = null
+    private var lastNetworkFingerprint: String? = null
+    private var lastMirroring: Boolean? = null
+    private var screenCaptureCallback: Any? = null
 
     override fun start() {
         // 反应更快：轻量检测（root/frida/调试/凭据/签名）每 3s 一次，
@@ -96,7 +104,8 @@ class AndroidShieldEngine private constructor(
                     runHeavyChecks()
                 }
                 tick++
-                delay(LIGHT_SCAN_INTERVAL_MS)
+                // 扫描间隔抖动（+0~2s）：防止攻击者精确预测检测时机
+                delay(LIGHT_SCAN_INTERVAL_MS + java.security.SecureRandom().nextInt(2_001).toLong())
             }
         }
         monitorVpn()
@@ -122,8 +131,12 @@ class AndroidShieldEngine private constructor(
         if (hasFrida() || detectProcessInjection()) onThreat(ShieldThreat.FRIDA_DETECTED)
         if (isEmulator()) onThreat(ShieldThreat.EMULATOR_DETECTED)
         if (isDebugMode()) onThreat(ShieldThreat.DEBUG_MODE)
+        if (isSelinuxPermissive()) onThreat(ShieldThreat.SELINUX_DISABLED)
+        checkScreenMirroring()
+        checkDowngradeAttempt()
         checkCredentialChange()
         checkForegroundApp()
+        checkNetworkFingerprint()
         // VPN 变更由回调单独触发
     }
 
@@ -133,6 +146,8 @@ class AndroidShieldEngine private constructor(
         if (hasAbusiveAccessibility()) onThreat(ShieldThreat.ACCESSIBILITY_ABUSE)
         checkDeviceAdminChange()
         checkAccessibilityChange()
+        checkCaChange()
+        checkArpSpoof()
     }
 
     /** 时钟跳变检测：墙钟与系统运行计时偏差 > 5 分钟 → 低危提示（审计与消息时效受影响） */
@@ -220,12 +235,166 @@ class AndroidShieldEngine private constructor(
             context.packageManager.getInstalledApplications(PackageManager.GET_META_DATA).any {
                 it.packageName == xposedInstaller
             }
+        // Zygisk / Shamiko / LSPosed 隐藏框架特征（Magisk 隐藏后仍残留的挂载与数据目录）
+        val zygiskPaths = listOf("/data/adb/zygisk", "/data/adb/modules/zygisk")
+        val shamikoPaths = listOf("/data/adb/modules/shamiko", "/data/adb/shamiko")
+        val lsposedPaths = listOf("/data/adb/lspd", "/data/adb/modules/lsposed")
+        val lsposedPackages = listOf("org.lsposed.manager")
+        val hasHiddenFramework = zygiskPaths.any { File(it).exists() } ||
+            shamikoPaths.any { File(it).exists() } ||
+            lsposedPaths.any { File(it).exists() } ||
+            context.packageManager.getInstalledApplications(PackageManager.GET_META_DATA).any {
+                it.packageName == "org.lsposed.manager"
+            }
         return suPaths.any { File(it).exists() } ||
             hasMagisk ||
             hasXposed ||
+            hasHiddenFramework ||
             System.getenv("PATH")?.split(":")?.any { dir ->
                 File(dir, "su").exists()
             } == true
+    }
+
+    /** SELinux 状态：非强制模式 → 系统防护降级（低危提示） */
+    internal fun isSelinuxPermissive(): Boolean {
+        return try {
+            val enforce = java.io.File("/sys/fs/selinux/enforce").readText().trim()
+            enforce == "0"
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 投屏/镜像变化检测：出现/消失额外演示显示屏（无线投屏/HDMI 镜像载体）→ 报警一次。
+     * 持续存在不重复报警（避免反复锁定与审计刷屏）；WifiDisplay 状态为系统 API 不可用，
+     * 以演示屏数量作为应用层可观测信号。
+     */
+    internal fun checkScreenMirroring() {
+        val now = try {
+            val dm = context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+            dm.getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION).isNotEmpty()
+        } catch (e: Exception) {
+            false
+        }
+        val prev = lastMirroring
+        if (prev != null && prev != now && now) {
+            onThreat(ShieldThreat.SCREEN_SHARE_SUSPECT)
+        }
+        lastMirroring = now
+    }
+
+    /**
+     * 防降级安装：版本低于上次运行记录 → 严重威胁（降级绕过防护的常见手法）。
+     * 基准经 ShieldStorageKey 加密；正常升级自动更新基准。
+     */
+    internal fun checkDowngradeAttempt() {
+        try {
+            val version = context.packageManager.getPackageInfo(context.packageName, 0).longVersionCode
+            val file = java.io.File(context.filesDir, "syna_version_base")
+            if (!file.exists()) {
+                file.writeBytes(ShieldStorageKey.encrypt(version.toString().toByteArray()) ?: return)
+                return
+            }
+            val base = ShieldStorageKey.decrypt(file.readBytes())?.decodeToString()?.toLongOrNull() ?: return
+            when {
+                version < base -> onThreat(ShieldThreat.DOWNGRADE_ATTEMPT)
+                version > base -> file.writeBytes(ShieldStorageKey.encrypt(version.toString().toByteArray()) ?: return)
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    /**
+     * 用户 CA 证书变化检测：系统证书库新增用户证书（安装抓包证书等 MITM 前提）→ 提示。
+     * 系统 CA 随 OTA 更新也可能变化（罕见），提示后用户可自行消除。
+     */
+    internal fun checkCaChange() {
+        try {
+            val ks = java.security.KeyStore.getInstance("AndroidCAStore")
+            ks.load(null)
+            val aliases = ks.aliases().toList().sorted()
+            // 仅关注用户新增证书（别名含 u0 的通常为用户 CA；全部列出保证不遗漏）
+            val signature = aliases.joinToString("|")
+            val prev = lastCaSignature
+            if (prev != null && prev.isNotEmpty() && prev != signature) {
+                onThreat(ShieldThreat.NETWORK_MITM)
+            }
+            lastCaSignature = signature
+        } catch (e: Exception) {
+        }
+    }
+
+    /** ARP 欺骗检测：默认网关 MAC 变化 → 局域网流量劫持迹象 */
+    internal fun checkArpSpoof() {
+        try {
+            val gateway = defaultGateway() ?: return
+            val mac = arpMacOf(gateway) ?: return
+            // 网关 IP 变化 = 网络切换（DHCP 重连/换网），更新基准而非误报欺骗
+            if (lastGatewayIp != null && lastGatewayIp != gateway) {
+                lastGatewayMac = mac
+            }
+            val prev = lastGatewayMac
+            if (prev != null && prev != mac) {
+                onThreat(ShieldThreat.NETWORK_MITM)
+            }
+            lastGatewayMac = mac
+            lastGatewayIp = gateway
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun defaultGateway(): String? {
+        return try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val link = cm.getLinkProperties(cm.activeNetwork) ?: return null
+            link.routes.firstOrNull { it.isDefaultRoute }?.gateway?.hostAddress
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun arpMacOf(ip: String): String? {
+        return try {
+            val lines = java.io.File("/proc/net/arp").readLines().drop(1)
+            val line = lines.firstOrNull { it.trim().startsWith(ip) } ?: return null
+            val mac = line.split(Regex("\\s+")).getOrNull(3)
+            mac?.takeIf { it.contains(":") }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 网络环境指纹：SSID 变化 → 低危提示（信任网络概念的基础信号） */
+    internal fun checkNetworkFingerprint() {
+        try {
+            val ssid = currentSsid() ?: return
+            val prev = lastNetworkFingerprint
+            if (prev != null && prev != ssid) {
+                onThreat(ShieldThreat.NETWORK_CHANGED)
+            }
+            lastNetworkFingerprint = ssid
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun currentSsid(): String? {
+        return try {
+            val ssid = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+                if (caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) {
+                    (caps.transportInfo as? android.net.wifi.WifiInfo)?.ssid
+                } else null
+            } else {
+                val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiInfo
+                wm.ssid
+            }
+            // 无权限时系统返回占位符：忽略（不参与变化检测，避免误报）
+            if (ssid.isNullOrEmpty() || ssid.contains("unknown")) null else ssid
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /**
@@ -439,6 +608,36 @@ class AndroidShieldEngine private constructor(
         }
     }
 
+    /**
+     * 截屏/录屏事件检测（Android 14+，API 34）：系统级回调，检测到屏幕被截取/录制瞬间触发。
+     * 低版本以 FLAG_SECURE 防内容截取兜底，无事件级检测能力（如实声明）。
+     */
+    private fun registerScreenCapture(activity: Activity) {
+        if (Build.VERSION.SDK_INT < 34) return
+        try {
+            val callback = object : Activity.ScreenCaptureCallback {
+                override fun onScreenCaptured() {
+                    onThreat(ShieldThreat.SCREEN_RECORDING)
+                }
+            }
+            activity.registerScreenCaptureCallback(activity.mainExecutor, callback)
+            screenCaptureCallback = callback
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun unregisterScreenCapture() {
+        val callback = screenCaptureCallback as? Activity.ScreenCaptureCallback ?: return
+        val activity = activeActivity ?: return
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                activity.unregisterScreenCaptureCallback(callback)
+            }
+        } catch (e: Exception) {
+        }
+        screenCaptureCallback = null
+    }
+
     private fun monitorVpn() {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val callback = object : ConnectivityManager.NetworkCallback() {
@@ -472,8 +671,10 @@ class AndroidShieldEngine private constructor(
                         isForeground = false
                         backgroundAt = System.currentTimeMillis()
                         onBackground()
+                        ShieldController.current?.onAppBackgrounded()
                     }
                     Lifecycle.Event.ON_START -> {
+                        ShieldController.current?.onAppForegrounded()
                         val now = System.currentTimeMillis()
                         val wasBackground = !isForeground
                         isForeground = true

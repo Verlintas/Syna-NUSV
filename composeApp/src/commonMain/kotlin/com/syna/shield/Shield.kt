@@ -75,6 +75,11 @@ enum class ShieldThreat(
         "检测到屏幕共享可疑",
         "屏幕数量/投屏状态发生变化，会话内容可能被投射到其他屏幕",
     ),
+    SCREEN_RECORDING(
+        "recording",
+        "检测到屏幕录制/截屏",
+        "系统检测到屏幕被录制或截取，会话内容可能被留存",
+    ),
     FRIDA_DETECTED(
         "frida",
         "检测到注入框架",
@@ -94,6 +99,26 @@ enum class ShieldThreat(
         "tampered",
         "检测到安全设置被篡改",
         "Shield 安全设置或数据存储疑似被外部修改/清除，已强制恢复保护",
+    ),
+    NETWORK_MITM(
+        "mitm",
+        "检测到网络欺骗风险",
+        "系统 CA 证书新增或网关地址发生变化，网络流量可能被中间人截获",
+    ),
+    NETWORK_CHANGED(
+        "netchange",
+        "检测到网络环境变化",
+        "已切换到新的 Wi-Fi 网络，请确认当前网络可信",
+    ),
+    SELINUX_DISABLED(
+        "selinux",
+        "SELinux 未处于强制模式",
+        "SELinux 未启用强制模式，系统防护等级降低，注入风险升高",
+    ),
+    DOWNGRADE_ATTEMPT(
+        "downgrade",
+        "检测到降级安装尝试",
+        "应用版本低于上次运行版本，疑似通过降级绕过防护",
     ),
     WATCHDOG_TRIP(
         "watchdog",
@@ -150,6 +175,7 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.FRIDA_DETECTED,
     ShieldThreat.WATCHDOG_TRIP,
     ShieldThreat.BRUTE_FORCE,
+    ShieldThreat.DOWNGRADE_ATTEMPT,
     -> ThreatSeverity.CRITICAL
 
     ShieldThreat.EMULATOR_DETECTED,
@@ -159,10 +185,16 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.SCREEN_SHARE_SUSPECT,
     -> ThreatSeverity.HIGH
 
-    ShieldThreat.VPN_CHANGE -> ThreatSeverity.MEDIUM
+    ShieldThreat.VPN_CHANGE,
+    ShieldThreat.NETWORK_MITM,
+    -> ThreatSeverity.MEDIUM
+
+    ShieldThreat.SCREEN_RECORDING -> ThreatSeverity.HIGH
     ShieldThreat.INACTIVE,
     ShieldThreat.CLOCK_CHANGED,
     ShieldThreat.WEAK_LOCK,
+    ShieldThreat.NETWORK_CHANGED,
+    ShieldThreat.SELINUX_DISABLED,
     -> ThreatSeverity.LOW
 }
 
@@ -402,6 +434,7 @@ class ShieldController(
     enabled: Boolean,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     eventsPathOverride: String? = null,
+    memoryWipeDelayMs: Long = MEMORY_WIPE_DELAY_MS,
 ) {
     private val engine: ShieldEngine = createShieldEngine { threat -> reportThreat(threat) }
     private val stateM = MutableStateFlow(if (enabled) ShieldState.ARMED else ShieldState.UNLOCKED)
@@ -479,6 +512,17 @@ class ShieldController(
     // 生物识别失败计数（暴力防护；持久化防重启清零）
     private val biometricFailsM = MutableStateFlow(loadBiometricFails())
     val biometricFails: StateFlow<Int> = biometricFailsM.asStateFlow()
+
+    // 解锁冷却（指数退避）：失败后 1s/2s/4s...封顶 64s，成功清零
+    private var nextUnlockAt = 0L
+    private var cooldownMs = 0L
+
+    // 后台内存擦除：切后台延迟擦除明文缓存，回前台恢复
+    private var memoryWipeCallback: (() -> Unit)? = null
+    private var memoryRestoreCallback: (() -> Unit)? = null
+    private var wipeJob: Job? = null
+    private var memoryWiped = false
+    private val memoryWipeDelayMs: Long = memoryWipeDelayMs
 
     // 健康状态（实时面板）
     private val healthM = MutableStateFlow(
@@ -632,11 +676,16 @@ class ShieldController(
         }
     }
 
-    /** 用户请求解锁（触发平台生物识别） */
+    /** 用户请求解锁（触发平台生物识别；冷却期内直接忽略） */
     fun requestUnlock() {
         stateIntact()
         if (!enabledM.value) {
             setState(ShieldState.UNLOCKED)
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now < nextUnlockAt) {
+            // 冷却期：静默忽略（不弹窗、不计数），防连续尝试
             return
         }
         engine.requestBiometricUnlock { granted ->
@@ -655,9 +704,11 @@ class ShieldController(
                     }
                     // 未达次数：保持锁定（密钥保持释放）
                 } else {
-                    // 解锁成功：清零暴力失败计数
+                    // 解锁成功：清零暴力失败计数与冷却
                     biometricFailsM.value = 0
                     persistBiometricFails(0)
+                    nextUnlockAt = 0L
+                    cooldownMs = 0L
                     setState(ShieldState.UNLOCKED)
                     recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
                     scheduleRelockIfCritical()
@@ -679,9 +730,18 @@ class ShieldController(
         val fails = biometricFailsM.value + 1
         biometricFailsM.value = fails
         persistBiometricFails(fails)
+        // 冷却指数退避：1s → 2s → 4s ... 封顶 64s
+        if (cooldownMs == 0L) {
+            cooldownMs = 1_000L
+        } else {
+            cooldownMs = minOf(cooldownMs * 2, 64_000L)
+        }
+        nextUnlockAt = System.currentTimeMillis() + cooldownMs
         if (fails >= BIOMETRIC_FAIL_LIMIT) {
             biometricFailsM.value = 0
             persistBiometricFails(0)
+            nextUnlockAt = 0L
+            cooldownMs = 0L
             val current = threatsM.value
             if (ShieldThreat.BRUTE_FORCE !in current) {
                 threatsM.value = current + ShieldThreat.BRUTE_FORCE
@@ -758,8 +818,41 @@ class ShieldController(
         }
     }
 
+    /**
+     * 注册后台内存擦除回调：切后台一段时间后释放内存明文缓存（数据仍在加密盘上）。
+     * restore 回调在重新回到前台时恢复（从加密存储重载）。
+     */
+    fun setMemoryWipeCallbacks(wipe: () -> Unit, restore: () -> Unit) {
+        memoryWipeCallback = wipe
+        memoryRestoreCallback = restore
+    }
+
+    /** 切到后台：延迟擦除内存明文（默认 60 秒），回前台前取消 */
     fun onAppBackgrounded() {
         clearOwnClipboard()
+        wipeJob?.cancel()
+        val wipe = memoryWipeCallback ?: return
+        wipeJob = scope.launch {
+            delay(memoryWipeDelayMs)
+            if (!ShieldGate.isFresh()) return@launch // 已锁定：锁定路径负责擦除
+            try {
+                wipe()
+                memoryWiped = true
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    /** 回到前台：取消延迟擦除；已擦除则触发重载恢复 */
+    fun onAppForegrounded() {
+        wipeJob?.cancel()
+        if (memoryWiped) {
+            memoryWiped = false
+            try {
+                memoryRestoreCallback?.invoke()
+            } catch (e: Exception) {
+            }
+        }
     }
 
     /**
@@ -860,6 +953,7 @@ class ShieldController(
         const val MAX_EVENTS = 100
         const val GENESIS_HASH = "genesis" // 哈希链起点
         const val BIOMETRIC_FAIL_LIMIT = 5
+        const val MEMORY_WIPE_DELAY_MS = 60_000L // 切后台 60 秒后擦除内存明文
 
         /** 进程级当前实例（供通知隐藏等模块读取锁定状态） */
         @Volatile
