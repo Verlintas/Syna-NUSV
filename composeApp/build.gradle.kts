@@ -145,7 +145,7 @@ val serverFatJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "com.syna.server.ServerMainKt"
-        attributes["Implementation-Version"] = "0.3.1"
+        attributes["Implementation-Version"] = "0.4.0"
     }
     from(kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs)
     from(configurations.getByName("desktopRuntimeClasspath").map { file ->
