@@ -28,14 +28,28 @@ class SynaApp : Application() {
         instance = this
         // 全局崩溃日志：启动异常时写入文件，便于排查"打不开"
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            val entry =
+                "${System.currentTimeMillis()} [${thread.name}] " +
+                    "${throwable::class.java.name}: ${throwable.message}\n" +
+                    throwable.stackTraceToString() + "\n\n"
             try {
                 val file = java.io.File(filesDir, "crash.log")
-                java.io.FileWriter(file, true).use { w ->
-                    w.write(
-                        "${System.currentTimeMillis()} [${thread.name}] " +
-                            "${throwable::class.java.name}: ${throwable.message}\n" +
-                            throwable.stackTraceToString() + "\n\n",
-                    )
+                java.io.FileWriter(file, true).use { w -> w.write(entry) }
+            } catch (e: Exception) {
+            }
+            // 双写"下载/Syna/crash.log"（MediaStore），普通用户无需 root/ADB 即可查看
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    val values = android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "crash.log")
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/Syna")
+                        put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    }
+                    val resolver = contentResolver
+                    val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    if (uri != null) {
+                        resolver.openOutputStream(uri)?.use { out -> out.write(entry.toByteArray()) }
+                    }
                 }
             } catch (e: Exception) {
             }

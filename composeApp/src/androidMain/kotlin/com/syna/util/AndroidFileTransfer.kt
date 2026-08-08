@@ -48,19 +48,69 @@ actual fun FilePickerButton(
     val context = SynaApp.context
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            try {
-                val name = context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
-                } ?: "file"
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                if (bytes != null) onFilePicked(name, bytes)
+            val (name, size) = try {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    var n: String? = null
+                    var s = -1L
+                    val nameIdx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    val sizeIdx = cursor.getColumnIndex(OpenableColumns.SIZE)
+                    if (cursor.moveToFirst()) {
+                        if (nameIdx >= 0) n = cursor.getString(nameIdx)
+                        if (sizeIdx >= 0 && !cursor.isNull(sizeIdx)) s = cursor.getLong(sizeIdx)
+                    }
+                    n to s
+                } ?: ("file" to -1L)
             } catch (e: Exception) {
-                println("[Syna:File] 读取失败: ${e.message}")
+                "file" to -1L
             }
+            // 大文件防护：超过 200MB 直接拒绝（全量读入会 OOM 闪退）
+            if (size > com.syna.net.MAX_FILE_SIZE_BYTES) {
+                try {
+                    android.widget.Toast.makeText(
+                        context,
+                        "文件过大（上限 ${com.syna.net.MAX_FILE_SIZE_BYTES / 1024 / 1024}MB）",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                } catch (e: Exception) {
+                }
+                return@rememberLauncherForActivityResult
+            }
+            // 后台线程读取，避免阻塞主线程
+            Thread {
+                try {
+                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (bytes != null) {
+                        onFilePicked(name ?: "file", bytes)
+                    }
+                } catch (e: Throwable) {
+                    println("[Syna:File] 读取失败: ${e.message}")
+                    try {
+                        android.widget.Toast.makeText(context, "文件读取失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (e2: Exception) {
+                    }
+                }
+            }.start()
         }
     }
-    TextButton(onClick = { launcher.launch("*/*") }, modifier = modifier) {
+    TextButton(
+        onClick = {
+            try {
+                launcher.launch("*/*")
+            } catch (e: Throwable) {
+                // 系统文件选择器不可用（部分 ROM 禁用 DocumentsUI 等）
+                println("[Syna:File] 文件选择器启动失败: ${e.message}")
+                try {
+                    android.widget.Toast.makeText(
+                        context,
+                        "无法打开文件选择器: ${e.message}",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                } catch (e2: Exception) {
+                }
+            }
+        },
+        modifier = modifier,
+    ) {
         Text("📎")
     }
 }
