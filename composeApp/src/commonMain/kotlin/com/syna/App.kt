@@ -29,6 +29,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.syna.net.SynaEngine
 import com.syna.shield.ShieldController
+import com.syna.shield.clearNotifications
+import com.syna.shield.clearOwnClipboard
 import com.syna.shield.createShieldEngine
 import com.syna.storage.SettingsRepository
 import com.syna.storage.clearReceivedFiles
@@ -68,7 +70,9 @@ fun App() {
         shield.configureSelfDestruct(enabled = settings.shieldSelfDestruct) {
             engine.chatStore.clearAllHistory()
             clearReceivedFiles()
-            notifyMessage("🛡 Mirtazapine Shield", "检测到疑似破解迹象，本地聊天记录与接收文件已自动销毁")
+            clearOwnClipboard()
+            clearNotifications()
+            notifyMessage("🛡 Mirtazapine Shield", "Detected possible compromise; local chats and received files were destroyed")
         }
     }
     LaunchedEffect(Unit) {

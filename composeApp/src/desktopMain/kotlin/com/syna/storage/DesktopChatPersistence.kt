@@ -23,7 +23,19 @@ actual fun clearReceivedFiles() {
         val dir = receivedDir()
         if (Files.exists(dir)) {
             Files.walk(dir).use { stream ->
-                stream.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+                stream.sorted(Comparator.reverseOrder()).forEach { p ->
+                    // 防数据恢复：删除前先覆写零值
+                    try {
+                        if (Files.isRegularFile(p)) {
+                            val size = Files.size(p)
+                            if (size > 0 && size <= 64L * 1024 * 1024) {
+                                Files.write(p, ByteArray(size.toInt()))
+                            }
+                        }
+                    } catch (e: Exception) {
+                    }
+                    Files.deleteIfExists(p)
+                }
             }
         }
     } catch (e: Exception) {

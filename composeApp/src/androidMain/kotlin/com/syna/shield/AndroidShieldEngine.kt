@@ -97,8 +97,12 @@ class AndroidShieldEngine private constructor(
     }
 
     private fun runThreatChecks() {
+        // 防重打包：签名指纹不一致 → 严重威胁
+        if (!verifySignature()) {
+            onThreat(ShieldThreat.SHIELD_TAMPERED)
+        }
         if (isRooted()) onThreat(ShieldThreat.ROOT_DETECTED)
-        if (hasFrida()) onThreat(ShieldThreat.FRIDA_DETECTED)
+        if (hasFrida() || detectProcessInjection()) onThreat(ShieldThreat.FRIDA_DETECTED)
         if (isEmulator()) onThreat(ShieldThreat.EMULATOR_DETECTED)
         if (isDebugMode()) onThreat(ShieldThreat.DEBUG_MODE)
         if (hasMonitoringApps()) onThreat(ShieldThreat.MONITORING_APP)
@@ -142,6 +146,68 @@ class AndroidShieldEngine private constructor(
             System.getenv("PATH")?.split(":")?.any { dir ->
                 File(dir, "su").exists()
             } == true
+    }
+
+    /**
+     * 防重打包：校验当前 APK 签名指纹是否与官方发布一致。
+     * 期望值来自 BuildConfig（构建注入）；被重打包/重新签名后必然不匹配。
+     */
+    internal fun verifySignature(): Boolean {
+        val expected = com.syna.BuildConfig.SYNA_SIGNATURE_HASH
+        if (expected == "REPLACE_WITH_RELEASE_HASH") {
+            // 开发构建（未注入期望值）：跳过校验
+            return true
+        }
+        val actual = signatureHash() ?: return false
+        return actual.equals(expected, ignoreCase = true)
+    }
+
+    private fun signatureHash(): String? {
+        return try {
+            val info = context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.GET_SIGNATURES,
+            )
+            val sig = info.signatures?.firstOrNull() ?: return null
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(sig.toByteArray())
+            digest.joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * 进程注入检测：TracerPid（ptrace 调试/注入）+ /proc/self/maps Frida 特征库
+     * + 线程名特征。TracerPid 是反调试最有效手段：Frida/gdb/strace 全部命中。
+     */
+    internal fun detectProcessInjection(): Boolean {
+        // 1) TracerPid：/proc/self/status 中不为 0 即被 ptrace
+        try {
+            val status = java.io.File("/proc/self/status").readText()
+            val m = Regex("TracerPid:\\s*(\\d+)").find(status)
+            val pid = m?.groupValues?.get(1)?.trim()?.toIntOrNull() ?: 0
+            if (pid != 0) return true
+        } catch (e: Exception) {
+        }
+        // 2) /proc/self/maps：Frida 特征库映射
+        try {
+            val maps = java.io.File("/proc/self/maps").readText()
+            if (maps.contains("frida-gadget") || maps.contains("frida-agent")) return true
+        } catch (e: Exception) {
+        }
+        // 3) 线程名特征（frida / gum-js-loop）
+        try {
+            val tasks = java.io.File("/proc/self/task").listFiles() ?: emptyArray()
+            for (task in tasks) {
+                val comm = java.io.File(task, "comm").readText().trim()
+                if (comm.contains("frida", ignoreCase = true) || comm.contains("gum-js-loop")) {
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+        }
+        return false
     }
 
     /** Frida 注入框架检测（frida-server 进程/端口/库特征） */

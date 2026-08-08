@@ -53,6 +53,14 @@ class DesktopShieldEngine(
                 onThreat(ShieldThreat.SCREEN_SHARE_SUSPECT)
             }
             lastScreenCount = current
+            // JVM agent 注入与远程控制进程检测
+            if (hasJavaAgent()) {
+                onThreat(ShieldThreat.FRIDA_DETECTED)
+            }
+            val remote = remoteControlProcesses()
+            if (remote.isNotEmpty()) {
+                onThreat(ShieldThreat.MONITORING_APP)
+            }
         }.apply { start() }
     }
 
@@ -63,6 +71,37 @@ class DesktopShieldEngine(
 
     override fun onForeground() {
         lastActivity = System.currentTimeMillis()
+    }
+
+    /** JVM 注入检测：-javaagent/-agentlib 附加（字节码 hook 的常见入口） */
+    private fun hasJavaAgent(): Boolean {
+        return try {
+            val args = java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments
+            args.any { it.startsWith("-javaagent") || it.startsWith("-agentlib") || it.startsWith("-agentpath") }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 远程控制 / 录屏 / 投屏进程检测（TeamViewer / AnyDesk / OBS / VNC / scrcpy） */
+    private fun remoteControlProcesses(): List<String> {
+        val keywords = listOf(
+            "teamviewer", "anydesk", "obs", "obs64", "vnc", "x11vnc",
+            "scrcpy", "rustdesk", "todesk", "sunloginclient", "向日葵",
+        )
+        return try {
+            val os = System.getProperty("os.name").lowercase()
+            val cmd = when {
+                os.contains("win") -> listOf("tasklist")
+                else -> listOf("ps", "-e", "-o", "comm=")
+            }
+            val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
+            val output = proc.inputStream.bufferedReader().readText()
+            proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+            keywords.filter { keyword -> output.lowercase().contains(keyword) }
+        } catch (e: Exception) {
+            emptyList()
+        }
     }
 
     private fun screenCount(): Int = try {

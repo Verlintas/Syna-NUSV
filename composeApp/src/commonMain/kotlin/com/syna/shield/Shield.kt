@@ -171,6 +171,9 @@ expect fun shieldEventsPath(): String
 /** 清除本应用写入的剪贴板内容（锁定/切后台时调用，不影响其他应用内容） */
 expect fun clearOwnClipboard()
 
+/** 清除本应用的全部通知（自毁时调用，不留痕迹） */
+expect fun clearNotifications()
+
 /**
  * Shield 控制器：收集威胁、管理状态机、审计时间线。
  * 策略：任一威胁上报即锁定；解锁后若存在严重级威胁，30 秒内未消除将自动重新锁定。
@@ -182,6 +185,38 @@ class ShieldController(
     private val engine: ShieldEngine = createShieldEngine { threat -> reportThreat(threat) }
     private val stateM = MutableStateFlow(if (enabled) ShieldState.ARMED else ShieldState.UNLOCKED)
     val state: StateFlow<ShieldState> = stateM.asStateFlow()
+
+    // 状态内存防篡改：每次变更同步 HMAC 签名值，关键路径校验一致性，
+    // 防止攻击者直接改写内存中的状态绕过锁定。
+    private val ShieldConfigGuardHmacKey: ByteArray = ByteArray(32).also {
+        java.security.SecureRandom().nextBytes(it)
+    }
+
+    private var stateHmac = hmacOf(stateM.value.name)
+
+    private fun setState(newState: ShieldState) {
+        stateM.value = newState
+        stateHmac = hmacOf(newState.name)
+    }
+
+    private fun hmacOf(value: String): String {
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(javax.crypto.spec.SecretKeySpec(ShieldConfigGuardHmacKey, "HmacSHA256"))
+        return mac.doFinal(value.toByteArray()).joinToString("") { "%02x".format(it) }
+    }
+
+    /** 校验内存状态未被篡改；被篡改 → 强制锁定 */
+    private fun stateIntact(): Boolean {
+        val ok = hmacOf(stateM.value.name) == stateHmac
+        if (!ok) {
+            // 状态被内存篡改：强制锁定并记录
+            setState(ShieldState.LOCKED)
+            stateHmac = hmacOf(ShieldState.LOCKED.name)
+            recordEvent(ShieldThreat.SHIELD_TAMPERED, ShieldAction.DETECTED)
+            recordEvent(ShieldThreat.SHIELD_TAMPERED, ShieldAction.LOCKED)
+        }
+        return ok
+    }
 
     private val threatsM = MutableStateFlow<List<ShieldThreat>>(emptyList())
     val threats: StateFlow<List<ShieldThreat>> = threatsM.asStateFlow()
@@ -218,13 +253,13 @@ class ShieldController(
     fun setEnabled(on: Boolean) {
         enabledM.value = on
         if (on) {
-            stateM.value = ShieldState.ARMED
+            setState(ShieldState.ARMED)
             threatsM.value = emptyList()
             current = this
             engine.start()
         } else {
             engine.stop()
-            stateM.value = ShieldState.UNLOCKED
+            setState(ShieldState.UNLOCKED)
             if (current === this) current = null
         }
     }
@@ -267,6 +302,7 @@ class ShieldController(
     }
 
     internal fun reportThreat(threat: ShieldThreat) {
+        stateIntact()
         if (!enabledM.value) return
         val current = threatsM.value
         if (threat !in current) {
@@ -275,10 +311,10 @@ class ShieldController(
         recordEvent(threat, ShieldAction.DETECTED)
         maybeSelfDestruct(threat)
         if (threat != ShieldThreat.INACTIVE) {
-            stateM.value = ShieldState.LOCKED
+            setState(ShieldState.LOCKED)
             recordEvent(threat, ShieldAction.LOCKED)
         } else if (current.isEmpty() || (current.size == 1 && current.first() == ShieldThreat.INACTIVE)) {
-            stateM.value = ShieldState.LOCKED
+            setState(ShieldState.LOCKED)
             recordEvent(threat, ShieldAction.LOCKED)
         }
     }
@@ -289,19 +325,20 @@ class ShieldController(
         recordEvent(threat, ShieldAction.CLEARED)
         // 威胁全部消除后回到监测中（仍需用户解锁才能使用）
         if (current.isEmpty()) {
-            stateM.value = ShieldState.ARMED
+            setState(ShieldState.ARMED)
         }
     }
 
     /** 用户请求解锁（触发平台生物识别） */
     fun requestUnlock() {
+        stateIntact()
         if (!enabledM.value) {
-            stateM.value = ShieldState.UNLOCKED
+            setState(ShieldState.UNLOCKED)
             return
         }
         engine.requestBiometricUnlock { granted ->
             if (granted) {
-                stateM.value = ShieldState.UNLOCKED
+                setState(ShieldState.UNLOCKED)
                 recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
                 scheduleRelockIfCritical()
                 scheduleUnlockExpiry()
@@ -319,7 +356,7 @@ class ShieldController(
         unlockExpiryJob = scope.launch {
             delay(UNLOCK_TTL_MS)
             if (stateM.value == ShieldState.UNLOCKED) {
-                stateM.value = ShieldState.LOCKED
+                setState(ShieldState.LOCKED)
                 recordEvent(ShieldThreat.INACTIVE, ShieldAction.LOCKED)
             }
         }
@@ -341,8 +378,9 @@ class ShieldController(
     }
 
     fun lock() {
+        stateIntact()
         if (enabledM.value) {
-            stateM.value = ShieldState.LOCKED
+            setState(ShieldState.LOCKED)
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.LOCKED)
             clearOwnClipboard()
         }
@@ -362,7 +400,7 @@ class ShieldController(
             relockJob = scope.launch {
                 delay(RELOCK_AFTER_UNLOCK_MS)
                 if (threatsM.value.any { it.severity() == ThreatSeverity.CRITICAL }) {
-                    stateM.value = ShieldState.LOCKED
+                    setState(ShieldState.LOCKED)
                     recordEvent(ShieldThreat.INACTIVE, ShieldAction.LOCKED)
                 }
             }
@@ -375,29 +413,52 @@ class ShieldController(
         persistEvent(event)
     }
 
-    /** 审计事件追加落盘（重启保留） */
+    /** 审计事件追加落盘（重启保留）；哈希链防篡改：每条记录基于上条哈希 */
     private fun persistEvent(event: ShieldEvent) {
         try {
-            val line = com.syna.net.synaJson.encodeToString(
-                ShieldEvent.serializer(),
-                event,
-            )
             val file = java.io.File(eventsFile)
             file.parentFile?.mkdirs()
-            file.appendText(line + "\n")
+            val prevHash = try {
+                if (file.exists() && file.length() > 0) {
+                    file.readLines().lastOrNull()?.let { last ->
+                        last.substringAfterLast('|')
+                    } ?: GENESIS_HASH
+                } else GENESIS_HASH
+            } catch (e: Exception) {
+                GENESIS_HASH
+            }
+            val content = com.syna.net.synaJson.encodeToString(ShieldEvent.serializer(), event)
+            val hash = sha256("$prevHash|$content")
+            file.appendText("$content|$prevHash|$hash\n")
         } catch (e: Exception) {
         }
+    }
+
+    private fun sha256(input: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(input.toByteArray())
+        return digest.joinToString("") { "%02x".format(it) }
     }
 
     private fun loadPersistedEvents() {
         try {
             val file = java.io.File(eventsFile)
             if (!file.exists()) return
-            val persisted = file.readLines().mapNotNull { line ->
+            val persisted = mutableListOf<ShieldEvent>()
+            var expectedPrev = GENESIS_HASH
+            file.readLines().forEach { line ->
                 try {
-                    com.syna.net.synaJson.decodeFromString(ShieldEvent.serializer(), line)
+                    val content = line.substringBeforeLast('|')
+                    val prevHash = line.substringAfterLast('|', "").substringBefore('|')
+                    val hash = line.substringAfterLast('|')
+                    // 校验链完整性：任一记录被篡改 → 链条断裂 → 停止载入（防伪造审计）
+                    if (prevHash != expectedPrev) return@forEach
+                    val recomputed = sha256("$prevHash|$content")
+                    if (recomputed != hash) return@forEach
+                    val event = com.syna.net.synaJson.decodeFromString(ShieldEvent.serializer(), content)
+                    persisted.add(event)
+                    expectedPrev = hash
                 } catch (e: Exception) {
-                    null
                 }
             }
             if (persisted.isNotEmpty()) {
@@ -411,6 +472,7 @@ class ShieldController(
         const val RELOCK_AFTER_UNLOCK_MS = 30_000L
         const val UNLOCK_TTL_MS = 5 * 60_000L // 解锁有效期：5 分钟自动再锁
         const val MAX_EVENTS = 100
+        const val GENESIS_HASH = "genesis" // 哈希链起点
 
         /** 进程级当前实例（供通知隐藏等模块读取锁定状态） */
         @Volatile
