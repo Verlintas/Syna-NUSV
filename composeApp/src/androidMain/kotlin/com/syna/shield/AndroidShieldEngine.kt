@@ -306,6 +306,10 @@ class AndroidShieldEngine private constructor(
 
     /** 生物识别/凭据变更检测：生物识别可用状态变化（被移除/禁用）提示设备可能易主 */
     private fun checkCredentialChange() {
+        // 兼容性：BIOMETRIC_SERVICE / Authenticators 需要 API 29+/30+，
+        // minSdk 28 上直接调用会抛 NoSuchMethodError（Error 不被 catch(Exception) 捕获），
+        // 因此先做版本检查——低版本跳过该检测项（不砍其他功能）
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         try {
             val bm = context.getSystemService(Context.BIOMETRIC_SERVICE) as android.hardware.biometrics.BiometricManager
             val state = bm.canAuthenticate(android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG)
