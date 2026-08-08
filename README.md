@@ -21,11 +21,13 @@
 - ✅ **Message recall**: long-press your message → recall within 2 minutes, both sides marked
 - ✅ **Quote reply & @mentions**: long-press → reply with quoted preview; @ member picker in groups
 - ✅ **◇Mirtazapine Shield**: real-time security monitor & app lock
-  - **Detection (10+ sources)**: Root (incl. Magisk/Xposed) · Frida injection (paths, port 27042, /proc/self/maps, threads, **TracerPid**) · emulator · USB debugging/ADB · device-admin takeover (MDM) · credential change · VPN/proxy change · rapid background switching · accessibility abuse · monitoring apps · screen-sharing suspects · JVM `-javaagent` injection · remote-control processes
-  - **Response**: full-screen severity-graded lock page · biometric unlock (5-min expiry, critical re-lock) · **self-destruct protocol** (wipes local chats & files on critical compromise)
-  - **Self-protection**: APK **signature-fingerprint verification** (anti-repackaging) · HMAC-signed settings (tamper/wipe → force-restore) · in-memory state HMAC · disabling requires biometrics · back/ESC key blocking
-  - **Data protection**: chat history **AES-GCM encrypted at rest** · memory cleared while locked · screen-capture protection · clipboard protection · notifications hidden while locked
-  - **Audit**: **hash-chained** event timeline persisted across restarts
+  - 📖 **Full design & detection matrix**: [MIRTAZAPINE_SHIELD.md](MIRTAZAPINE_SHIELD.md) — why the protection holds even with the source fully public
+  - **Detection (20+ sources)**: Root (incl. Magisk/Xposed/Zygisk/Shamiko/LSPosed) · Frida injection (paths, ports 27042/27043, /proc/self/maps, threads, **TracerPid**) · emulator · USB debugging/ADB · device-admin takeover (MDM) · credential change · VPN/proxy change · **CA-cert change & ARP spoofing (LAN MITM)** · network fingerprint (SSID) · rapid background switching · accessibility abuse · monitoring apps · **screen capture/recording events (API 34+)** · screen mirroring · SELinux · clock tamper · weak lock · downgrade attempts · JVM `-javaagent` injection · remote-control processes
+  - **Response**: full-screen severity-graded lock page · biometric unlock (5-min expiry, critical re-lock) · **self-destruct protocol** (wipes local chats & files on critical compromise) · **honeypot fake-lock** for injection threats (real key release + triple verification) · brute-force protection (5 fails → key release + self-destruct; exponential unlock cooldown)
+  - **Self-protection**: APK **signature-fingerprint verification** (anti-repackaging) · **dex hash self-verification** · versionCode downgrade defense · HMAC-signed settings (tamper/wipe → force-restore) · in-memory state HMAC · **heartbeat gate (fail-closed: stalled detector → decrypt refused)** · **watchdog ring** (3 threads monitor each other) · disabling requires biometrics · back/ESC key blocking
+  - **Data protection**: chat history **AES-GCM encrypted at rest** (Keystore TEE / 0600 key) · memory cleared while locked & after 60s background · screen-capture protection & **capture-event detection (API 34+)** · clipboard protection · notifications hidden while locked
+  - **Audit**: **hash-chained + AES-GCM encrypted** event timeline persisted across restarts
+  - **Live status panel**: gate freshness · watchdog trips · honeypot state · biometric fail counter · latest audit events
   - Honest boundary: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be seen by an app-layer solution — stated in-app
 - ✅ **Chat history persistence**: LAN chats survive restarts — encrypted at rest (AES-GCM, Keystore/0600 key); full state restored (recalls, files, quotes, mentions)
 - ✅ **Clear local history**: Settings → Storage shows usage and wipes chats & received files
