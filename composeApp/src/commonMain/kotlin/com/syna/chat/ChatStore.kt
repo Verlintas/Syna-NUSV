@@ -233,6 +233,20 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         }
     }
 
+    /** 锁定期间释放内存中的消息（防 root 进程 dump 读取），会话元数据保留 */
+    fun releaseMemory() {
+        messagesM.value = emptyMap()
+    }
+
+    /** 解锁后从持久化重新加载消息 */
+    fun reloadFromPersistence() {
+        persistence?.load()?.let { loaded ->
+            if (loaded.isNotEmpty()) {
+                messagesM.value = loaded.groupBy { it.conversationId }
+            }
+        }
+    }
+
     /** 清除本地全部聊天记录（内存 + 持久化文件） */
     fun clearAllHistory() {
         messagesM.value = emptyMap()

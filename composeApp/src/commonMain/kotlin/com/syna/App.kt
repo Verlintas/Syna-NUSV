@@ -94,6 +94,15 @@ fun App() {
     var tempChatEnabled by remember { mutableStateOf(settings.tempChatEnabled) }
     var tempChatTtlHours by remember { mutableStateOf(settings.tempChatTtlHours) }
 
+    // 自我保护：锁定 → 释放内存消息；解锁 → 从加密存储重载
+    LaunchedEffect(shieldState) {
+        when (shieldState) {
+            com.syna.shield.ShieldState.LOCKED -> engine.chatStore.releaseMemory()
+            com.syna.shield.ShieldState.UNLOCKED -> engine.chatStore.reloadFromPersistence()
+            else -> Unit
+        }
+    }
+
     SynaTheme(themeMode = themeMode) {
         if (shieldState == com.syna.shield.ShieldState.LOCKED) {
             ShieldLockScreen(controller = shield)

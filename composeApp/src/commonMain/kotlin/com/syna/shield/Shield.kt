@@ -75,6 +75,11 @@ enum class ShieldThreat(
         "检测到屏幕共享可疑",
         "屏幕数量/投屏状态发生变化，会话内容可能被投射到其他屏幕",
     ),
+    FRIDA_DETECTED(
+        "frida",
+        "检测到注入框架",
+        "检测到 Frida/调试注入框架，应用进程可能被动态挂钩与流量读取",
+    ),
     SHIELD_TAMPERED(
         "tampered",
         "检测到安全设置被篡改",
@@ -96,6 +101,7 @@ enum class ThreatSeverity(val label: String) {
 }
 
 /** 威胁事件（审计时间线） */
+@kotlinx.serialization.Serializable
 data class ShieldEvent(
     val ts: Long,
     val threat: ShieldThreat,
@@ -118,6 +124,7 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.CREDENTIAL_CHANGED,
     ShieldThreat.DEVICE_ADMIN_CHANGE,
     ShieldThreat.SHIELD_TAMPERED,
+    ShieldThreat.FRIDA_DETECTED,
     -> ThreatSeverity.CRITICAL
 
     ShieldThreat.EMULATOR_DETECTED,
@@ -158,6 +165,12 @@ interface ShieldEngine {
 
 expect fun createShieldEngine(onThreat: (ShieldThreat) -> Unit): ShieldEngine
 
+/** Shield 审计日志持久化路径（多端） */
+expect fun shieldEventsPath(): String
+
+/** 清除本应用写入的剪贴板内容（锁定/切后台时调用，不影响其他应用内容） */
+expect fun clearOwnClipboard()
+
 /**
  * Shield 控制器：收集威胁、管理状态机、审计时间线。
  * 策略：任一威胁上报即锁定；解锁后若存在严重级威胁，30 秒内未消除将自动重新锁定。
@@ -179,6 +192,8 @@ class ShieldController(
     private val eventsM = MutableStateFlow<List<ShieldEvent>>(emptyList())
     val events: StateFlow<List<ShieldEvent>> = eventsM.asStateFlow()
 
+    private val eventsFile: String = shieldEventsPath()
+
     private val selfDestructTriggeredM = MutableStateFlow(false)
     val selfDestructTriggered: StateFlow<Boolean> = selfDestructTriggeredM.asStateFlow()
 
@@ -191,6 +206,7 @@ class ShieldController(
     fun start() {
         if (!enabledM.value) return
         current = this
+        loadPersistedEvents()
         engine.start()
     }
 
@@ -215,7 +231,10 @@ class ShieldController(
 
     fun onForeground() = engine.onForeground()
 
-    fun onBackground() = engine.onBackground()
+    fun onBackground() {
+        engine.onBackground()
+        clearOwnClipboard()
+    }
 
     fun setSecureScreen(secure: Boolean) = engine.setSecureScreen(secure)
 
@@ -325,7 +344,12 @@ class ShieldController(
         if (enabledM.value) {
             stateM.value = ShieldState.LOCKED
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.LOCKED)
+            clearOwnClipboard()
         }
+    }
+
+    fun onAppBackgrounded() {
+        clearOwnClipboard()
     }
 
     /**
@@ -346,7 +370,41 @@ class ShieldController(
     }
 
     private fun recordEvent(threat: ShieldThreat, action: ShieldAction) {
-        eventsM.value = (eventsM.value + ShieldEvent(System.currentTimeMillis(), threat, action)).takeLast(MAX_EVENTS)
+        val event = ShieldEvent(System.currentTimeMillis(), threat, action)
+        eventsM.value = (eventsM.value + event).takeLast(MAX_EVENTS)
+        persistEvent(event)
+    }
+
+    /** 审计事件追加落盘（重启保留） */
+    private fun persistEvent(event: ShieldEvent) {
+        try {
+            val line = com.syna.net.synaJson.encodeToString(
+                ShieldEvent.serializer(),
+                event,
+            )
+            val file = java.io.File(eventsFile)
+            file.parentFile?.mkdirs()
+            file.appendText(line + "\n")
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun loadPersistedEvents() {
+        try {
+            val file = java.io.File(eventsFile)
+            if (!file.exists()) return
+            val persisted = file.readLines().mapNotNull { line ->
+                try {
+                    com.syna.net.synaJson.decodeFromString(ShieldEvent.serializer(), line)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (persisted.isNotEmpty()) {
+                eventsM.value = (persisted + eventsM.value).takeLast(MAX_EVENTS)
+            }
+        } catch (e: Exception) {
+        }
     }
 
     companion object {

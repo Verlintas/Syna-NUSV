@@ -4,6 +4,7 @@ import com.syna.chat.ChatMessage
 import com.syna.chat.MessageKind
 import com.syna.chat.MessageStatus
 import com.syna.net.synaJson
+import com.syna.shield.ShieldStorageKey
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.serialization.Serializable
@@ -115,7 +116,19 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
         return try {
             val file = Path.of(path)
             if (!Files.exists(file)) return emptyList()
-            Files.readAllLines(file).mapNotNull { line ->
+            val raw = Files.readAllBytes(file)
+            // 加密格式（SYNA1 + nonce + 密文）；旧版本明文文件直接按明文解析
+            val text = if (raw.size > MAGIC.length && String(raw.copyOfRange(0, MAGIC.length)) == MAGIC) {
+                ShieldStorageKey.decrypt(raw.copyOfRange(MAGIC.length, raw.size))
+                    ?.decodeToString()
+                    ?: run {
+                        println("[Syna:Persist] 解密失败（密钥丢失或数据损坏），按无记录处理")
+                        return emptyList()
+                    }
+            } else {
+                raw.decodeToString()
+            }
+            text.split("\n".toRegex()).filter { it.isNotBlank() }.mapNotNull { line ->
                 try {
                     synaJson.decodeFromString(PersistMessage.serializer(), line).toChat()
                 } catch (e: Exception) {
@@ -136,9 +149,16 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
             }
             val file = Path.of(path)
             Files.createDirectories(file.parent)
-            // FileOutputStream：Android 的 java.nio.Files 无 write(Path, byte[]) 重载
+            val plain = if (lines.isEmpty()) ByteArray(0) else "$lines\n".toByteArray()
+            val payload = ShieldStorageKey.encrypt(plain)
             java.io.FileOutputStream(file.toFile()).use { out ->
-                out.write(if (lines.isEmpty()) ByteArray(0) else "$lines\n".toByteArray())
+                if (payload != null) {
+                    out.write(MAGIC.toByteArray())
+                    out.write(payload)
+                } else {
+                    // 加密密钥不可用（异常环境）：降级明文存储并提示
+                    out.write(plain)
+                }
             }
         } catch (e: Exception) {
             println("[Syna:Persist] 写入失败: ${e.message}")
@@ -163,5 +183,6 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
 
     companion object {
         const val MAX_MESSAGES = 5000
+        const val MAGIC = "SYNA1\n"
     }
 }

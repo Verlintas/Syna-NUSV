@@ -84,3 +84,47 @@ class ChatPersistenceTest {
         assertTrue(msgs.first().recalled, "撤回状态应持久化")
     }
 }
+
+class EncryptedPersistenceTest {
+
+    @Test
+    fun encryptedRoundTripAndTamperDetect() = runBlocking {
+        val dir = Files.createTempDirectory("syna-enc-persist")
+        val p = ChatPersistence(dir.resolve("chat.jsonl").toString())
+        val store = ChatStore(p)
+        store.addIncoming(
+            "peer-1", "Alice",
+            ChatMessage("m1", "peer-1", "peer-1", "加密存储的消息", 1L, MessageStatus.READ, false, true),
+        )
+        delay(1_200)
+
+        // 文件应为加密格式（不可读明文）
+        val raw = Files.readAllBytes(dir.resolve("chat.jsonl"))
+        val text = raw.decodeToString()
+        assertTrue(text.startsWith(ChatPersistence.MAGIC), "文件应为加密格式")
+        assertTrue("加密存储的消息" !in text, "文件中不应出现明文")
+
+        // 正常重载可解密
+        val restored = ChatStore(p)
+        assertTrue(restored.messages.value["peer-1"].orEmpty().any { it.body == "加密存储的消息" })
+
+        // 篡改密文 → 解密失败 → 按无记录处理（不崩溃）
+        val tampered = raw.copyOf()
+        tampered[tampered.size - 1] = (tampered[tampered.size - 1].toInt() xor 0xFF).toByte()
+        Files.write(dir.resolve("chat.jsonl"), tampered)
+        val afterTamper = ChatStore(p)
+        assertTrue(afterTamper.messages.value.isEmpty(), "篡改后应无法解密读取")
+    }
+
+    @Test
+    fun legacyPlainFileStillLoads() = runBlocking {
+        // 旧版本明文文件（无 MAGIC 头）应兼容解析
+        val dir = Files.createTempDirectory("syna-legacy")
+        val file = dir.resolve("chat.jsonl")
+        val legacy = """{"id":"old1","conversationId":"peer-1","senderId":"peer-1","body":"旧消息","ts":1,"status":"READ","burnAfterReading":false,"encrypted":false,"kind":"TEXT"}"""
+        Files.writeString(file, legacy + "\n")
+        val p = ChatPersistence(file.toString())
+        val store = ChatStore(p)
+        assertTrue(store.messages.value["peer-1"].orEmpty().any { it.body == "旧消息" }, "旧明文文件应兼容")
+    }
+}

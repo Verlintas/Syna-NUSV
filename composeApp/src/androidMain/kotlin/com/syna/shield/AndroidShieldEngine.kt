@@ -98,6 +98,7 @@ class AndroidShieldEngine private constructor(
 
     private fun runThreatChecks() {
         if (isRooted()) onThreat(ShieldThreat.ROOT_DETECTED)
+        if (hasFrida()) onThreat(ShieldThreat.FRIDA_DETECTED)
         if (isEmulator()) onThreat(ShieldThreat.EMULATOR_DETECTED)
         if (isDebugMode()) onThreat(ShieldThreat.DEBUG_MODE)
         if (hasMonitoringApps()) onThreat(ShieldThreat.MONITORING_APP)
@@ -115,10 +116,51 @@ class AndroidShieldEngine private constructor(
             "/system/bin/su", "/system/xbin/su", "/sbin/su",
             "/system/app/Superuser.apk", "/system/etc/init.d/99SuperSUDaemon",
         )
+        // Magisk 隐藏 root 特征
+        val magiskPaths = listOf(
+            "/sbin/.magisk", "/data/adb/magisk", "/data/adb/.magisk",
+            "/cache/magisk.log", "/data/cache/magisk.log",
+        )
+        val magiskPackages = listOf("com.topjohnwu.magisk", "com.magisk")
+        val hasMagisk = magiskPaths.any { File(it).exists() } ||
+            context.packageManager.getInstalledApplications(PackageManager.GET_META_DATA).any {
+                magiskPackages.contains(it.packageName)
+            }
+        // Xposed 框架特征
+        val xposedPaths = listOf(
+            "/system/framework/xposed.jar", "/system/lib/libxposed_art.so",
+            "/system/lib64/libxposed_art.so",
+        )
+        val xposedInstaller = "de.robv.android.xposed.installer"
+        val hasXposed = xposedPaths.any { File(it).exists() } ||
+            context.packageManager.getInstalledApplications(PackageManager.GET_META_DATA).any {
+                it.packageName == xposedInstaller
+            }
         return suPaths.any { File(it).exists() } ||
+            hasMagisk ||
+            hasXposed ||
             System.getenv("PATH")?.split(":")?.any { dir ->
                 File(dir, "su").exists()
             } == true
+    }
+
+    /** Frida 注入框架检测（frida-server 进程/端口/库特征） */
+    internal fun hasFrida(): Boolean {
+        // frida-server 常见驻留路径
+        val fridaPaths = listOf(
+            "/data/local/tmp/frida-server", "/data/local/tmp/frida",
+            "/data/local/tmp/re.frida.server",
+        )
+        if (fridaPaths.any { File(it).exists() }) return true
+        // frida 默认端口 27042 监听检测
+        return try {
+            val socket = java.net.Socket()
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", 27042), 300)
+            socket.close()
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     internal fun isEmulator(): Boolean {
