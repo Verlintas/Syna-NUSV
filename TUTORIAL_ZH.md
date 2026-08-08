@@ -77,12 +77,41 @@ adb install composeApp/build/outputs/apk/debug/composeApp-debug.apk
 | **阅后即焚** | 输入框旁 🔥 开关（也可在 设置 → 增强防护 设为默认）。消息在接收方显示 8 秒后，**双方**设备同时销毁。 |
 | **临时聊天** | 设置 → 增强防护 → 临时聊天 开启，选择 TTL（1小时/24小时/7天）。会话超过无活动时间自动清除。 |
 | **系统通知** | 未打开的会话来消息时，Android 通知栏 / 桌面托盘弹窗提醒（阅后即焚内容不泄露）。 |
+| **聊天记录持久化** | 局域网聊天重启不丢——静态加密存储，撤回/文件/引用/@ 状态完整恢复。 |
+| **清除本地记录** | 设置 → 存储：显示聊天/文件占用，一键清除本地数据（不影响对方）。 |
+| **消息转发** | 长按消息 → 转发到任意会话/群。 |
+| **聊天细节** | 日期分隔线（今天/昨天/日期）+ 会话页总未读角标。 |
+| **托盘常驻（桌面）** | 关窗最小化到系统托盘，双击恢复、菜单退出。 |
 | **离线消息** | 对方离线时消息进入本地队列，对方上线后自动补发。 |
 
 **小技巧：** 聊天页顶部可看到连接方式、加密状态和待发送消息数（`N 条待发送`）。
 
 ---
 
+
+## 2.5 ◇Mirtazapine Shield
+
+### 中文
+
+内置的实时安全监测与应用锁（旗舰功能 ◇Mirtazapine Shield）。
+
+- **开启**：设置 → ◇Mirtazapine Shield → 打开（关闭需生物识别验证）。
+- **检测范围**：Root（含 Magisk 隐藏 root 与 Xposed）、Frida 注入（路径/端口 27042/内存映射/线程/TracerPid）、模拟器、USB 调试/ADB、设备管理接管（MDM）、凭据变更、VPN/代理变更、后台快速切换、无障碍滥用、监控类应用、屏幕共享可疑、JVM agent、远程控制进程。
+- **检测到威胁时**：应用锁定到全屏护盾页并列出威胁；需生物识别解锁。解锁 5 分钟后自动再锁；严重级威胁 30 秒内未消除将再次锁定。
+- **自毁协议（可选）**：设置中开启后，严重级破解信号（Root/调试/凭据/设备管理/设置篡改）会立即销毁本地聊天记录与接收文件（删除前覆写零值），并清除剪贴板与通知。
+- **额外防护**：聊天记录静态加密；锁定时内存消息清除；防截屏、剪贴板、通知内容保护；设置 HMAC 签名（篡改/清除即强制恢复）；APK 签名指纹校验（重打包触发锁定）；哈希链审计日志全程记录。
+- **能力边界**：系统级预装监控/企业 MDM 属设备所有者权限，普通应用无法检测与阻止——◇Mirtazapine Shield 提供应用层可实现的最强防护。
+
+### English
+
+A real-time security monitor and app lock built into the client.
+
+- **Enable**: Settings → ◇Mirtazapine Shield → toggle on (disabling requires biometric verification).
+- **What it detects**: Root (incl. Magisk hidden root & Xposed), Frida injection (paths, port 27042, memory maps, threads, TracerPid), emulator, USB debugging/ADB, device-admin takeover (MDM), credential changes, VPN/proxy changes, rapid background switching, accessibility abuse, monitoring apps, screen-sharing suspects, JVM agents, remote-control processes.
+- **When a threat is detected**: the app locks into a full-screen shield page listing the threat(s); unlock requires your biometrics. Unlock expires after 5 minutes; critical threats re-lock after 30s if not cleared.
+- **Self-destruct protocol (optional)**: a critical compromise signal wipes local chats & received files immediately (zero-overwritten first) and clears the clipboard & notifications.
+- **Beyond that**: encrypted chat storage at rest, memory cleared while locked, screen-capture/clipboard/notification protection, HMAC-signed settings, APK signature verification, hash-chained audit log.
+- **Honest boundary**: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be detected by an app — ◇Mirtazapine Shield provides the strongest app-layer protection.
 
 ## 3. 私人服务器
 
@@ -456,7 +485,8 @@ ngrok 会输出一个公网地址（如 `0.tcp.jp.ngrok.io:12345`），连同密
 
 - 服务器在 `SRV_HELLO` 中下发随机盐；双方用加入密码派生 **AES-GCM 通道密钥**（HKDF-SHA256）——所有流量（含密码本身）均加密且防篡改。
 - 群消息使用**密码派生的群密钥**加密，任何知道密码的成员都能解密历史——这就是"私服信任模型"（服务器管理员可信，类似 Minecraft 白名单）。
-- 局域网点对点聊天仍是完整 E2E；只有服务器托管的群聊使用群密钥。
+- 局域网点对点聊天仍是完整 E2E。
+- 本机侧：聊天记录额外做了**静态加密**（AES-GCM），◇Mirtazapine Shield 保护运行中的应用（见 2.5 节）。
 
 **阅后即焚**
 

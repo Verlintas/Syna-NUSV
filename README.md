@@ -20,7 +20,18 @@
 - ✅ **Typing indicator**: live "正在输入…" status in 1:1, LAN groups and server groups
 - ✅ **Message recall**: long-press your message → recall within 2 minutes, both sides marked
 - ✅ **Quote reply & @mentions**: long-press → reply with quoted preview; @ member picker in groups
-- ✅ **Mirtazapine Shield**: real-time security monitor & app lock — detects Root / emulator / USB debugging / VPN changes / background switching / monitoring apps / device-admin takeover / credential changes / screen-sharing suspects, locks the app on any threat (full-screen lock page), unlock requires biometrics (Android); screen-capture protection; idle auto-lock on desktop. **Self-protection**: HMAC-signed settings (Android Keystore TEE / 0600 key file) detect tampering or cleared storage → force-restore protection & lock; disabling Shield requires biometric verification; unlock expires after 5 minutes; back/ESC keys are blocked on the lock screen; **self-destruct protocol** can wipe local chats & files on critical compromise signals. Capability boundary: app-layer detection cannot see system-level pre-installed monitoring / MDM (device-owner privileges) — stated honestly in-app.
+- ✅ **◇Mirtazapine Shield**: real-time security monitor & app lock
+  - **Detection (10+ sources)**: Root (incl. Magisk/Xposed) · Frida injection (paths, port 27042, /proc/self/maps, threads, **TracerPid**) · emulator · USB debugging/ADB · device-admin takeover (MDM) · credential change · VPN/proxy change · rapid background switching · accessibility abuse · monitoring apps · screen-sharing suspects · JVM `-javaagent` injection · remote-control processes
+  - **Response**: full-screen severity-graded lock page · biometric unlock (5-min expiry, critical re-lock) · **self-destruct protocol** (wipes local chats & files on critical compromise)
+  - **Self-protection**: APK **signature-fingerprint verification** (anti-repackaging) · HMAC-signed settings (tamper/wipe → force-restore) · in-memory state HMAC · disabling requires biometrics · back/ESC key blocking
+  - **Data protection**: chat history **AES-GCM encrypted at rest** · memory cleared while locked · screen-capture protection · clipboard protection · notifications hidden while locked
+  - **Audit**: **hash-chained** event timeline persisted across restarts
+  - Honest boundary: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be seen by an app-layer solution — stated in-app
+- ✅ **Chat history persistence**: LAN chats survive restarts — encrypted at rest (AES-GCM, Keystore/0600 key); full state restored (recalls, files, quotes, mentions)
+- ✅ **Clear local history**: Settings → Storage shows usage and wipes chats & received files
+- ✅ **Message forwarding**: long-press → forward to any conversation/group
+- ✅ **Chat polish**: date dividers (今天/昨天/date), unread badge on the Chats tab
+- ✅ **Desktop tray resident**: close-to-tray keeps receiving messages in the background
 - ✅ **System notifications**: Android notification bar / desktop tray popup for new messages
 - ✅ **Connection mode switching**: Auto / TCP (reliable) / UDP (fast) / Host Hotspot
 - ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), **group owner can dissolve the group**, members can leave
@@ -140,6 +151,14 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 # Tests (21: crypto / protocol / loopback chat / group mesh / burn-after-reading / temp chat / offline outbox / server join+chat+history+burn)
 ./gradlew :composeApp:desktopTest
 ```
+
+## Compatibility
+
+- **Android 9+** (API 28) — Shield's credential-change detector runs on API 30+ and is skipped on lower versions without losing any other feature
+- **Desktop**: Windows 10+/macOS/Linux, **Java 17+** (launcher apps bundle their own runtime); release DMG targets Apple Silicon (x64 buildable with `packageDmg` on an Intel Mac)
+- **Windows**: POSIX permission quirks are handled (key files write fine on NTFS)
+- **Proxies with TUN mode** (Clash/FlClash): same-machine traffic auto-routes via loopback; add your LAN subnet to the bypass list for cross-device flows
+- **Cross-version protocol**: new frame fields carry defaults; old/new clients interoperate
 
 ## Platform Notes
 

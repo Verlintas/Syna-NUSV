@@ -447,7 +447,8 @@ In the app: **Contacts → Join Server** → fill in the public `address:port` +
 
 - The server sends a random salt in `SRV_HELLO`; both sides derive an **AES-GCM channel key** from the join password (HKDF-SHA256) — all traffic is authenticated and encrypted, including the password itself.
 - Group messages use a **password-derived group key**, so any member who knows the password can decrypt history — this is the "private server trust model" (the server operator is trusted, like a Minecraft server whitelist).
-- LAN peer-to-peer chat remains fully E2E; only server-hosted groups use the group key.
+- LAN peer-to-peer chat remains fully E2E.
+- On-device: chat history is additionally **encrypted at rest** (AES-GCM), and the ◇Mirtazapine Shield layer protects the running app (see section 2.5).
 
 **Burn after reading**
 
