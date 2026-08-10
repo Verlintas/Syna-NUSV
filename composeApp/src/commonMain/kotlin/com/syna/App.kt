@@ -80,6 +80,35 @@ fun App() {
             wipe = { engine.chatStore.releaseMemory() },
             restore = { engine.chatStore.reloadFromPersistence() },
         )
+        // 假锁主动污染：注入类威胁触发假锁时写入诱饵消息——
+        // 攻击者最终解锁后面对的是被污染的数据流，无法区分真实记录与诱饵
+        shield.setHoneypotCallback {
+            val decoyText = listOf(
+                "[系统日志] 检测到异常访问，记录已归档",
+                "[安全提示] 本次会话已被标记审查",
+                "备份片段 #${(0..9999).random()}",
+                "[内部] 密钥轮换指令已下发",
+            ).random()
+            try {
+                engine.chatStore.addOutgoing(
+                    peerId = engine.userId,
+                    peerName = "系统",
+                    msg = com.syna.chat.ChatMessage(
+                        id = "decoy-${System.currentTimeMillis()}",
+                        conversationId = engine.userId,
+                        senderId = "system",
+                        body = decoyText,
+                        ts = System.currentTimeMillis(),
+                        status = com.syna.chat.MessageStatus.READ,
+                        burnAfterReading = false,
+                        encrypted = false,
+                        kind = com.syna.chat.MessageKind.TEXT,
+                    ),
+                )
+                engine.chatStore.rewriteNow()
+            } catch (e: Exception) {
+            }
+        }
         // 会话密钥轮换（前向安全）：解锁后换新密钥并全量迁移，旧密钥失效。
         // 时序：此回调在 setState(UNLOCKED) 之后触发（门禁已放行）——
         // 先恢复内存数据（解密旧密钥加密的盘上记录），再轮换+重写迁移

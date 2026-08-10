@@ -304,6 +304,28 @@ class ShieldHardeningTest {
         assertEquals(ThreatSeverity.CRITICAL, ShieldThreat.DOWNGRADE_ATTEMPT.severity())
         // 投屏威胁沿用桌面已有分类
         assertEquals(ThreatSeverity.HIGH, ShieldThreat.SCREEN_SHARE_SUSPECT.severity())
+        // v0.7.8 新增：全部 advisory（低危，不锁定）
+        assertEquals(ThreatSeverity.LOW, ShieldThreat.IME_CHANGED.severity())
+        assertEquals(ThreatSeverity.LOW, ShieldThreat.USB_CHANGED.severity())
+        assertEquals(ThreatSeverity.LOW, ShieldThreat.SUSPICIOUS_MODULE.severity())
+        // DEBUG_MODE 已降级（不触发自毁误杀）
+        assertEquals(ThreatSeverity.HIGH, ShieldThreat.DEBUG_MODE.severity())
+    }
+
+    @Test
+    fun honeypotCallbackInvokedOnInjectionThreat() {
+        val path = tempPath()
+        var decoys = 0
+        val controller = ShieldController(enabled = true, eventsPathOverride = path)
+        controller.setHoneypotCallback { decoys++ }
+        controller.start()
+        // 注入类威胁 → 假锁激活 → 诱饵回调触发（仅首次）
+        controller.reportThreat(ShieldThreat.FRIDA_DETECTED)
+        assertEquals(1, decoys, "假锁激活应触发诱饵回调")
+        controller.reportThreat(ShieldThreat.FRIDA_DETECTED)
+        assertEquals(1, decoys, "重复上报不应重复触发诱饵")
+        controller.stop()
+        ShieldGate.disarm()
     }
 
     @Test

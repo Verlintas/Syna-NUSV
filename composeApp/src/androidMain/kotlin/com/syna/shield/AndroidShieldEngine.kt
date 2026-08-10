@@ -90,6 +90,8 @@ class AndroidShieldEngine private constructor(
     private var lastNetworkFingerprint: String? = null
     private var lastMirroring: Boolean? = null
     private var rwxHits = 0
+    private var lastIme: String? = null
+    private var lastUsbAttached: Boolean? = null
     private var screenCaptureCallback: Any? = null
 
     override fun start() {
@@ -172,6 +174,11 @@ class AndroidShieldEngine private constructor(
         checkCredentialChange()
         checkForegroundApp()
         checkNetworkFingerprint()
+        checkClockChange()
+        checkWeakLock()
+        checkImeChange()
+        checkUsbChange()
+        if (hasSuspiciousModules()) onThreat(ShieldThreat.SUSPICIOUS_MODULE)
         // VPN 变更由回调单独触发
     }
 
@@ -270,24 +277,102 @@ class AndroidShieldEngine private constructor(
             context.packageManager.getInstalledApplications(PackageManager.GET_META_DATA).any {
                 it.packageName == xposedInstaller
             }
-        // Zygisk / Shamiko / LSPosed 隐藏框架特征（Magisk 隐藏后仍残留的挂载与数据目录）
+        // Zygisk / Shamiko / LSPosed / Riru / EdXposed / TaiChi 隐藏框架特征
         val zygiskPaths = listOf("/data/adb/zygisk", "/data/adb/modules/zygisk")
         val shamikoPaths = listOf("/data/adb/modules/shamiko", "/data/adb/shamiko")
         val lsposedPaths = listOf("/data/adb/lspd", "/data/adb/modules/lsposed")
+        val riruPaths = listOf("/data/adb/riru", "/data/adb/modules/riru-core", "/data/adb/modules/riru")
+        val edxposedPaths = listOf("/data/adb/modules/edxposed", "/data/adb/modules/edxposed-sandhook", "/data/adb/modules/edxposed-yahfa")
+        val taichiPaths = listOf("/data/adb/modules/taichi", "/data/adb/modules/me.weishu.exp")
         val lsposedPackages = listOf("org.lsposed.manager")
         val hasHiddenFramework = zygiskPaths.any { File(it).exists() } ||
             shamikoPaths.any { File(it).exists() } ||
             lsposedPaths.any { File(it).exists() } ||
+            riruPaths.any { File(it).exists() } ||
+            edxposedPaths.any { File(it).exists() } ||
+            taichiPaths.any { File(it).exists() } ||
             context.packageManager.getInstalledApplications(PackageManager.GET_META_DATA).any {
                 it.packageName == "org.lsposed.manager"
             }
+        // SELinux 进程域特征：magisk/zygisk 注入会改变进程 context
+        val suspiciousContext = try {
+            val ctx = java.io.File("/proc/self/attr/current").readText().trim()
+            ctx.contains("magisk") || ctx.contains("zygisk")
+        } catch (e: Exception) {
+            false
+        }
         return suPaths.any { File(it).exists() } ||
             hasMagisk ||
             hasXposed ||
             hasHiddenFramework ||
+            suspiciousContext ||
             System.getenv("PATH")?.split(":")?.any { dir ->
                 File(dir, "su").exists()
             } == true
+    }
+
+    /** 输入法变更检测：系统输入法切换（防被替换为键盘记录型 IME，advisory） */
+    private fun checkImeChange() {
+        try {
+            val ime = Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD) ?: ""
+            val prev = lastIme
+            if (prev != null && prev != ime && ime.isNotEmpty()) {
+                onThreat(ShieldThreat.IME_CHANGED)
+            }
+            if (ime.isNotEmpty()) lastIme = ime
+        } catch (e: Exception) {
+        }
+    }
+
+    /** USB 连接变化检测：USB 设备接入/移除（调试/数据提取窗口，advisory） */
+    private fun checkUsbChange() {
+        try {
+            val usb = context.getSystemService(Context.USB_SERVICE) as android.hardware.usb.UsbManager
+            val attached = usb.deviceList.isNotEmpty()
+            val prev = lastUsbAttached
+            if (prev != null && prev != attached) {
+                onThreat(ShieldThreat.USB_CHANGED)
+            }
+            lastUsbAttached = attached
+        } catch (e: Exception) {
+        }
+    }
+
+    /** 可疑可执行模块检测：maps 中非白名单目录的可执行文件映射（注入痕迹，advisory） */
+    internal fun hasSuspiciousModules(): Boolean {
+        return try {
+            val maps = java.io.File("/proc/self/maps").readText()
+            val allowed = listOf(
+                "/system/", "/apex/", "/vendor/", "/data/app/", "/data/user/",
+                "libsyna_shield", "libc.so", "linker", "libart", "libjavacore",
+                "libopenjdk", "libandroid", "libandroid_runtime", "liblog", "libz",
+                "libutils", "libbase", "libc++", "libm.so", "libdl", "libunwind",
+                "libcompiler", "libdexfile", "libnativeloader", "libclang", "libicu",
+                "libandroidicu", "libbinder", "libcutils", "libhardware", "libmem",
+                "libnativehelper", "libparcel", "libprocessgroup", "libpcre",
+                "libprofile", "libprocinfo", "libprotobuf", "libresource", "librs",
+                "libsigchain", "libstats", "libstdc++", "libsync", "libsysutils",
+                "libtextclassifier", "libunwindstack", "libutil", "libvixl",
+                "libxml2", "libziparchive", "libzlib", "libwebrtc", "libyuv",
+            )
+            var suspicious = false
+            val lines = maps.split("\n")
+            for (line in lines) {
+                if (line.isBlank()) continue
+                val parts = line.split(Regex("\\s+"))
+                if (parts.size < 6) continue
+                val perms = parts[1]
+                val path = parts[5]
+                if (!perms.contains("x")) continue
+                if (!path.startsWith("/")) continue
+                if (allowed.any { path.contains(it) }) continue
+                suspicious = true
+                break
+            }
+            suspicious
+        } catch (e: Exception) {
+            false
+        }
     }
 
     /** SELinux 状态：非强制模式 → 系统防护降级（低危提示） */

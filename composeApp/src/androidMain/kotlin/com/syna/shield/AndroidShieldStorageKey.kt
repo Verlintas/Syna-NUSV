@@ -61,9 +61,25 @@ actual object ShieldStorageKey {
         }
     }
 
+    private val integrityProbeCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
     actual fun decrypt(payload: ByteArray): ByteArray? {
         // Shield 门禁（fail-closed）：心跳停滞（检测线程被暂停/杀死）→ 拒绝解密
         if (!ShieldGate.isFresh()) return null
+        // 主动对抗：解密路径概率性完整性抽查（约每 8 次解密一次）——
+        // 攻击者 hook 检测线程后周期扫描可能失效，但解密是攻击者必经之路，
+        // 每次解密都是一个检测窗口（native 毫秒级开销）
+        if (integrityProbeCounter.incrementAndGet() % 8 == 0) {
+            try {
+                if (NativeShield.loaded) {
+                    val integrity = NativeShield.integrity()
+                    if (integrity and 1 != 0 || integrity and 2 != 0) {
+                        ShieldController.current?.reportThreat(ShieldThreat.SHIELD_TAMPERED)
+                    }
+                }
+            } catch (e: Throwable) {
+            }
+        }
         if (payload.size <= NONCE_LEN) return null
         // 先试会话密钥（数据级门禁），再试迁移中的上一代密钥（轮换窗口），
         // 最后回退主密钥（历史数据/未启用场景）

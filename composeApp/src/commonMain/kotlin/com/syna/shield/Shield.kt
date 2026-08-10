@@ -95,6 +95,21 @@ enum class ShieldThreat(
         "设备未启用锁屏",
         "设备未设置锁屏，生物识别保护不可用，会话安全等级降低",
     ),
+    IME_CHANGED(
+        "ime",
+        "检测到输入法变更",
+        "系统输入法发生变化，若被替换为恶意输入法可能记录按键",
+    ),
+    USB_CHANGED(
+        "usb",
+        "检测到 USB 连接变化",
+        "USB 设备接入/移除，可能被用于调试或数据提取",
+    ),
+    SUSPICIOUS_MODULE(
+        "module",
+        "检测到可疑可执行模块",
+        "进程加载了非系统目录的可执行模块，疑似注入",
+    ),
     SHIELD_TAMPERED(
         "tampered",
         "检测到安全设置被篡改",
@@ -195,6 +210,9 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.WEAK_LOCK,
     ShieldThreat.NETWORK_CHANGED,
     ShieldThreat.SELINUX_DISABLED,
+    ShieldThreat.IME_CHANGED,
+    ShieldThreat.USB_CHANGED,
+    ShieldThreat.SUSPICIOUS_MODULE,
     -> ThreatSeverity.LOW
 }
 
@@ -550,6 +568,7 @@ class ShieldController(
 
     // 会话密钥轮换：解锁成功后触发（前向安全——旧密钥全量迁移后失效）
     private var sessionRotateCallback: (() -> Unit)? = null
+    private var honeypotCallback: (() -> Unit)? = null
 
     // 双因子关闭：生物识别 + TOTP 通过后才真正关闭护盾（攻击者无法关闭已开启的护盾）
     private val disablingM = MutableStateFlow(false)
@@ -701,6 +720,11 @@ class ShieldController(
                         honeypotM.value = true
                         honeypotStreak = 0
                         recordEvent(threat, ShieldAction.HONEYPOT)
+                        // 主动数据污染：通知 App 写入诱饵消息
+                        try {
+                            honeypotCallback?.invoke()
+                        } catch (e: Exception) {
+                        }
                     }
                 }
                 setState(ShieldState.LOCKED)
@@ -712,11 +736,18 @@ class ShieldController(
         }
     }
 
-    /** 看门狗触发：检测/哨兵线程停滞 → 强制锁定（无论威胁列表状态） */
+    /** 看门狗触发：检测/哨兵线程停滞 → 强制锁定（无论威胁列表状态）+ 主动自愈 */
     private fun watchdogTrip() {
         if (!enabledM.value) return
         recordEvent(ShieldThreat.WATCHDOG_TRIP, ShieldAction.WATCHDOG)
         reportThreat(ShieldThreat.WATCHDOG_TRIP)
+        // 主动对抗：trip 后尝试重启检测扫描（自愈）——
+        // 若检测线程被暂停（非杀死），重启可恢复心跳；若被杀死，重启即重生
+        try {
+            engine.stop()
+            engine.start()
+        } catch (e: Exception) {
+        }
     }
 
     fun clearThreat(threat: ShieldThreat) {
@@ -972,6 +1003,11 @@ class ShieldController(
     /** 注册会话密钥轮换回调（解锁成功后触发；由 App 接入 SessionKeyStore 轮换 + 全量重写） */
     fun setSessionRotateCallback(callback: () -> Unit) {
         sessionRotateCallback = callback
+    }
+
+    /** 注册假锁激活回调（App 接入"诱饵消息写入"：污染攻击者视野） */
+    fun setHoneypotCallback(callback: () -> Unit) {
+        honeypotCallback = callback
     }
 
     /**
