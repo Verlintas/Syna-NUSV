@@ -161,7 +161,7 @@ class SynaServer(
                     ts = System.currentTimeMillis(),
                     body = synaJson.encodeToString(
                         ServerHello.serializer(),
-                        ServerHello(serverId, salt, "0.6.8", groupName),
+                        ServerHello(serverId, salt, "0.6.9", groupName),
                     ),
                 ),
             )
@@ -389,7 +389,7 @@ class SynaServer(
 
     private fun printBanner() {
         println("================================================")
-        println("  Syna 私人聊天服务器 v0.6.8")
+        println("  Syna 私人聊天服务器 v0.6.9")
         println("  群名称: $groupName")
         println("  端口:   ${boundPort}")
         println("  数据目录: ${dataDir.toAbsolutePath()}")
