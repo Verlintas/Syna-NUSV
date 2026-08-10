@@ -24,6 +24,8 @@ actual object ShieldStorageKey {
             if (Files.exists(f)) {
                 val bytes = Files.readAllBytes(f)
                 if (bytes.size == 32) return bytes
+                // 尺寸异常：隔离旧文件（不静默覆盖——否则旧密文永久不可解），重建新密钥
+                Files.move(f, Paths.get(f.toString() + ".corrupt"), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             }
             val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
             Files.createDirectories(f.parent)

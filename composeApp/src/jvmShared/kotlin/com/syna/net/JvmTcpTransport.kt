@@ -119,9 +119,15 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
 
     private suspend fun readLoop(socket: Socket) {
         try {
+            // 入站连接读超时：网络分区/对端硬崩溃后不再永久占用槽位
+            socket.soTimeout = 90_000
             val input = DataInputStream(socket.getInputStream())
             while (true) {
-                val length = input.readInt()
+                val length = try {
+                    input.readInt()
+                } catch (e: java.net.SocketTimeoutException) {
+                    break // 静默连接超时关闭
+                }
                 if (length < 0 || length > 16 * 1024 * 1024) break
                 val bytes = ByteArray(length)
                 input.readFully(bytes)

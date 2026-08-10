@@ -66,28 +66,16 @@ actual object SessionKeyStore {
         }
     }
 
-    /** 初始化解密 Cipher（认证窗口内成功；未认证抛异常返回 null） */
-    private fun authDecryptCipher(): Cipher? {
-        val key = authKey() ?: return null
-        return try {
+    /** 认证成功回调：一次性读取 blob 并解密缓存会话密钥（防 TOCTOU 双重读取错配） */
+    actual fun captureAuth() {
+        try {
+            val key = authKey() ?: return
             val f = blobFile()
-            if (!f.exists() || f.length() <= NONCE_LEN) return null
+            if (!f.exists() || f.length() <= NONCE_LEN) return
             val payload = f.readBytes()
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             val nonce = payload.copyOfRange(0, NONCE_LEN)
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, nonce))
-            cipher
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    /** 认证成功回调：立即解 blob 缓存会话密钥（认证窗口刚刷新，必然成功） */
-    actual fun captureAuth() {
-        try {
-            val cipher = authDecryptCipher() ?: return
-            val f = blobFile()
-            val payload = f.readBytes()
             val plain = cipher.doFinal(payload.copyOfRange(NONCE_LEN, payload.size))
             if (plain.size == SESSION_KEY_LEN) {
                 cachedSessionKey = plain

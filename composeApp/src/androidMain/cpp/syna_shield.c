@@ -221,7 +221,7 @@ static int read_tracer_pid(void) {
 }
 
 static int scan_maps(const char *needle) {
-    char buf[16384];
+    char buf[65536];
     int n = sys_read_file("/proc/self/maps", buf, (int)sizeof(buf) - 1);
     if (n <= 0) return 0;
     buf[n] = 0;
@@ -439,7 +439,7 @@ static void verify_self_entries(void) {
  * - 排除 ART JIT（memfd:jit/jit-region/anon:jit）、系统库、自身 so
  */
 static int scan_rwx_anon(void) {
-    char buf[32768];
+    char buf[131072];
     int n = sys_read_file("/proc/self/maps", buf, (int)sizeof(buf) - 1);
     if (n <= 0) return 0;
     buf[n] = 0;

@@ -100,10 +100,12 @@ fun App() {
     LaunchedEffect(Unit) {
         engine.start()
     }
-    // 页面销毁（如 Android 旋转）时彻底释放引擎，避免重复实例抢占端口
+    // 页面销毁（如 Android 旋转）时彻底释放引擎与护盾控制器，
+    // 避免重复实例抢占端口/泄漏看门狗线程
     DisposableEffect(Unit) {
         onDispose {
             engine.stop()
+            shield.stop()
             scope.coroutineContext[Job]?.cancel()
         }
     }

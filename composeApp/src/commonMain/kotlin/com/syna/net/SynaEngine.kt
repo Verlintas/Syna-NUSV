@@ -38,6 +38,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
@@ -46,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.7.5",
+    private val version: String = "0.7.6",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -1149,16 +1151,21 @@ class SynaEngine(
         }
     }
 
-    private suspend fun sendReceipt(peerId: String, msgId: String) {        val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
-        val frame = TransportFrame(
-            type = FrameType.READ,
-            from = userId,
-            to = peerId,
-            msgId = newMsgId(),
-            ts = System.currentTimeMillis(),
-            body = msgId,
-        )
-        send(peer, frame)
+    private suspend fun sendReceipt(peerId: String, msgId: String) {
+        try {
+            val peer = peersM.value.firstOrNull { it.id == peerId } ?: return
+            val frame = TransportFrame(
+                type = FrameType.READ,
+                from = userId,
+                to = peerId,
+                msgId = newMsgId(),
+                ts = System.currentTimeMillis(),
+                body = msgId,
+            )
+            send(peer, frame)
+        } catch (e: Exception) {
+            // 回执发送失败不杀死收信管线
+        }
     }
 
     private fun updatePeer(ann: DiscoveryAnnouncement, ip: String, now: Long, online: Boolean) {
@@ -1389,8 +1396,19 @@ class SynaEngine(
         outboxM.updateMap { it + (peerId to ((it[peerId] ?: emptyList()) + frame)) }
     }
 
+    private val outboxFlushLock = kotlinx.coroutines.sync.Mutex()
+
     private suspend fun flushOutbox(peer: Peer) {
-        val frames = outboxM.value[peer.id] ?: return
+        // 互斥：discovery 收集器与 announcement 收集器可能并发触发，防止双重发送
+        outboxFlushLock.withLock {
+            val frames = outboxM.value[peer.id]
+            if (frames != null) {
+                flushFramesLocked(peer, frames)
+            }
+        }
+    }
+
+    private suspend fun flushFramesLocked(peer: Peer, frames: List<TransportFrame>) {
         val sent = mutableListOf<TransportFrame>()
         for (f in frames) {
             try {
