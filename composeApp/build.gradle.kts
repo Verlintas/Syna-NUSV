@@ -16,6 +16,11 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
 }
 
+// 测试串行执行：并行跑测试类时多播/UDP 发现互相串扰（环境 flaky 的根因）
+tasks.withType<Test>().configureEach {
+    maxParallelForks = 1
+}
+
 kotlin {
     androidTarget {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
@@ -105,8 +110,8 @@ android {
                 abiFilters("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
             }
         }
-        versionCode = 14
-        versionName = "0.8.1"
+        versionCode = 15
+        versionName = "0.8.2"
         // 官方签名指纹（SHA-256 十六进制）：release 签名 keystore 固定，
         // 运行时校验 APK 签名一致性，防止重打包/重新签名绕过护盾
         buildConfigField("String", "SYNA_SIGNATURE_HASH", "\"745317298590e69ddd48c94902c24209918fe1c19e104bb3ce1ca05263c2c4d7\"")
@@ -170,7 +175,7 @@ val serverFatJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "com.syna.server.ServerMainKt"
-        attributes["Implementation-Version"] = "0.8.1"
+        attributes["Implementation-Version"] = "0.8.2"
     }
     from(kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs)
     from(configurations.getByName("desktopRuntimeClasspath").map { file ->

@@ -181,7 +181,7 @@ class SynaServer(
                     ts = System.currentTimeMillis(),
                     body = synaJson.encodeToString(
                         ServerHello.serializer(),
-                        ServerHello(serverId, salt, "0.8.1", groupName),
+                        ServerHello(serverId, salt, "0.8.2", groupName),
                     ),
                 ),
             )
@@ -428,7 +428,7 @@ class SynaServer(
 
     private fun printBanner() {
         println("================================================")
-        println("  Syna 私人聊天服务器 v0.8.1")
+        println("  Syna 私人聊天服务器 v0.8.2")
         println("  群名称: $groupName")
         println("  端口:   ${boundPort}")
         println("  数据目录: ${dataDir.toAbsolutePath()}")
@@ -482,13 +482,14 @@ class SynaServer(
         val member = synchronized(memberMap) { memberMap[userId] }
         val kickFrame = TransportFrame(
             type = FrameType.GROUP_KICK,
-            from = groupId,
+            // from = 服务器身份（客户端以 creatorId==serverId 校验管理权限）
+            from = serverId,
             to = groupId,
             msgId = UUID.randomUUID().toString(),
             ts = System.currentTimeMillis(),
             body = synaJson.encodeToString(
-                GroupMemberEvent.serializer(),
-                GroupMemberEvent(groupId, userId, member?.name ?: userId),
+                com.syna.net.GroupAdminEvent.serializer(),
+                com.syna.net.GroupAdminEvent(groupId, userId, com.syna.net.GroupAdminAction.KICK),
             ),
         )
         scope.launch {
@@ -497,6 +498,9 @@ class SynaServer(
                     it.sendRaw(kickFrame)
                 } catch (e: Exception) {
                 }
+                // 延迟关闭：给接收端 readLoop 处理踢人帧的时间，
+                // 防止"帧在 TCP 缓冲中未读 + 立即 close"竞争导致踢人通知丢失
+                kotlinx.coroutines.delay(500)
                 it.close()
             }
             broadcast(kickFrame, except = session)

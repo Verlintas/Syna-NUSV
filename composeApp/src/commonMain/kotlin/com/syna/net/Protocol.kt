@@ -33,6 +33,8 @@ const val TCP_HEARTBEAT_MS = 10_000L
 const val BURN_DISPLAY_MS = 8_000L
 const val BURN_SWEEP_TTL_MS = 60_000L // 未查看的焚毁消息 60s 后兜底烧毁
 const val MAX_FRAME_AGE_MS = 10 * 60_000L // 实时帧时间窗口（重放防护）
+const val ACK_RETRY_INTERVAL_MS = 3_000L // ACK 重传间隔
+const val ACK_MAX_RETRIES = 3 // ACK 最大重传次数
 const val BURN_ACK_FALLBACK_MS = 60_000L
 const val SERVER_CHANNEL_INFO = "syna-server-channel"
 const val SERVER_GROUP_INFO = "syna-server-group"
@@ -56,6 +58,9 @@ enum class FrameType {
     TYPING,
     READ,
     ACK,
+    GROUP_KICK,
+    GROUP_MUTE,
+    GROUP_ADMIN,
     PING,
     PONG,
     BURN_ACK,
@@ -63,7 +68,6 @@ enum class FrameType {
     GROUP_JOIN,
     GROUP_LEAVE,
     GROUP_DISSOLVE,
-    GROUP_KICK,
     GROUP_MESSAGE,
     EPHEMERAL_SESSION,
     RECALL,
@@ -137,7 +141,27 @@ data class GroupInfo(
     val memberIds: List<String>,
     val memberNames: Map<String, String>,
     val ts: Long,
+    /** 管理员列表（创建者可指定；默认空=仅创建者管理） */
+    val admins: List<String> = emptyList(),
 )
+
+@Serializable
+data class GroupAdminEvent(
+    val groupId: String,
+    val targetId: String,
+    val action: GroupAdminAction,
+    /** 禁言时长（毫秒，0=解除禁言） */
+    val durationMs: Long = 0L,
+)
+
+@Serializable
+enum class GroupAdminAction {
+    KICK,
+    MUTE,
+    UNMUTE,
+    SET_ADMIN,
+    REMOVE_ADMIN,
+}
 
 @Serializable
 data class GroupMemberEvent(

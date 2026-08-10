@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.8.1",
+    private val version: String = "0.8.2",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -88,8 +88,26 @@ class SynaEngine(
     private val groupsM = MutableStateFlow<List<GroupInfo>>(emptyList())
     val groups: StateFlow<List<GroupInfo>> = groupsM.asStateFlow()
 
+    // 群禁言：groupId → (memberId → 解禁时间戳)
+    private val groupMutesM = MutableStateFlow<Map<String, Map<String, Long>>>(emptyMap())
+    val groupMutes: StateFlow<Map<String, Map<String, Long>>> = groupMutesM.asStateFlow()
+
     private val pendingBurnsM = MutableStateFlow<List<Triple<String, String, String>>>(emptyList())
     private val burnSweepMarks = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    // 消息级 ACK/重传（P2P 1:1）：msgId → 待确认帧（重传用）
+    private class PendingAck(val peerId: String, val frame: TransportFrame) {
+        var retries = 0
+        var lastSentAt = System.currentTimeMillis()
+    }
+
+    private val pendingAcksM = MutableStateFlow<Map<String, PendingAck>>(emptyMap())
+    /** 待确认消息数（UI 可展示） */
+    val pendingAckCount: StateFlow<Int> = MutableStateFlow(0).also { flow ->
+        scope.launch {
+            pendingAcksM.collect { flow.value = it.size }
+        }
+    }
 
     private val outboxM = MutableStateFlow<Map<String, List<TransportFrame>>>(emptyMap())
     val outbox: StateFlow<Map<String, List<TransportFrame>>> = outboxM.asStateFlow()
@@ -368,11 +386,15 @@ class SynaEngine(
                         if (frame.burn) "[阅后即焚消息]" else (frame.body ?: "").take(80),
                     )
                 }
+                // 消息级 ACK：1:1 送达确认（P2P 通道；群聊/服务器通道不走此路径）
+                sendAck(frame.from, frame.msgId)
             }
             FrameType.GROUP_MESSAGE -> {
                 val groupId = frame.to
                 val group = groupsM.value.firstOrNull { it.id == groupId }
                 if (group != null) {
+                    // 禁言过滤：被禁言成员的群消息不显示（mesh 下的本地执行）
+                    if (isMuted(groupId, frame.from)) return
                     val senderName = group.memberNames[frame.from] ?: peerName
                     chatStore.addIncoming(
                         peerId = groupId,
@@ -416,6 +438,21 @@ class SynaEngine(
                 val joinEvent = GroupMemberEvent(groupId = group.id, memberId = userId, memberName = username)
                 group.memberIds.filter { it != userId && it != frame.from }
                     .forEach { memberId -> sendGroupEvent(memberId, FrameType.GROUP_JOIN, joinEvent) }
+            }
+            FrameType.GROUP_KICK, FrameType.GROUP_MUTE, FrameType.GROUP_ADMIN -> {
+                val event = try {
+                    synaJson.decodeFromString(GroupAdminEvent.serializer(), frame.body ?: return)
+                } catch (e: Exception) {
+                    return
+                }
+                val group = groupsM.value.firstOrNull { it.id == event.groupId }
+                // 权限校验：仅创建者/管理员的管理帧被接受
+                if (group != null) {
+                    val fromIsAdmin = group.creatorId == frame.from || group.admins.contains(frame.from)
+                    if (fromIsAdmin) {
+                        applyGroupAdminAction(event)
+                    }
+                }
             }
             FrameType.GROUP_JOIN -> {
                 val event = try {
@@ -516,6 +553,10 @@ class SynaEngine(
                     }
                 }
             }
+            FrameType.ACK -> frame.body?.let { msgId ->
+                // 送达确认：停止该消息的重传追踪
+                pendingAcksM.updateMap { it - msgId }
+            }
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
             FrameType.BURN_ACK -> frame.body?.let { msgId ->
                 // 防伪造：仅"我发出的"且"来自对话对端"的确认才清除焚毁副本
@@ -573,6 +614,115 @@ class SynaEngine(
             }
         } catch (e: Exception) {
         }
+    }
+
+    /** 群权限：创建者或管理员 */
+    fun isGroupAdmin(groupId: String, memberId: String = userId): Boolean {
+        val group = groupsM.value.firstOrNull { it.id == groupId } ?: return false
+        return group.creatorId == memberId || group.admins.contains(memberId)
+    }
+
+    /** 广播群管理事件（仅创建者/管理员可发起；mesh 下接收方校验 from 权限） */
+    private suspend fun sendGroupAdminAction(groupId: String, targetId: String, action: GroupAdminAction, durationMs: Long = 0L) {
+        if (!isGroupAdmin(groupId)) return
+        val event = GroupAdminEvent(groupId, targetId, action, durationMs)
+        val frame = TransportFrame(
+            type = when (action) {
+                GroupAdminAction.KICK -> FrameType.GROUP_KICK
+                GroupAdminAction.MUTE, GroupAdminAction.UNMUTE -> FrameType.GROUP_MUTE
+                GroupAdminAction.SET_ADMIN, GroupAdminAction.REMOVE_ADMIN -> FrameType.GROUP_ADMIN
+            },
+            from = userId,
+            to = groupId,
+            msgId = newMsgId(),
+            ts = System.currentTimeMillis(),
+            body = synaJson.encodeToString(GroupAdminEvent.serializer(), event),
+        )
+        // 广播给所有成员
+        val group = groupsM.value.firstOrNull { it.id == groupId } ?: return
+        group.memberIds.filter { it != userId }.forEach { memberId ->
+            val peer = peersM.value.firstOrNull { it.id == memberId } ?: return@forEach
+            try {
+                send(peer, frame)
+            } catch (e: Exception) {
+            }
+        }
+        // 本地同步执行
+        applyGroupAdminAction(event)
+    }
+
+    /** 踢出成员（创建者/管理员） */
+    suspend fun kickFromGroup(groupId: String, targetId: String) {
+        sendGroupAdminAction(groupId, targetId, GroupAdminAction.KICK)
+    }
+
+    /** 禁言/解除禁言（创建者/管理员） */
+    suspend fun muteMember(groupId: String, targetId: String, durationMs: Long = 60 * 60 * 1000L) {
+        sendGroupAdminAction(groupId, targetId, if (durationMs > 0) GroupAdminAction.MUTE else GroupAdminAction.UNMUTE, durationMs)
+    }
+
+    /** 设置/移除管理员（仅创建者） */
+    suspend fun setGroupAdmin(groupId: String, targetId: String, admin: Boolean) {
+        sendGroupAdminAction(groupId, targetId, if (admin) GroupAdminAction.SET_ADMIN else GroupAdminAction.REMOVE_ADMIN)
+    }
+
+    /** 应用群管理动作（本地 + 接收方共用） */
+    private fun applyGroupAdminAction(event: GroupAdminEvent) {
+        when (event.action) {
+            GroupAdminAction.KICK -> {
+                if (event.targetId == userId) {
+                    // 我被踢出：移除群
+                    groupsM.updateList { list -> list.filterNot { it.id == event.groupId } }
+                    notifyMessage("Syna", "你已被移出群聊")
+                } else {
+                    groupsM.updateList { list ->
+                        list.map { g ->
+                            if (g.id == event.groupId) {
+                                g.copy(
+                                    memberIds = g.memberIds.filterNot { it == event.targetId },
+                                    memberNames = g.memberNames - event.targetId,
+                                    admins = g.admins.filterNot { it == event.targetId },
+                                )
+                            } else g
+                        }
+                    }
+                }
+            }
+            GroupAdminAction.MUTE -> {
+                groupMutesM.updateMap { map ->
+                    val inner = map[event.groupId] ?: emptyMap()
+                    map + (event.groupId to (inner + (event.targetId to (System.currentTimeMillis() + event.durationMs))))
+                }
+            }
+            GroupAdminAction.UNMUTE -> {
+                groupMutesM.updateMap { map ->
+                    val inner = map[event.groupId] ?: emptyMap()
+                    map + (event.groupId to (inner - event.targetId))
+                }
+            }
+            GroupAdminAction.SET_ADMIN -> {
+                groupsM.updateList { list ->
+                    list.map { g ->
+                        if (g.id == event.groupId && event.targetId !in g.admins) {
+                            g.copy(admins = g.admins + event.targetId)
+                        } else g
+                    }
+                }
+            }
+            GroupAdminAction.REMOVE_ADMIN -> {
+                groupsM.updateList { list ->
+                    list.map { g ->
+                        if (g.id == event.groupId) g.copy(admins = g.admins.filterNot { it == event.targetId }) else g
+                    }
+                }
+            }
+        }
+    }
+
+    /** 成员是否处于禁言期 */
+    fun isMuted(groupId: String, memberId: String): Boolean {
+        val until = groupMutesM.value[groupId]?.get(memberId) ?: return false
+        return until > System.currentTimeMillis()
     }
 
     suspend fun createGroup(name: String, memberIds: List<String>): String {
@@ -1080,6 +1230,13 @@ class SynaEngine(
             try {
                 sendToConversation(conversationId, frame)
                 chatStore.updateProgress(fileId, ((i + 1) * 100) / totalChunks)
+                // 最后一帧：调度文件级 ACK 重传（P2P 1:1）
+                if (i == totalChunks - 1 && groupsM.value.none { it.id == conversationId } && serverSession?.groupId != conversationId) {
+                    val peer = peersM.value.firstOrNull { it.id == conversationId }
+                    if (peer != null) {
+                        scheduleAckRetry(fileId, peer, frame)
+                    }
+                }
             } catch (e: Exception) {
                 failed = true
                 synaLog("File") { "发送失败 chunk=$i: ${e.message}" }
@@ -1185,6 +1342,8 @@ class SynaEngine(
                 preview = if (kind == MessageKind.IMAGE) "🖼 ${assembler.fileName}" else "📄 ${assembler.fileName}",
             )
             synaLog("File") { "received ${assembler.fileName} (${assembler.fileSize}B) -> $path" }
+            // 文件送达确认（发送方据此停止重传）
+            sendAck(frame.from, fc.fileId)
         }
     }
 
@@ -1194,6 +1353,23 @@ class SynaEngine(
             notifyMessage("🔒 Syna 已锁定", "收到新消息（Shield 锁定期间不显示内容）")
         } else {
             notifyMessage(title, body)
+        }
+    }
+
+    /** 回 ACK（送达确认，1:1 P2P 通道；发送方据此停止重传） */
+    private suspend fun sendAck(to: String, msgId: String) {
+        try {
+            val peer = peersM.value.firstOrNull { it.id == to } ?: return
+            val ack = TransportFrame(
+                type = FrameType.ACK,
+                from = userId,
+                to = to,
+                msgId = newMsgId(),
+                ts = System.currentTimeMillis(),
+                body = msgId,
+            )
+            sendNow(peer, ack)
+        } catch (e: Exception) {
         }
     }
 
@@ -1239,6 +1415,11 @@ class SynaEngine(
     }
 
     private fun sweep() {
+        // ACK 待确认超时清理：超 60s 未确认且不再重传的条目移除
+        val ackNow = System.currentTimeMillis()
+        pendingAcksM.updateMap { map ->
+            map.filterNot { (_, a) -> ackNow - a.lastSentAt > 60_000L && a.retries >= ACK_MAX_RETRIES }
+        }
         // pendingBurns 兜底：超过 TTL 未查看的焚毁消息直接本地烧毁并回 ACK
         // （防未打开会话中的 burn 消息无限累积）
         val sweepNow = System.currentTimeMillis()
@@ -1434,6 +1615,37 @@ class SynaEngine(
             body = publicKeyB64,
         )
         send(Peer(id = peerId, username = "", device = "", addr = addr, version = "", lastSeen = 0, online = true), frame)
+    }
+
+    /**
+     * 消息级 ACK/重传：发送后 [ACK_RETRY_INTERVAL_MS] 无 ACK → 重传
+     * （最多 [ACK_MAX_RETRIES] 次），仍无确认 → 入离线队列等重连补发
+     * （接收方按 msgId 去重，重复帧无害）。
+     */
+    private fun scheduleAckRetry(msgId: String, peer: Peer, frame: TransportFrame) {
+        // 仅 P2P 1:1 路径启用（群聊/服务器通道由各自机制兜底）
+        pendingAcksM.updateMap { it + (msgId to PendingAck(peer.id, frame)) }
+        scope.launch {
+            kotlinx.coroutines.delay(ACK_RETRY_INTERVAL_MS)
+            val ack = pendingAcksM.value[msgId] ?: return@launch
+            if (ack.retries >= ACK_MAX_RETRIES) {
+                // 彻底无确认：入离线队列（重连后补发），放弃追踪
+                pendingAcksM.updateMap { it - msgId }
+                enqueueOutbox(peer.id, frame)
+                synaLog("Ack") { "no ACK for $msgId, queued to outbox" }
+                return@launch
+            }
+            ack.retries++
+            ack.lastSentAt = System.currentTimeMillis()
+            try {
+                sendNow(peer, frame)
+                // 继续等待下一轮
+                scheduleAckRetry(msgId, peer, frame)
+            } catch (e: Exception) {
+                pendingAcksM.updateMap { it - msgId }
+                enqueueOutbox(peer.id, frame)
+            }
+        }
     }
 
     private suspend fun send(peer: Peer, frame: TransportFrame) {

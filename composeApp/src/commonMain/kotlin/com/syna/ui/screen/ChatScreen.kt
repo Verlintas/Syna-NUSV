@@ -26,6 +26,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +50,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -93,8 +96,13 @@ fun ChatScreen(
     val typing by engine.typing.collectAsState()
     // 密钥指纹核对对话框（存对端公钥）
     var fingerprintDialog by remember { mutableStateOf<String?>(null) }
+    // 群管理对话框
+    var showAdminDialog by remember { mutableStateOf(false) }
     val peer = peers.firstOrNull { it.id == peerId }
     val group = groups.firstOrNull { it.id == peerId }
+    // 群权限（顶部计算，供管理对话框使用）
+    val isCreator = group?.creatorId == engine.userId
+    val isAdmin = engine.isGroupAdmin(peerId)
     val isGroup = group != null
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -214,10 +222,19 @@ fun ChatScreen(
                     )
                 }
             }
-            // 群管理：群主可解散，成员可退出（服务器群除外）
+            // 群管理：群主/管理员可管理成员（踢出/禁言/设管理员）；群主可解散，成员可退出
             if (isGroup && !engine.isServerGroup(peerId)) {
-                val isCreator = group?.creatorId == engine.userId
                 var showLeaveDialog by remember { mutableStateOf(false) }
+                if (isAdmin) {
+                    Text(
+                        text = "管理",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .clickable { showAdminDialog = true }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                    )
+                }
                 Text(
                     text = if (isCreator) "解散" else "退出",
                     style = MaterialTheme.typography.bodyMedium,
@@ -530,6 +547,51 @@ fun ChatScreen(
     }
     } // BoxWithConstraints
 
+        // 群管理：成员列表 + 踢出/禁言/设管理员（仅创建者/管理员）
+        if (showAdminDialog && group != null) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showAdminDialog = false },
+                title = { Text("群管理 · ${group.name}") },
+                text = {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        group.memberIds.filter { it != engine.userId }.forEach { memberId ->
+                            val mName = group.memberNames[memberId] ?: memberId
+                            val isAdminMember = group.admins.contains(memberId)
+                            val muted = engine.isMuted(peerId, memberId)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "$mName${if (memberId == group.creatorId) " 👑" else if (isAdminMember) " ⭐" else ""}${if (muted) " 🔇" else ""}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (memberId != group.creatorId) {
+                                    TextButton(onClick = {
+                                        kotlinx.coroutines.GlobalScope.launch { engine.kickFromGroup(peerId, memberId) }
+                                    }) { Text("踢出", color = MaterialTheme.colorScheme.error) }
+                                    TextButton(onClick = {
+                                        kotlinx.coroutines.GlobalScope.launch { engine.muteMember(peerId, memberId, if (muted) 0L else 60 * 60 * 1000L) }
+                                    }) { Text(if (muted) "解禁" else "禁言") }
+                                    if (isCreator) {
+                                        TextButton(onClick = {
+                                            kotlinx.coroutines.GlobalScope.launch { engine.setGroupAdmin(peerId, memberId, !isAdminMember) }
+                                        }) { Text(if (isAdminMember) "撤管" else "设管") }
+                                    }
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { showAdminDialog = false }) { Text("关闭") }
+                },
+            )
+        }
         // 密钥指纹核对：完整指纹 + 信任新密钥（重装/确认无中间人后重新固定）
         fingerprintDialog?.let { key ->
             androidx.compose.material3.AlertDialog(
