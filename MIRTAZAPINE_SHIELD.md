@@ -116,7 +116,7 @@ prevents an attacker from predicting exactly when the next scan happens.
 
 | Detector | Signals checked | Platform |
 |---|---|---|
-| `isRooted` | `su` binaries (`/system/bin/su`, `/system/xbin/su`, `/sbin/su`), `Superuser.apk`, init.d script; Magisk paths (`/sbin/.magisk`, `/data/adb/magisk`, `/data/adb/.magisk`, magisk logs) & packages (`com.topjohnwu.magisk`, `com.magisk`); Xposed (`/system/framework/xposed.jar`, `libxposed_art.so`, installer package); Zygisk (`/data/adb/zygisk`, `/data/adb/modules/zygisk`); Shamiko (`/data/adb/modules/shamiko`, `/data/adb/shamiko`); LSPosed (`/data/adb/lspd`, `/data/adb/modules/lsposed`, `org.lsposed.manager`); `su` in `$PATH` | Android |
+| `isRooted` | `su` binaries (`/system/bin/su`, `/system/xbin/su`, `/sbin/su`), `Superuser.apk`, init.d script; Magisk paths (`/sbin/.magisk`, `/data/adb/magisk`, `/data/adb/.magisk`, magisk logs) & packages (`com.topjohnwu.magisk`, `com.magisk`); Xposed (`/system/framework/xposed.jar`, `libxposed_art.so`, installer package); Zygisk (`/data/adb/zygisk`, `/data/adb/modules/zygisk`); Shamiko (`/data/adb/modules/shamiko`, `/data/adb/shamiko`); LSPosed (`/data/adb/lspd`, `/data/adb/modules/lsposed`, `org.lsposed.manager`); **Riru / EdXposed / TaiChi** data dirs; **SELinux process-context** (magisk/zygisk domains); `su` in `$PATH` | Android |
 | `hasFrida` | `/data/local/tmp/frida-server`, `/data/local/tmp/frida`, `/data/local/tmp/re.frida.server`; TCP connect to 127.0.0.1:27042 and 27043 (300 ms timeout each) | Android |
 | `isEmulator` | `Build.FINGERPRINT` containing `generic`; `MODEL` `google_sdk`/`Emulator`/`Android SDK built for`; `BRAND` `generic`; `Build.TAGS` containing `test-keys`; `Build.HARDWARE` `goldfish`/`ranchu`/`vbox86` | Android |
 | `isDebugMode` | `Settings.Global.ADB_ENABLED` == 1; `Debug.isDebuggerConnected()` | Android |
@@ -250,7 +250,17 @@ Why a ring and not a single watcher: killing **any one** thread leaves its slot
 stalled and its neighbor reports it. Killing **all three** stalls the engine heartbeat
 as well — the gate fails closed. There is no "kill the watcher" win.
 
-### 4.3 In-memory state HMAC
+### 4.3 Active countermeasures (since v0.7.8)
+
+Beyond passive detection, the Shield actively fights back:
+
+| Countermeasure | Mechanism |
+|---|---|
+| **Operation-triggered integrity probing** | Every ~8th decrypt runs a native code-integrity check. The periodic scanner can be paused by an attacker — but the decrypt path is one they must use, turning every decrypt into a detection window (millisecond overhead) |
+| **Watchdog self-healing** | A watchdog trip immediately restarts the detection loop — a paused scanner is revived, a killed one reborn; the heartbeat resumes instead of staying dead |
+| **Honeypot data pollution** | Engaging the fake-lock writes decoy messages into the local store (audited). An attacker who eventually unlocks faces polluted data and cannot tell real records from decoys |
+
+### 4.5 In-memory state HMAC
 
 `ShieldState` transitions write an HMAC signature of the state name; `stateIntact()`
 re-verifies on every critical path. If the in-memory state was rewritten (e.g. a hook
@@ -562,6 +572,9 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.7.3 | **Native anti-hook**: syscall-direct I/O (GOT/PLT/LD_PRELOAD dead), own-code-segment memory-vs-disk hashing (inline-hook detection), export-entry self-verification, libc entry verification — bitmask wired into SHIELD_TAMPERED / FRIDA_DETECTED |
 | v0.7.4 | **Rotation & unkillable shield**: session-key rotation on every unlock (forward secrecy: old memory dumps die), dual-factor disable (biometrics + TOTP — an attacker cannot turn an enabled shield off, even from the lock screen), anonymous rwx segment detection (bit2), AWAITING_TOTP lock-screen rendering fix |
 | v0.7.5 | **Full review fix release**: 2FA bypass closed (no unlock while awaiting code; clearThreat cannot skip it), session-key capture moved after TOTP verification, biometric fail double-count fixed, server relay `from` forgery closed, BURN_ACK/RECALL sender validation, FILE_CHUNK bounds + pipeline isolation, TOTP-enable failure guard, DEBUG_MODE downgraded to HIGH, honeypot streak no longer reset by re-reports, watchdog one-shot trip + restart reset |
+| v0.7.6 | Review second pass: shield lifecycle on dispose, desktop key quarantine, captureAuth TOCTOU, native maps buffers, outbox mutex, receipt/key-frame guards, inbound TCP read timeout |
+| v0.7.7 | All client bugs closed: TCP-failure → offline queue, bidirectional heartbeat (PONG), burn TTL fallback, server-group disconnect awareness, discovery resilience, quote-bar/image-decode/EDT UI fixes, CA user-cert-only, mirroring both directions, exact process matching |
+| v0.7.8 | **Expanded detection & active countermeasures**: Riru/EdXposed/TaiChi + SELinux domain in root detection, IME/USB/suspicious-module advisories (LOW); **operation-triggered integrity probing on the decrypt path**, **watchdog self-healing** (scanner restart), **honeypot data pollution** (decoy messages) |
 
 ---
 
