@@ -311,9 +311,18 @@ See [3.6](#36-screen-attack-surface). Additional behavior:
   handler).
 - **Auto re-lock after unlock:** 5-minute unlock TTL (`UNLOCK_TTL_MS`), plus a 30 s
   re-lock if a CRITICAL threat is still present.
-- **Self-destruct protocol:** on a CRITICAL signal, if enabled: all local chat history
-  and received files are destroyed, clipboard and notifications cleared, audit event
-  `SELF_DESTRUCT` written. Each threat triggers destruction only once.
+- **Self-destruct protocol (deep, anti-forensics since v0.8.0):** on a CRITICAL
+  signal, if enabled:
+  1. `SecureWipe` — random-data overwrite ×2 passes + `fsync` + delete + parent-dir
+     `fsync` on chat history (incl. `.tmp` remnants), received files, audit log
+     (+ fail counter), TOTP seed, session blob, dex/version baselines, crash log;
+  2. `ShieldStorageKey.wipe()` — master & session-auth keys deleted from the
+     **Keystore/TEE**: even forensically recovered ciphertext is **permanently
+     undecryptable** (desktop: key file securely overwritten);
+  3. audit event written first, then the audit file itself wiped — no trail left.
+  Clipboard and notifications cleared. Each threat triggers destruction only once.
+  Honest limit: SSD wear leveling means overwrite alone cannot be guaranteed at block
+  level — the real guarantee is Keystore key destruction + Android FBE.
 
 ### 7.1 Honeypot fake-lock (injection-class threats)
 
@@ -577,6 +586,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.7.7 | All client bugs closed: TCP-failure → offline queue, bidirectional heartbeat (PONG), burn TTL fallback, server-group disconnect awareness, discovery resilience, quote-bar/image-decode/EDT UI fixes, CA user-cert-only, mirroring both directions, exact process matching |
 | v0.7.8 | **Expanded detection & active countermeasures**: Riru/EdXposed/TaiChi + SELinux domain in root detection, IME/USB/suspicious-module advisories (LOW); **operation-triggered integrity probing on the decrypt path**, **watchdog self-healing** (scanner restart), **honeypot data pollution** (decoy messages) |
 | v0.7.9 | **Active crash defense**: native `SIGABRT` on high-confidence signals (ptrace attach / code or libc hooked) — no stable debugging window; usage-access grant now targets Syna (`EXTRA_APP_PACKAGE`); full permission self-check on every launch |
+| v0.8.0 | **Deep self-destruct (anti-forensics)**: `SecureWipe` 2-pass random overwrite + fsync on every sensitive file, **Keystore/TEE storage-key destruction** (recovered ciphertext permanently undecryptable), audit log self-wiped after the event, TOTP seed / session blob / baselines / crash log all wiped |
 
 ---
 
