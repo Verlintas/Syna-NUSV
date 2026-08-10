@@ -63,6 +63,7 @@ fun App() {
     val shieldHealth by shield.health.collectAsState()
     val shieldEvents by shield.events.collectAsState()
     val shieldHoneypot by shield.honeypot.collectAsState()
+    val shieldTotpEnabled by shield.totpEnabled.collectAsState()
     LaunchedEffect(Unit) {
         shield.start()
         // 自我保护：启动时检测安全设置是否被篡改/存储被清除
@@ -128,6 +129,9 @@ fun App() {
             shieldHealth = shieldHealth,
             shieldEvents = shieldEvents,
             shieldHoneypot = shieldHoneypot,
+            shieldTotpEnabled = shieldTotpEnabled,
+            onShieldEnableTotp = { shield.enableTotp() },
+            onShieldDisableTotp = { shield.disableTotp() },
             engine = engine,
             username = username,
             connectionMode = connectionMode,

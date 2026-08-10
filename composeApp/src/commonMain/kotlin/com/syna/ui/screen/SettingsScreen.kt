@@ -80,6 +80,9 @@ fun SettingsScreen(
     shieldHealth: com.syna.shield.ShieldHealth,
     shieldEvents: List<com.syna.shield.ShieldEvent>,
     shieldHoneypot: Boolean,
+    shieldTotpEnabled: Boolean,
+    onShieldEnableTotp: () -> String?,
+    onShieldDisableTotp: () -> Unit,
 ) {
     MaxWidthContainer(modifier = modifier) {
     Column(
@@ -327,6 +330,62 @@ fun SettingsScreen(
                 }
             }
         }
+            // 双重验证（TOTP 2FA）：生物识别 + 动态码第二因子
+            var totpUri by remember { mutableStateOf<String?>(null) }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (shieldTotpEnabled) onShieldDisableTotp()
+                        else totpUri = onShieldEnableTotp()
+                    }
+                    .padding(vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("双重验证（TOTP 动态码）", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        "解锁需生物识别 + 动态码（第二因子）。启用后在 TOTP 应用中导入种子",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(checked = shieldTotpEnabled, onCheckedChange = {
+                    if (it) totpUri = onShieldEnableTotp()
+                    else onShieldDisableTotp()
+                })
+            }
+            if (totpUri != null) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { totpUri = null },
+                    title = { Text("导入种子到 TOTP 应用") },
+                    text = {
+                        Column {
+                            Text(
+                                "在任意 TOTP 应用（Google Authenticator、Microsoft Authenticator、Aegis 等）中选择「添加账户 → 手动输入」或扫码器，粘贴以下 otpauth URI（或其中 secret= 后的 base32 种子）：",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = totpUri ?: "",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "导入后每次解锁都需输入该应用显示的 6 位动态码。种子仅存于本机（加密），源码公开不影响安全性。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { totpUri = null }) {
+                            Text("我已导入")
+                        }
+                    },
+                )
+            }
         Text(
             "能力边界：应用层无法检测系统级预装监控/企业 MDM（设备所有者权限），本功能不声称能隔绝此类监测。桌面端仅提供闲置自动锁定。",
             style = MaterialTheme.typography.labelSmall,

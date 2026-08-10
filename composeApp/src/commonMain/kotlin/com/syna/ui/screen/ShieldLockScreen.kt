@@ -17,6 +17,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -93,6 +96,69 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
             }
         }
         Spacer(Modifier.height(32.dp))
+
+        // 双重验证（TOTP 第二因子）：生物识别通过后等待动态码输入
+        if (state == ShieldState.AWAITING_TOTP) {
+            var code by remember { mutableStateOf("") }
+            Text(
+                text = "生物识别已通过 · 请输入第二因子动态码",
+                fontSize = 14.sp,
+                color = ShieldWhite,
+            )
+            Spacer(Modifier.height(12.dp))
+            androidx.compose.material3.OutlinedTextField(
+                value = code,
+                onValueChange = { input ->
+                    code = input.filter { it.isDigit() }.take(6)
+                },
+                singleLine = true,
+                placeholder = { Text("6 位动态码", color = ShieldWhiteDim) },
+                modifier = Modifier.fillMaxWidth(),
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = ShieldBlack,
+                    fontSize = 20.sp,
+                    letterSpacing = 6.sp,
+                ),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = ShieldRed,
+                    unfocusedBorderColor = ShieldWhite.copy(alpha = 0.4f),
+                    focusedTextColor = ShieldBlack,
+                    unfocusedTextColor = ShieldBlack,
+                    cursorColor = ShieldRed,
+                    focusedContainerColor = ShieldWhite,
+                    unfocusedContainerColor = ShieldWhite,
+                ),
+            )
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { controller.verifyTotp(code) },
+                enabled = code.length == 6,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = ShieldWhite,
+                    contentColor = ShieldBlack,
+                    disabledContainerColor = ShieldWhite.copy(alpha = 0.3f),
+                    disabledContentColor = ShieldBlack.copy(alpha = 0.5f),
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+            ) {
+                Text(
+                    text = "验证并解锁",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "动态码来自你导入种子的 TOTP 应用（如 Google Authenticator）。错误码将计入暴力防护。",
+                fontSize = 12.sp,
+                color = ShieldWhiteDim.copy(alpha = 0.7f),
+                textAlign = TextAlign.Center,
+            )
+            return@Column
+        }
 
         // 白色解锁按钮
         Button(

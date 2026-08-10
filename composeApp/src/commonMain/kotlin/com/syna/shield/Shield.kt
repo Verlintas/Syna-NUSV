@@ -207,6 +207,9 @@ enum class ShieldState {
 
     /** 用户通过验证解锁 */
     UNLOCKED,
+
+    /** 生物识别已通过，等待 TOTP 第二因子（双重验证） */
+    AWAITING_TOTP,
 }
 
 /** 威胁检测引擎（平台实现：Android 多检测源 / 桌面闲置锁定） */
@@ -435,6 +438,7 @@ class ShieldController(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     eventsPathOverride: String? = null,
     memoryWipeDelayMs: Long = MEMORY_WIPE_DELAY_MS,
+    totpSeedPathOverride: String? = null,
 ) {
     private val engine: ShieldEngine = createShieldEngine { threat -> reportThreat(threat) }
     private val stateM = MutableStateFlow(if (enabled) ShieldState.ARMED else ShieldState.UNLOCKED)
@@ -448,6 +452,11 @@ class ShieldController(
     val honeypot: StateFlow<Boolean> = honeypotM.asStateFlow()
     private var honeypotStreak = 0
     private val HONEYPOT_REQUIRED_STREAK = 3
+
+    // 双重验证（TOTP 2FA）：生物识别通过后还需第二因子动态码
+    private val totpSeedPath: String? = totpSeedPathOverride
+    private val totpEnabledM = MutableStateFlow(TotpSeedStore.load(totpSeedPath) != null)
+    val totpEnabled: StateFlow<Boolean> = totpEnabledM.asStateFlow()
 
     // 状态内存防篡改：每次变更同步 HMAC 签名值，关键路径校验一致性，
     // 防止攻击者直接改写内存中的状态绕过锁定。
@@ -690,6 +699,11 @@ class ShieldController(
         }
         engine.requestBiometricUnlock { granted ->
             if (granted) {
+                if (totpEnabledM.value && stateM.value == ShieldState.LOCKED) {
+                    // 第一因子通过：进入 TOTP 等待（第二因子）
+                    setState(ShieldState.AWAITING_TOTP)
+                    return@requestBiometricUnlock
+                }
                 if (honeypotM.value) {
                     // 假锁模式：一次验证不够——连续成功多次才放行（攻击者无生物特征）
                     honeypotStreak++
@@ -717,6 +731,66 @@ class ShieldController(
             } else {
                 onBiometricFailed()
             }
+        }
+    }
+
+    /** 当前状态是否为 TOTP 等待（供 UI 判断） */
+    val awaitingTotp: Boolean
+        get() = stateM.value == ShieldState.AWAITING_TOTP
+
+    /**
+     * 验证 TOTP 第二因子：正确 → 解锁；错误 → 计入暴力防护（失败上限 + 冷却）。
+     */
+    fun verifyTotp(code: String) {
+        if (stateM.value != ShieldState.AWAITING_TOTP) return
+        if (!enabledM.value) return
+        val seed = TotpSeedStore.load(totpSeedPath) ?: run {
+            setState(ShieldState.LOCKED)
+            return
+        }
+        if (TotpCode.verify(seed, code)) {
+            // 解锁成功：清零暴力失败计数与冷却
+            biometricFailsM.value = 0
+            persistBiometricFails(0)
+            nextUnlockAt = 0L
+            cooldownMs = 0L
+            honeypotM.value = false
+            honeypotStreak = 0
+            setState(ShieldState.UNLOCKED)
+            recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
+            scheduleRelockIfCritical()
+            scheduleUnlockExpiry()
+        } else {
+            // 错误码：回到锁定，计入失败（触发冷却与暴力上限）
+            setState(ShieldState.LOCKED)
+            onBiometricFailed()
+        }
+    }
+
+    /** 开启双重验证：生成种子并保存（首次需在 TOTP 应用中导入 otpauth URI） */
+    fun enableTotp(): String? {
+        val seed = TotpCode.newSeed()
+        TotpSeedStore.save(seed, totpSeedPath)
+        totpEnabledM.value = true
+        return TotpCode.otpauthUri(seed, deviceLabel())
+    }
+
+    /** 关闭双重验证：清除种子（需先处于已解锁或监测状态） */
+    fun disableTotp() {
+        TotpSeedStore.clear(totpSeedPath)
+        totpEnabledM.value = false
+        if (stateM.value == ShieldState.AWAITING_TOTP) {
+            setState(ShieldState.LOCKED)
+        }
+    }
+
+    private fun deviceLabel(): String {
+        return try {
+            val os = System.getProperty("os.name") ?: "device"
+            val model = System.getProperty("os.arch") ?: ""
+            "$os $model"
+        } catch (e: Exception) {
+            "device"
         }
     }
 
