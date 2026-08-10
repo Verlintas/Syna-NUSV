@@ -34,6 +34,9 @@ actual object SessionKeyStore {
     @Volatile
     private var cachedSessionKey: ByteArray? = null
 
+    @Volatile
+    private var migrationKey: ByteArray? = null
+
     private fun blobFile(): File =
         File(com.syna.SynaApp.context.filesDir, "syna_session_blob")
 
@@ -122,7 +125,30 @@ actual object SessionKeyStore {
 
     actual fun obtainSessionKey(): ByteArray? = cachedSessionKey
 
+    actual fun previousSessionKey(): ByteArray? = migrationKey
+
+    /**
+     * 轮换会话密钥（前向安全）：新密钥重写 blob（认证窗口内），
+     * 旧密钥保留为迁移密钥，供全量重写完成前的旧数据解密。
+     */
+    actual fun rotateSessionKey() {
+        try {
+            val newKey = ByteArray(SESSION_KEY_LEN).also { SecureRandom().nextBytes(it) }
+            val cipher = authEncryptCipher() ?: return
+            val ct = cipher.doFinal(newKey)
+            blobFile().writeBytes(cipher.iv + ct)
+            migrationKey = cachedSessionKey
+            cachedSessionKey = newKey
+        } catch (e: Exception) {
+        }
+    }
+
+    actual fun clearMigration() {
+        migrationKey = null
+    }
+
     actual fun invalidateSession() {
         cachedSessionKey = null
+        migrationKey = null
     }
 }

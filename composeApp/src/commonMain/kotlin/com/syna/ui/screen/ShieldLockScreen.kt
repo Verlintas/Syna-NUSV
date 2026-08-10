@@ -42,6 +42,7 @@ private val ShieldWhiteDim = Color(0xFFB8B8B8)
 fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier) {
     val state by controller.state.collectAsState()
     val threats by controller.threats.collectAsState()
+    val disabling by controller.disabling.collectAsState()
 
     Column(
         modifier = modifier
@@ -101,7 +102,8 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
         if (state == ShieldState.AWAITING_TOTP) {
             var code by remember { mutableStateOf("") }
             Text(
-                text = "生物识别已通过 · 请输入第二因子动态码",
+                text = if (disabling) "生物识别已通过 · 输入动态码以关闭护盾"
+                else "生物识别已通过 · 请输入第二因子动态码",
                 fontSize = 14.sp,
                 color = ShieldWhite,
             )
@@ -152,7 +154,11 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
             }
             Spacer(Modifier.height(12.dp))
             Text(
-                text = "动态码来自你导入种子的 TOTP 应用（如 Google Authenticator）。错误码将计入暴力防护。",
+                text = if (disabling) {
+                    "双重验证关闭：攻击者无法关闭已开启的护盾。动态码错误将计入暴力防护。"
+                } else {
+                    "动态码来自你导入种子的 TOTP 应用（如 Google Authenticator）。错误码将计入暴力防护。"
+                },
                 fontSize = 12.sp,
                 color = ShieldWhiteDim.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,

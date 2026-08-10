@@ -527,6 +527,15 @@ class ShieldController(
     private var nextUnlockAt = 0L
     private var cooldownMs = 0L
 
+    // 会话密钥轮换：解锁成功后触发（前向安全——旧密钥全量迁移后失效）
+    private var sessionRotateCallback: (() -> Unit)? = null
+
+    // 双因子关闭：生物识别 + TOTP 通过后才真正关闭护盾（攻击者无法关闭已开启的护盾）
+    private val disablingM = MutableStateFlow(false)
+    val disabling: StateFlow<Boolean> = disablingM.asStateFlow()
+    private var disablePending = false
+    private var disableCallback: (() -> Unit)? = null
+
     // 后台内存擦除：切后台延迟擦除明文缓存，回前台恢复
     private var memoryWipeCallback: (() -> Unit)? = null
     private var memoryRestoreCallback: (() -> Unit)? = null
@@ -568,6 +577,9 @@ class ShieldController(
             healthJob?.cancel()
         }
         if (on) {
+            disablingM.value = false
+            disablePending = false
+            disableCallback = null
             setState(ShieldState.ARMED)
             threatsM.value = emptyList()
             current = this
@@ -720,11 +732,12 @@ class ShieldController(
                     }
                     // 未达次数：保持锁定（密钥保持释放）
                 } else {
-                    // 解锁成功：清零暴力失败计数与冷却
+                    // 解锁成功：清零暴力失败计数与冷却；会话密钥轮换（前向安全）
                     biometricFailsM.value = 0
                     persistBiometricFails(0)
                     nextUnlockAt = 0L
                     cooldownMs = 0L
+                    sessionRotateCallback?.invoke()
                     setState(ShieldState.UNLOCKED)
                     recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
                     scheduleRelockIfCritical()
@@ -751,13 +764,26 @@ class ShieldController(
             return
         }
         if (TotpCode.verify(seed, code)) {
-            // 解锁成功：清零暴力失败计数与冷却
+            // 清零暴力失败计数与冷却
             biometricFailsM.value = 0
             persistBiometricFails(0)
             nextUnlockAt = 0L
             cooldownMs = 0L
+            if (disablePending) {
+                // 双因子关闭：第二因子通过 → 真正关闭护盾
+                disablePending = false
+                disablingM.value = false
+                val cb = disableCallback
+                disableCallback = null
+                setEnabled(false)
+                recordEvent(ShieldThreat.INACTIVE, ShieldAction.DISABLED)
+                cb?.invoke()
+                return
+            }
+            // 解锁成功：会话密钥轮换（前向安全）
             honeypotM.value = false
             honeypotStreak = 0
+            sessionRotateCallback?.invoke()
             setState(ShieldState.UNLOCKED)
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
             scheduleRelockIfCritical()
@@ -871,16 +897,26 @@ class ShieldController(
     }
 
     /**
-     * 关闭 Shield 需生物识别验证：验证通过才真正停用（防被误关/被绕过）。
-     * 验证失败或用户取消则保持启用。
+     * 双因子关闭：生物识别（+ 若开启 2FA 则 TOTP 第二因子）通过后才真正停用护盾。
+     * 攻击者既无生物特征也无第二因子种子 → 已开启的护盾无法被关闭；
+     * 锁定中尝试关闭同样需要双因子，失败计入暴力防护（自毁兜底）。
      */
-    fun disableWithVerification(onDisabled: () -> Unit = {}) {
+    fun requestDisableWithVerification(onDisabled: () -> Unit = {}) {
         if (!enabledM.value) return
         engine.requestBiometricUnlock { granted ->
             if (granted) {
-                setEnabled(false)
-                recordEvent(ShieldThreat.INACTIVE, ShieldAction.DISABLED)
-                onDisabled()
+                if (totpEnabledM.value) {
+                    disablePending = true
+                    disableCallback = onDisabled
+                    disablingM.value = true
+                    setState(ShieldState.AWAITING_TOTP)
+                } else {
+                    setEnabled(false)
+                    recordEvent(ShieldThreat.INACTIVE, ShieldAction.DISABLED)
+                    onDisabled()
+                }
+            } else {
+                onBiometricFailed()
             }
         }
     }
@@ -892,6 +928,11 @@ class ShieldController(
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.LOCKED)
             clearOwnClipboard()
         }
+    }
+
+    /** 注册会话密钥轮换回调（解锁成功后触发；由 App 接入 SessionKeyStore 轮换 + 全量重写） */
+    fun setSessionRotateCallback(callback: () -> Unit) {
+        sessionRotateCallback = callback
     }
 
     /**

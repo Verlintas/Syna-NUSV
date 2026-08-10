@@ -36,6 +36,15 @@ expect object SessionKeyStore {
     /** 获取会话密钥（仅内存缓存；未认证/未启用时返回 null） */
     fun obtainSessionKey(): ByteArray?
 
+    /** 迁移中的上一代会话密钥（轮换后、全量重写完成前用于解旧数据） */
+    fun previousSessionKey(): ByteArray?
+
+    /** 轮换会话密钥：生成新密钥并重写 blob，旧密钥保留为迁移密钥 */
+    fun rotateSessionKey()
+
+    /** 迁移完成：释放上一代密钥（前向安全：旧密钥彻底失效） */
+    fun clearMigration()
+
     /** 释放会话密钥（锁定/Shield 停用时调用，数据立即回到不可解状态） */
     fun invalidateSession()
 }

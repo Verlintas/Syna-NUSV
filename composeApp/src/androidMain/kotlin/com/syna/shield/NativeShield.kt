@@ -41,6 +41,7 @@ object NativeShield {
      * 代码完整性位掩码（native 对抗层）：
      * bit0 = 自身代码段被修改（含全部 JNI 导出函数入口被 inline hook）
      * bit1 = libc 关键函数入口被修改（inline hook libc）
+     * bit2 = 发现匿名可执行段（rwxp，非 ART JIT/系统库）——注入痕迹
      */
     external fun integrity(): Int
 }

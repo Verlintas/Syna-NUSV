@@ -113,4 +113,86 @@ class TotpTest {
         controller.stop()
         ShieldGate.disarm()
     }
+
+    @Test
+    fun dualFactorDisableRequiresTotp() = kotlinx.coroutines.runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("syna-totp")
+        val path = dir.resolve("events.jsonl").toString()
+        val seedPath = dir.resolve("seed.bin").toString()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path, totpSeedPathOverride = seedPath)
+        controller.start()
+        controller.enableTotp()
+        var disabled = 0
+
+        // 双因子关闭：生物识别（桌面直接通过）→ 等待 TOTP
+        controller.requestDisableWithVerification { disabled++ }
+        assertEquals(ShieldState.AWAITING_TOTP, controller.state.value)
+        assertTrue(controller.disabling.value)
+        assertTrue(controller.enabled.value)
+
+        // 错误码：不关闭，计入暴力防护
+        controller.verifyTotp("000000")
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        assertTrue(controller.enabled.value)
+        assertEquals(1, controller.biometricFails.value)
+        assertEquals(0, disabled)
+
+        // 冷却后重新走流程 → 正确码 → 真正关闭
+        delay(1_200)
+        controller.requestDisableWithVerification { disabled++ }
+        assertEquals(ShieldState.AWAITING_TOTP, controller.state.value)
+        val seed = TotpSeedStore.load(seedPath) ?: error("种子应存在")
+        controller.verifyTotp(TotpCode.generate(seed, System.currentTimeMillis()))
+        assertFalse(controller.enabled.value, "第二因子通过后护盾应关闭")
+        assertFalse(controller.disabling.value)
+        assertEquals(1, disabled)
+        controller.stop()
+        ShieldGate.disarm()
+    }
+
+    @Test
+    fun disableWhileLockedStillRequiresTotp() = kotlinx.coroutines.runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("syna-totp")
+        val path = dir.resolve("events.jsonl").toString()
+        val seedPath = dir.resolve("seed.bin").toString()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path, totpSeedPathOverride = seedPath)
+        controller.start()
+        controller.enableTotp()
+        // 锁定中尝试关闭：进入 TOTP 等待（攻击者无第二因子 → 无法关闭，失败计入暴力防护）
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        var disabled = 0
+        controller.requestDisableWithVerification { disabled++ }
+        assertEquals(ShieldState.AWAITING_TOTP, controller.state.value, "锁定中关闭同样需要第二因子")
+        assertTrue(controller.disabling.value)
+        // 错误码：不关闭 + 计数
+        controller.verifyTotp("000000")
+        assertTrue(controller.enabled.value)
+        assertEquals(1, controller.biometricFails.value)
+        assertEquals(0, disabled)
+        controller.stop()
+        ShieldGate.disarm()
+    }
+
+    @Test
+    fun unlockTriggersSessionRotation() = kotlinx.coroutines.runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("syna-totp")
+        val path = dir.resolve("events.jsonl").toString()
+        val seedPath = dir.resolve("seed.bin").toString()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path, totpSeedPathOverride = seedPath)
+        var rotations = 0
+        controller.setSessionRotateCallback { rotations++ }
+        controller.start()
+        // 2FA 开启时：TOTP 正确码解锁 → 轮换回调触发
+        controller.enableTotp()
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        controller.requestUnlock()
+        assertEquals(ShieldState.AWAITING_TOTP, controller.state.value)
+        val seed = TotpSeedStore.load(seedPath) ?: error("种子应存在")
+        controller.verifyTotp(TotpCode.generate(seed, System.currentTimeMillis()))
+        assertEquals(ShieldState.UNLOCKED, controller.state.value)
+        assertEquals(1, rotations, "解锁成功应触发会话密钥轮换")
+        controller.stop()
+        ShieldGate.disarm()
+    }
 }

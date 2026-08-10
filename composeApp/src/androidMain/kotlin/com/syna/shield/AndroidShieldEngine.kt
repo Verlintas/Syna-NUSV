@@ -89,6 +89,7 @@ class AndroidShieldEngine private constructor(
     private var lastGatewayIp: String? = null
     private var lastNetworkFingerprint: String? = null
     private var lastMirroring: Boolean? = null
+    private var rwxHits = 0
     private var screenCaptureCallback: Any? = null
 
     override fun start() {
@@ -137,6 +138,13 @@ class AndroidShieldEngine private constructor(
                 val integrity = NativeShield.integrity()
                 if (integrity and 1 != 0) onThreat(ShieldThreat.SHIELD_TAMPERED)
                 if (integrity and 2 != 0) onThreat(ShieldThreat.FRIDA_DETECTED)
+                if (integrity and 4 != 0) {
+                    // 匿名可执行段：连续 3 次命中才上报（节流防厂商 ROM 误报）
+                    rwxHits++
+                    if (rwxHits >= 3) onThreat(ShieldThreat.FRIDA_DETECTED)
+                } else {
+                    rwxHits = 0
+                }
             } catch (e: Throwable) {
             }
         }

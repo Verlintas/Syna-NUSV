@@ -115,6 +115,11 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         }
     }
 
+    /** 立即全量重写持久化文件（会话密钥轮换迁移用；用当前密钥重新加密全部数据） */
+    fun rewriteNow() {
+        persistence?.rewrite(messagesM.value)
+    }
+
     fun addIncoming(peerId: String, peerName: String, msg: ChatMessage, preview: String = msg.body) {
         messagesM.updateMap { it + (peerId to (it[peerId] ?: emptyList()) + msg) }
         upsertConversation(

@@ -80,6 +80,12 @@ fun App() {
             wipe = { engine.chatStore.releaseMemory() },
             restore = { engine.chatStore.reloadFromPersistence() },
         )
+        // 会话密钥轮换（前向安全）：解锁后换新密钥并全量迁移，旧密钥失效
+        shield.setSessionRotateCallback {
+            com.syna.shield.SessionKeyStore.rotateSessionKey()
+            engine.chatStore.rewriteNow()
+            com.syna.shield.SessionKeyStore.clearMigration()
+        }
         shield.configureSelfDestruct(enabled = settings.shieldSelfDestruct) {
             engine.chatStore.clearAllHistory()
             clearReceivedFiles()
@@ -121,7 +127,9 @@ fun App() {
     }
 
     SynaTheme(themeMode = themeMode) {
-        if (shieldState == com.syna.shield.ShieldState.LOCKED) {
+        if (shieldState == com.syna.shield.ShieldState.LOCKED ||
+            shieldState == com.syna.shield.ShieldState.AWAITING_TOTP
+        ) {
             ShieldLockScreen(controller = shield)
             return@SynaTheme
         }
@@ -187,8 +195,9 @@ fun App() {
                     // 引导授权使用情况访问（前台应用感知增强）
                     requestUsageAccessPermission()
                 } else {
-                    // 关闭：需生物识别验证（防被绕过/误关）
-                    shield.disableWithVerification {
+                    // 关闭：双因子验证（生物识别 + 若开启 2FA 则动态码）——
+                    // 已开启的护盾无法被攻击者关闭
+                    shield.requestDisableWithVerification {
                         settings.shieldEnabled = false
                         settings.shieldScreenProtection = false
                         settings.shieldSelfDestruct = false

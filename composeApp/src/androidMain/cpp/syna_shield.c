@@ -431,6 +431,60 @@ static void verify_self_entries(void) {
     }
 }
 
+/* ================= 匿名可执行段检测（注入痕迹） ================= */
+
+/*
+ * 扫描 /proc/self/maps 中 rwxp（可写+可执行）段：
+ * - 无路径的纯匿名 rwxp → 注入代码的典型痕迹（Frida gum 中转段）
+ * - 排除 ART JIT（memfd:jit/jit-region/anon:jit）、系统库、自身 so
+ */
+static int scan_rwx_anon(void) {
+    char buf[32768];
+    int n = sys_read_file("/proc/self/maps", buf, (int)sizeof(buf) - 1);
+    if (n <= 0) return 0;
+    buf[n] = 0;
+    char *line = buf;
+    while (*line) {
+        char *nl = line;
+        while (*nl && *nl != '\n') nl++;
+        int linelen = (int)(nl - line);
+        if (linelen > 30) {
+            char *sp = line;
+            while (*sp && *sp != ' ' && *sp != '\t') sp++;
+            while (*sp == ' ' || *sp == '\t') sp++;
+            if (sp + 4 <= nl && sp[0] == 'r' && sp[1] == 'w' && sp[2] == 'x' && sp[3] == 'p') {
+                char *path = sp + 4;
+                while (path < nl && (*path == ' ' || *path == '\t')) path++;
+                /* 跳过 offset/dev/inode 三个 token */
+                for (int tok = 0; tok < 3 && path < nl; tok++) {
+                    while (path < nl && *path != ' ' && *path != '\t') path++;
+                    while (path < nl && (*path == ' ' || *path == '\t')) path++;
+                }
+                int has_path = (path < nl);
+                int legit = 0;
+                if (has_path) {
+                    char tmp[160];
+                    int plen = (int)(nl - path);
+                    int cp = plen < 159 ? plen : 159;
+                    for (int k = 0; k < cp; k++) tmp[k] = path[k];
+                    tmp[cp] = 0;
+                    /* 已知合法 rwxp 段：ART JIT / 系统组件 / 自身 */
+                    if (s_contains(tmp, "jit") || s_contains(tmp, "art") ||
+                        s_contains(tmp, "dex2oat") || s_contains(tmp, "memfd") ||
+                        s_contains(tmp, "syna_shield") || s_contains(tmp, "linker") ||
+                        s_contains(tmp, "libc.so") || s_contains(tmp, "[stack") ||
+                        s_contains(tmp, "[vdso") || s_contains(tmp, "[vvar") ||
+                        s_contains(tmp, "dalvik") || s_contains(tmp, "webkit")) legit = 1;
+                }
+                if (!legit) return 1;
+            }
+        }
+        if (!*nl) break;
+        line = nl + 1;
+    }
+    return 0;
+}
+
 /* ================= JNI 导出 ================= */
 
 JNIEXPORT jint JNICALL Java_com_syna_shield_NativeShield_tracerPid(JNIEnv *env, jobject thiz) {
@@ -460,5 +514,6 @@ JNIEXPORT jint JNICALL Java_com_syna_shield_NativeShield_integrity(JNIEnv *env, 
     int mask = 0;
     if (g_self_modified) mask |= 1;
     if (g_libc_modified) mask |= 2;
+    if (scan_rwx_anon()) mask |= 4;
     return mask;
 }

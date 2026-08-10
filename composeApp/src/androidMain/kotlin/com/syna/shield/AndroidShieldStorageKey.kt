@@ -65,9 +65,13 @@ actual object ShieldStorageKey {
         // Shield 门禁（fail-closed）：心跳停滞（检测线程被暂停/杀死）→ 拒绝解密
         if (!ShieldGate.isFresh()) return null
         if (payload.size <= NONCE_LEN) return null
-        // 先试会话密钥（数据级门禁），失败回退主密钥（历史数据/未启用场景）
+        // 先试会话密钥（数据级门禁），再试迁移中的上一代密钥（轮换窗口），
+        // 最后回退主密钥（历史数据/未启用场景）
         SessionKeyStore.obtainSessionKey()?.let { session ->
             aesGcmDecrypt(javax.crypto.spec.SecretKeySpec(session, "AES"), payload)?.let { return it }
+        }
+        SessionKeyStore.previousSessionKey()?.let { prev ->
+            aesGcmDecrypt(javax.crypto.spec.SecretKeySpec(prev, "AES"), payload)?.let { return it }
         }
         val key = keystoreKey() ?: return null
         return aesGcmDecrypt(key, payload)
