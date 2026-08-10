@@ -74,4 +74,9 @@ actual object ShieldStorageKey {
             null
         }
     }
+
+    /** 销毁存储密钥：覆写删除密钥文件（自毁后旧密文不可解） */
+    actual fun wipe() {
+        com.syna.util.SecureWipe.wipeFile(keyFile().toString())
+    }
 }

@@ -18,27 +18,17 @@ actual fun receivedFilesSize(): Long = try {
     0L
 }
 
-actual fun clearReceivedFiles() {
+actual fun destructPlatformArtifacts() {
     try {
-        val dir = receivedDir()
-        if (Files.exists(dir)) {
-            Files.walk(dir).use { stream ->
-                stream.sorted(Comparator.reverseOrder()).forEach { p ->
-                    // 防数据恢复：删除前先覆写零值
-                    try {
-                        if (Files.isRegularFile(p)) {
-                            val size = Files.size(p)
-                            if (size > 0 && size <= 64L * 1024 * 1024) {
-                                Files.write(p, ByteArray(size.toInt()))
-                            }
-                        }
-                    } catch (e: Exception) {
-                    }
-                    Files.deleteIfExists(p)
-                }
-            }
+        val dir = java.io.File(System.getProperty("user.home") ?: ".", ".syna")
+        dir.listFiles()?.forEach { f ->
+            if (f.isFile) com.syna.util.SecureWipe.wipeFile(f.absolutePath)
         }
     } catch (e: Exception) {
-        println("[Syna:Persist] 清除接收文件失败: ${e.message}")
     }
+}
+
+actual fun clearReceivedFiles() {
+    // 安全覆写删除（随机 2 遍 + fsync，防取证恢复）
+    com.syna.util.SecureWipe.wipeDir(receivedDir().toFile())
 }

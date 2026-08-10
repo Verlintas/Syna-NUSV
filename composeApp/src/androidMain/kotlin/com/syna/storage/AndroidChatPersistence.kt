@@ -10,15 +10,16 @@ private fun receivedDir(): File = File(SynaApp.context.filesDir, "syna_received"
 
 actual fun receivedFilesSize(): Long = receivedDir().walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
-actual fun clearReceivedFiles() {
-    receivedDir().walkTopDown().sortedByDescending { it.absolutePath.length }.forEach { f ->
-        // 防数据恢复：删除前覆写零值
-        try {
-            if (f.isFile && f.length() in 1..(64L * 1024 * 1024)) {
-                java.io.FileOutputStream(f).use { it.write(ByteArray(f.length().toInt())) }
-            }
-        } catch (e: Exception) {
-        }
-        f.delete()
+actual fun destructPlatformArtifacts() {
+    try {
+        val dir = com.syna.SynaApp.context.filesDir
+        listOf("syna_totp_seed", "syna_session_blob", "syna_dex_base", "syna_version_base", "crash.log")
+            .forEach { name -> com.syna.util.SecureWipe.wipeFile(java.io.File(dir, name).absolutePath) }
+    } catch (e: Exception) {
     }
+}
+
+actual fun clearReceivedFiles() {
+    // 安全覆写删除（随机 2 遍 + fsync，防取证恢复）
+    com.syna.util.SecureWipe.wipeDir(receivedDir())
 }

@@ -12,4 +12,12 @@ expect object ShieldStorageKey {
 
     /** 解密（输入为 encrypt 的完整负载；失败返回 null） */
     fun decrypt(payload: ByteArray): ByteArray?
+
+    /**
+     * 销毁存储密钥（自毁协议最强手段）：
+     * Android 删除 Keystore 中的主密钥与会话认证密钥（TEE 内销毁）——
+     * 即使加密文件被取证恢复，没有密钥也永久不可解；
+     * 桌面覆写删除密钥文件。
+     */
+    fun wipe()
 }

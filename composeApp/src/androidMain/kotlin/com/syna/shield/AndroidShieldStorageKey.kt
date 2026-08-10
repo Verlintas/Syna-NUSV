@@ -106,4 +106,24 @@ actual object ShieldStorageKey {
             null
         }
     }
+
+    /**
+     * 销毁存储密钥：删除 Keystore 条目（TEE 内销毁，不可恢复）——
+     * 自毁后即使文件被取证恢复也永久不可解（数据恢复的最强防线）。
+     */
+    actual fun wipe() {
+        try {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE)
+            ks.load(null)
+            ks.deleteEntry(ALIAS)
+            ks.deleteEntry("syna_session_auth")
+        } catch (e: Exception) {
+        }
+        // 会话密钥 blob 一并覆写删除
+        try {
+            val blob = java.io.File(com.syna.SynaApp.context.filesDir, "syna_session_blob")
+            com.syna.util.SecureWipe.wipeFile(blob.absolutePath)
+        } catch (e: Exception) {
+        }
+    }
 }

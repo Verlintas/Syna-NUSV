@@ -106,6 +106,9 @@ expect fun receivedFilesSize(): Long
 /** 清除接收的文件（清空接收文件目录） */
 expect fun clearReceivedFiles()
 
+/** 平台附加痕迹清理（自毁时覆写删除：种子/blob/基准/崩溃日志等） */
+expect fun destructPlatformArtifacts()
+
 /**
  * 聊天记录 JSONL 文件持久化（零依赖、跨平台一致）：
  * 启动加载全部消息，变更后全量重写（保留最近 [MAX_MESSAGES] 条防无限增长）。
@@ -176,7 +179,9 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
     /** 清除本地聊天记录文件 */
     fun clear() {
         try {
-            Files.deleteIfExists(Path.of(path))
+            // 安全覆写删除（防取证恢复）：主文件 + 原子写残留的 tmp
+            com.syna.util.SecureWipe.wipeFile(path)
+            com.syna.util.SecureWipe.wipeFile(path + ".tmp")
         } catch (e: Exception) {
             println("[Syna:Persist] 清除失败: ${e.message}")
         }

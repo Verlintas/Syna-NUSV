@@ -126,11 +126,7 @@ fun App() {
             com.syna.shield.SessionKeyStore.clearMigration()
         }
         shield.configureSelfDestruct(enabled = settings.shieldSelfDestruct) {
-            engine.chatStore.clearAllHistory()
-            clearReceivedFiles()
-            clearOwnClipboard()
-            clearNotifications()
-            notifyMessage("◇Mirtazapine Shield", "Detected possible compromise; local chats and received files were destroyed")
+            fullDestruct(engine, shield)
         }
     }
     LaunchedEffect(Unit) {
@@ -231,11 +227,7 @@ fun App() {
                     settings.shieldSelfDestruct = true
                     shield.setSecureScreen(true)
                     shield.configureSelfDestruct(enabled = true) {
-                        engine.chatStore.clearAllHistory()
-                        clearReceivedFiles()
-                        clearOwnClipboard()
-                        clearNotifications()
-                        notifyMessage("◇Mirtazapine Shield", "Detected possible compromise; local chats and received files were destroyed")
+                        fullDestruct(engine, shield)
                     }
                     // 引导授权使用情况访问（前台应用感知增强）
                     requestUsageAccessPermission()
@@ -251,5 +243,42 @@ fun App() {
                 }
             },
         )
+    }
+
+}
+
+/**
+ * 全面自毁（防数据恢复增强）：
+ * 1. 内存消息清空；2. 聊天记录/接收文件/审计/种子/blob/基准文件覆写删除；
+ * 3. 销毁存储密钥（Android Keystore TEE 内删除——残留密文永久不可解）；
+ * 4. 清剪贴板/通知/崩溃日志。
+ * 顺序：审计事件先由 controller 写入，最后覆写审计文件本身。
+ */
+private fun fullDestruct(
+    engine: com.syna.net.SynaEngine,
+    shield: com.syna.shield.ShieldController,
+) {
+    try {
+        engine.chatStore.clearAllHistory()
+        clearReceivedFiles()
+        clearOwnClipboard()
+        clearNotifications()
+        // 覆写删除审计日志（含失败计数）——自毁不留审计痕迹给攻击者
+        try {
+            com.syna.util.SecureWipe.wipeFile(com.syna.shield.shieldEventsPath())
+            com.syna.util.SecureWipe.wipeFile(com.syna.shield.shieldEventsPath() + ".fails")
+        } catch (e: Exception) {
+        }
+        // 平台附加痕迹：TOTP 种子/会话 blob/基准文件/崩溃日志（覆写删除）
+        try {
+            com.syna.storage.destructPlatformArtifacts()
+        } catch (e: Exception) {
+        }
+        // 销毁存储密钥（最强手段：TEE 内删除，残留密文永久不可解）
+        com.syna.shield.ShieldStorageKey.wipe()
+        // 释放内存中的会话密钥
+        com.syna.shield.SessionKeyStore.invalidateSession()
+        notifyMessage("◇Mirtazapine Shield", "Detected possible compromise; local chats, keys and audit records were destroyed")
+    } catch (e: Exception) {
     }
 }
