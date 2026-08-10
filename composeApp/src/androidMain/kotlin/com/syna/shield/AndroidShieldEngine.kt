@@ -468,6 +468,15 @@ class AndroidShieldEngine private constructor(
      * + 线程名特征。TracerPid 是反调试最有效手段：Frida/gdb/strace 全部命中。
      */
     internal fun detectProcessInjection(): Boolean {
+        // 0) native 通道（NDK，JVM hook 无法覆盖）——命中即报
+        if (NativeShield.loaded) {
+            try {
+                if (NativeShield.tracerPid() != 0) return true
+                if (NativeShield.fridaMaps() != 0) return true
+                if (NativeShield.fridaThreads() != 0) return true
+            } catch (e: Throwable) {
+            }
+        }
         // 1) TracerPid：/proc/self/status 中不为 0 即被 ptrace
         try {
             val status = java.io.File("/proc/self/status").readText()

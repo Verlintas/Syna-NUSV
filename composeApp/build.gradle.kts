@@ -85,13 +85,26 @@ kotlin {
 android {
     namespace = "com.syna"
     compileSdk = libs.versions.android.compileSdk.get().toInt()
+    ndkVersion = "27.0.12077973"
     buildFeatures {
         buildConfig = true
+    }
+    externalNativeBuild {
+        cmake {
+            path = file("src/androidMain/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
     defaultConfig {
         applicationId = "com.syna"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
+        externalNativeBuild {
+            cmake {
+                // 全 ABI 构建（含模拟器 x86 以支持测试环境）
+                abiFilters("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            }
+        }
         versionCode = 1
         versionName = "0.1.0"
         // 官方签名指纹（SHA-256 十六进制）：release 签名 keystore 固定，
@@ -152,7 +165,7 @@ val serverFatJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "com.syna.server.ServerMainKt"
-        attributes["Implementation-Version"] = "0.7.1"
+        attributes["Implementation-Version"] = "0.7.2"
     }
     from(kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs)
     from(configurations.getByName("desktopRuntimeClasspath").map { file ->
