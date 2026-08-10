@@ -588,6 +588,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.7.9 | **Active crash defense**: native `SIGABRT` on high-confidence signals (ptrace attach / code or libc hooked) — no stable debugging window; usage-access grant now targets Syna (`EXTRA_APP_PACKAGE`); full permission self-check on every launch |
 | v0.8.0 | **Deep self-destruct (anti-forensics)**: `SecureWipe` 2-pass random overwrite + fsync on every sensitive file, **Keystore/TEE storage-key destruction** (recovered ciphertext permanently undecryptable), audit log self-wiped after the event, TOTP seed / session blob / baselines / crash log all wiped |
 | v0.8.1 | **Key pinning (TOFU) & P2P MITM closure**: public keys pinned on first use (encrypted at rest), fingerprint badge in chat header (full fingerprint for out-of-band verification), key changes rejected + `KEY_CHANGED` lock (no more HELLO/KEY forgery poisoning); **encrypt-only session mode** (refuse plaintext fallback); **replay defense** (10-min window on real-time frames) |
+| v0.8.2 | **Message ACK/retransmission** (P2P reliability root fix), **group administration** (kick/mute/admins, receiver-side permission checks), **no-export policy** (`allowBackup=false`; no backup/export features by design) |
 
 ---
 
