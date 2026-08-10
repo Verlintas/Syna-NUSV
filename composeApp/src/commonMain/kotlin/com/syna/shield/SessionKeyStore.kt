@@ -33,6 +33,13 @@ package com.syna.shield
  * 桌面实现：无系统级生物识别认证，如实不提供该门禁（解密始终走主密钥）。
  */
 expect object SessionKeyStore {
+    /**
+     * 认证捕获：在"真正解锁"时（生物识别已通过且无待验证的第二因子）捕获会话密钥。
+     * 由 ShieldController 在 setState(UNLOCKED) 后调用——AWAITING_TOTP 阶段不调用，
+     * 保证 TOTP 第二因子通过前数据保持不可解。
+     */
+    fun captureAuth()
+
     /** 获取会话密钥（仅内存缓存；未认证/未启用时返回 null） */
     fun obtainSessionKey(): ByteArray?
 

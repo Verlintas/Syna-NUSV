@@ -83,7 +83,7 @@ actual object SessionKeyStore {
     }
 
     /** 认证成功回调：立即解 blob 缓存会话密钥（认证窗口刚刷新，必然成功） */
-    fun captureAuth() {
+    actual fun captureAuth() {
         try {
             val cipher = authDecryptCipher() ?: return
             val f = blobFile()

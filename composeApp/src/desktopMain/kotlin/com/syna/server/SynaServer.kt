@@ -50,6 +50,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 class SynaServer(
     val port: Int,
@@ -59,6 +60,7 @@ class SynaServer(
     private val historyLimit: Int = 200,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
+    private val MAX_SESSIONS = 64
     val boundPort: Int
         get() = serverSocket?.localPort ?: 0
 
@@ -112,7 +114,13 @@ class SynaServer(
         Files.createDirectories(dataDir)
         loadBans()
         loadHistory()
-        val ss = ServerSocket(port)
+        val ss = try {
+            ServerSocket(port)
+        } catch (e: Exception) {
+            // 端口占用等启动失败：复位状态（否则 UI 显示"运行中"但端口不可用）
+            runningM.value = false
+            throw e
+        }
         serverSocket = ss
         scope.launch { acceptLoop(ss) }
         printBanner()
@@ -132,19 +140,31 @@ class SynaServer(
     }
 
     private suspend fun acceptLoop(ss: ServerSocket) {
-        while (true) {
-            val socket = try {
-                ss.accept()
-            } catch (e: IOException) {
-                return
+        try {
+            while (true) {
+                val socket = try {
+                    ss.accept()
+                } catch (e: IOException) {
+                    return
+                }
+                scope.launch { handleClient(socket) }
             }
-            scope.launch { handleClient(socket) }
+        } finally {
+            // 非手动停止的意外退出：复位运行状态（崩溃自动重启依赖此标志）
+            if (runningM.value) {
+                runningM.value = false
+            }
         }
     }
 
     private suspend fun handleClient(socket: Socket) {
         var session: ClientSession? = null
         try {
+            // 连接数上限（防资源耗尽）
+            if (synchronized(sessions) { sessions.size } >= MAX_SESSIONS) {
+                socket.close()
+                return
+            }
             val input = DataInputStream(socket.getInputStream())
             val output = DataOutputStream(socket.getOutputStream())
             session = ClientSession(socket, input, output)
@@ -161,22 +181,28 @@ class SynaServer(
                     ts = System.currentTimeMillis(),
                     body = synaJson.encodeToString(
                         ServerHello.serializer(),
-                        ServerHello(serverId, salt, "0.7.4", groupName),
+                        ServerHello(serverId, salt, "0.7.5", groupName),
                     ),
                 ),
             )
             session.channelKey = SynaCrypto.deriveFromPassword(password, salt, "syna-server-channel")
 
-            // 2. 等待加密认证
-            val authFrame = session.receiveFrame() ?: return
+            // 2. 等待加密认证（15s 超时：未认证连接不得永久占资源）
+            val authFrame = withTimeoutOrNull(15_000L) { session.receiveFrame() } ?: return
             if (authFrame.type != FrameType.SRV_AUTH) return
-            val auth = synaJson.decodeFromString(ServerAuth.serializer(), authFrame.body ?: return)
+            val auth = try {
+                synaJson.decodeFromString(ServerAuth.serializer(), authFrame.body ?: return)
+            } catch (e: Exception) {
+                return
+            }
             if (synchronized(banned) { auth.userId in banned }) {
                 log("[SynaServer] 拒绝封禁用户: ${auth.username} (${auth.userId.take(6)})")
                 return
             }
             if (auth.password != password) {
                 log("[SynaServer] 认证失败: ${auth.username} (${auth.userId.take(6)})")
+                // 认证失败限速（1s 延迟：防远程暴力破解）
+                kotlinx.coroutines.delay(1_000L)
                 return
             }
             session.userId = auth.userId
@@ -252,6 +278,8 @@ class SynaServer(
                 log("[SynaServer] 成员离开: $uid")
                 val remaining = sessions.any { it.userId == uid }
                 if (!remaining) {
+                    // 名称快照：remove 前取值（否则恒为 null 显示为 id）
+                    val name = synchronized(memberMap) { memberMap[uid]?.name } ?: uid
                     synchronized(memberMap) { memberMap.remove(uid) }
                     publishMembers()
                     broadcast(
@@ -263,7 +291,7 @@ class SynaServer(
                             ts = System.currentTimeMillis(),
                             body = synaJson.encodeToString(
                                 GroupMemberEvent.serializer(),
-                                GroupMemberEvent(groupId, uid, memberMap[uid]?.name ?: uid),
+                                GroupMemberEvent(groupId, uid, name),
                             ),
                         ),
                         except = null,
@@ -274,6 +302,9 @@ class SynaServer(
     }
 
     private suspend fun handleRelayFrame(session: ClientSession, frame: TransportFrame) {
+        // 防身份伪造：所有中继帧的 from 必须等于认证身份（服务端自帧除外）。
+        // 否则已认证成员可伪造他人 id 广播 KEY 帧毒化公钥、冒名发言、撤回他人消息。
+        if (frame.from.isNotEmpty() && frame.from != groupId && frame.from != session.userId) return
         when (frame.type) {
             FrameType.PING -> {
                 // 保活：响应 PONG，不做中继
@@ -349,10 +380,18 @@ class SynaServer(
 
     private fun rewriteHistory() {
         try {
-            val lines = messages.joinToString("\n") { frame ->
+            // 锁内快照（防并发 CME）+ 原子写（tmp+rename 防截断）
+            val snapshot = synchronized(messages) { messages.toList() }
+            val lines = snapshot.joinToString("\n") { frame ->
                 synaJson.encodeToString(TransportFrame.serializer(), frame)
             }
-            Files.writeString(historyFile, if (lines.isEmpty()) "" else "$lines\n")
+            val tmp = java.nio.file.Path.of(historyFile.toString() + ".tmp")
+            Files.writeString(tmp, if (lines.isEmpty()) "" else "$lines\n")
+            try {
+                Files.move(tmp, historyFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+            } catch (e: Exception) {
+                Files.move(tmp, historyFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            }
         } catch (e: Exception) {
             log("[SynaServer] 历史写入失败: ${e.message}")
         }
@@ -389,7 +428,7 @@ class SynaServer(
 
     private fun printBanner() {
         println("================================================")
-        println("  Syna 私人聊天服务器 v0.7.4")
+        println("  Syna 私人聊天服务器 v0.7.5")
         println("  群名称: $groupName")
         println("  端口:   ${boundPort}")
         println("  数据目录: ${dataDir.toAbsolutePath()}")
@@ -421,7 +460,9 @@ class SynaServer(
 
     private fun saveBans() {
         try {
-            Files.writeString(bansFile, synaJson.encodeToString(banned.toList()))
+            // 锁内快照（防与并发 kick/unban 竞争 CME 丢封禁）
+            val snapshot = synchronized(banned) { banned.toList() }
+            Files.writeString(bansFile, synaJson.encodeToString(snapshot))
         } catch (e: Exception) {
         }
     }
@@ -540,6 +581,7 @@ class SynaServer(
         private val input: DataInputStream,
         private val output: DataOutputStream,
     ) {
+        @Volatile
         var userId: String? = null
         var channelKey: com.syna.crypto.SessionKey? = null
 

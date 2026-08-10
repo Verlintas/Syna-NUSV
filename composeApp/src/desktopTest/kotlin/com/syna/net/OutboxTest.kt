@@ -44,8 +44,8 @@ class OutboxTest {
         val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-        val a = SynaEngine(settingsA, scopeA, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000)
-        val b = SynaEngine(settingsB, scopeB, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000)
+        val a = SynaEngine(settingsA, scopeA, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000, chatPersistence = null)
+        val b = SynaEngine(settingsB, scopeB, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000, chatPersistence = null)
 
         try {
             a.start()
@@ -75,7 +75,7 @@ class OutboxTest {
             assertEquals(1, a.outbox.value[bob.id]?.size, "消息应进入待发送队列")
 
             // B 重启（同一身份）
-            val b2 = SynaEngine(settingsB, scopeB, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000)
+            val b2 = SynaEngine(settingsB, scopeB, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000, chatPersistence = null)
             b2.start()
 
             // A 发现 B 重新上线 → 自动补发

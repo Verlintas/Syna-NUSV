@@ -742,20 +742,21 @@ class AndroidShieldEngine private constructor(
                 ContextCompat.getMainExecutor(activity),
                 object : XBiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationSucceeded(result: XBiometricPrompt.AuthenticationResult) {
-                        SessionKeyStore.captureAuth()
+                        // 会话密钥由 ShieldController 在真正解锁时统一捕获
+                        // （AWAITING_TOTP 阶段不捕获，第二因子通过前数据保持不可解）
                         onResult(true)
                     }
 
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                        // 失败计数统一由控制器 onBiometricFailed 处理（防双计数）
                         if (errorCode != XBiometricPrompt.ERROR_USER_CANCELED) {
                             onResult(false)
-                            ShieldController.current?.onBiometricFailed()
                         }
                     }
 
                     override fun onAuthenticationFailed() {
+                        // 失败计数统一由控制器 onBiometricFailed 处理（防双计数）
                         onResult(false)
-                        ShieldController.current?.onBiometricFailed()
                     }
                 },
             )

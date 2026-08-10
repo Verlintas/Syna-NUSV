@@ -35,6 +35,7 @@ const val BURN_ACK_FALLBACK_MS = 60_000L
 const val SERVER_CHANNEL_INFO = "syna-server-channel"
 const val SERVER_GROUP_INFO = "syna-server-group"
 const val MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024
+const val MAX_FILE_CHUNKS = 4_000 // 分片总数上限（防恶意元数据撑爆内存）
 
 val synaJson: Json = Json {
     ignoreUnknownKeys = true

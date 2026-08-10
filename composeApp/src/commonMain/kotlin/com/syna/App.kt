@@ -80,8 +80,11 @@ fun App() {
             wipe = { engine.chatStore.releaseMemory() },
             restore = { engine.chatStore.reloadFromPersistence() },
         )
-        // 会话密钥轮换（前向安全）：解锁后换新密钥并全量迁移，旧密钥失效
+        // 会话密钥轮换（前向安全）：解锁后换新密钥并全量迁移，旧密钥失效。
+        // 时序：此回调在 setState(UNLOCKED) 之后触发（门禁已放行）——
+        // 先恢复内存数据（解密旧密钥加密的盘上记录），再轮换+重写迁移
         shield.setSessionRotateCallback {
+            engine.chatStore.reloadFromPersistence()
             com.syna.shield.SessionKeyStore.rotateSessionKey()
             engine.chatStore.rewriteNow()
             com.syna.shield.SessionKeyStore.clearMigration()
@@ -201,6 +204,7 @@ fun App() {
                         settings.shieldEnabled = false
                         settings.shieldScreenProtection = false
                         settings.shieldSelfDestruct = false
+                        shield.setSecureScreen(false)
                     }
                 }
             },

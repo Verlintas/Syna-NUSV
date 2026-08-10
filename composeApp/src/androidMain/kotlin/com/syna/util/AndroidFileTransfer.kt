@@ -31,7 +31,18 @@ actual fun saveReceivedFile(fileName: String, bytes: ByteArray): String {
     val dir = File(SynaApp.context.filesDir, "syna_received")
     dir.mkdirs()
     val safeName = fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-    val target = File(dir, safeName)
+    // 同名文件加序号（防重复接收覆盖前一份）
+    var target = File(dir, safeName)
+    if (target.exists()) {
+        val dot = safeName.lastIndexOf('.')
+        val base = if (dot > 0) safeName.substring(0, dot) else safeName
+        val ext = if (dot > 0) safeName.substring(dot) else ""
+        var n = 1
+        while (target.exists()) {
+            target = File(dir, "$base($n)$ext")
+            n++
+        }
+    }
     target.writeBytes(bytes)
     return target.absolutePath
 }
@@ -119,7 +130,22 @@ private fun handlePicked(
     // 后台线程读取，避免阻塞主线程
     Thread {
         try {
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                // SIZE 未知（云盘/流式 provider）时边读边限，防绕过 200MB 上限 OOM
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > com.syna.net.MAX_FILE_SIZE_BYTES) {
+                        throw IllegalArgumentException("文件过大（上限 ${com.syna.net.MAX_FILE_SIZE_BYTES / 1024 / 1024}MB）")
+                    }
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            }
             if (bytes != null) {
                 onPicked(name ?: defaultName, bytes)
             }

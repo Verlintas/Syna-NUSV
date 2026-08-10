@@ -61,7 +61,8 @@ class JvmUdpTransport(private val myId: String) : ConnectionManager {
     }
 
     private suspend fun receiveLoop(s: DatagramSocket) {
-        val buffer = ByteArray(16 * 1024)
+        // 64KB 接收缓冲：兼容 64KB 文件分块（16KB 会静默截断大帧）
+        val buffer = ByteArray(64 * 1024)
         while (true) {
             val packet = DatagramPacket(buffer, buffer.size)
             try {

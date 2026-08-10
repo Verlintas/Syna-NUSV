@@ -41,7 +41,7 @@ class ContactAndGroupManagementTest {
     private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     @Test
@@ -162,7 +162,7 @@ class TypingAndRecallTest {
     private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     @Test
@@ -265,7 +265,7 @@ class FileTransferTest {
     private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     @Test
@@ -344,7 +344,7 @@ class ReplyAndMentionTest {
     private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     @Test
@@ -426,7 +426,7 @@ class StabilityTest {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
         settings.connectionMode = mode
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     @Test

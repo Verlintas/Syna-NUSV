@@ -168,7 +168,6 @@ enum class ShieldAction(val label: String) {
 /** 威胁分级：严重级威胁（root/凭据/设备管理/调试）解锁后若未消除会自动再锁 */
 fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.ROOT_DETECTED,
-    ShieldThreat.DEBUG_MODE,
     ShieldThreat.CREDENTIAL_CHANGED,
     ShieldThreat.DEVICE_ADMIN_CHANGE,
     ShieldThreat.SHIELD_TAMPERED,
@@ -179,6 +178,7 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     -> ThreatSeverity.CRITICAL
 
     ShieldThreat.EMULATOR_DETECTED,
+    ShieldThreat.DEBUG_MODE,
     ShieldThreat.MONITORING_APP,
     ShieldThreat.ACCESSIBILITY_ABUSE,
     ShieldThreat.BACKGROUND_SWITCH,
@@ -346,12 +346,21 @@ internal class WatchdogRing(
         @Volatile
         var fp = ""
 
+        @Volatile
+        var tripped = false
+
         private val key = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
 
         fun beat() {
             val t = System.currentTimeMillis()
             ts = t
             fp = hmacOf(t)
+        }
+
+        fun reset() {
+            ts = 0L
+            fp = ""
+            tripped = false
         }
 
         fun isStale(): Boolean {
@@ -378,6 +387,8 @@ internal class WatchdogRing(
 
     fun start() {
         if (threads.isNotEmpty()) return
+        // 重启时复位所有槽位（防止旧时间戳立即 stale 误 trip）
+        slots.forEach { it.reset() }
         for (i in 0 until 3) {
             val idx = i
             val t = Thread({ loop(idx) }, "syna-watchdog-$idx")
@@ -390,6 +401,7 @@ internal class WatchdogRing(
     fun stop() {
         threads.forEach { it.interrupt() }
         threads.clear()
+        slots.forEach { it.reset() }
     }
 
     private fun loop(idx: Int) {
@@ -401,12 +413,17 @@ internal class WatchdogRing(
             }
             val target = (idx + 1) % 3
             if (slots[target].isStale()) {
-                trips++
-                try {
-                    onTrip()
-                } catch (e: Exception) {
+                // 槽位停滞：同一槽位只触发一次（复位后由相邻线程重新启动心跳）
+                if (!slots[target].tripped) {
+                    slots[target].tripped = true
+                    trips++
+                    try {
+                        onTrip()
+                    } catch (e: Exception) {
+                    }
                 }
             } else {
+                slots[target].tripped = false
                 slots[idx].beat()
             }
         }
@@ -564,6 +581,9 @@ class ShieldController(
         engine.stop()
         watchdog.stop()
         healthJob?.cancel()
+        unlockExpiryJob?.cancel()
+        relockJob?.cancel()
+        wipeJob?.cancel()
         ShieldGate.disarm()
         if (current === this) current = null
     }
@@ -580,6 +600,8 @@ class ShieldController(
             disablingM.value = false
             disablePending = false
             disableCallback = null
+            honeypotM.value = false
+            honeypotStreak = 0
             setState(ShieldState.ARMED)
             threatsM.value = emptyList()
             current = this
@@ -660,18 +682,21 @@ class ShieldController(
         val current = threatsM.value
         if (threat !in current) {
             threatsM.value = current + threat
+            recordEvent(threat, ShieldAction.DETECTED)
         }
-        recordEvent(threat, ShieldAction.DETECTED)
         maybeSelfDestruct(threat)
         // 低危提示类威胁（时钟跳变/未启用锁屏）仅记录审计，不强制锁定，避免误锁
         val advisoryOnly = threat == ShieldThreat.CLOCK_CHANGED || threat == ShieldThreat.WEAK_LOCK
         if (!advisoryOnly) {
             if (threat != ShieldThreat.INACTIVE) {
-                // 注入类威胁 → 假锁模式（Honeypot）：外观与真锁一致，密钥真实释放
+                // 注入类威胁 → 假锁模式（Honeypot）：外观与真锁一致，密钥真实释放；
+                // 仅首次进入时重置 streak（周期重报不清零，否则逃生通道永远无法达成）
                 if (threat == ShieldThreat.FRIDA_DETECTED || threat == ShieldThreat.SHIELD_TAMPERED) {
-                    honeypotM.value = true
-                    honeypotStreak = 0
-                    recordEvent(threat, ShieldAction.HONEYPOT)
+                    if (!honeypotM.value) {
+                        honeypotM.value = true
+                        honeypotStreak = 0
+                        recordEvent(threat, ShieldAction.HONEYPOT)
+                    }
                 }
                 setState(ShieldState.LOCKED)
                 recordEvent(threat, ShieldAction.LOCKED)
@@ -693,8 +718,9 @@ class ShieldController(
         val current = threatsM.value.filterNot { it == threat }
         threatsM.value = current
         recordEvent(threat, ShieldAction.CLEARED)
-        // 威胁全部消除后回到监测中（仍需用户解锁才能使用）
-        if (current.isEmpty()) {
+        // 威胁全部消除后回到监测中（仍需用户解锁才能使用）；
+        // AWAITING_TOTP 中不回退（第二因子验证未完成，防止绕过）
+        if (current.isEmpty() && stateM.value != ShieldState.AWAITING_TOTP) {
             setState(ShieldState.ARMED)
         }
     }
@@ -706,6 +732,8 @@ class ShieldController(
             setState(ShieldState.UNLOCKED)
             return
         }
+        // 已处于 TOTP 等待：不得用生物识别绕过第二因子
+        if (stateM.value == ShieldState.AWAITING_TOTP) return
         val now = System.currentTimeMillis()
         if (now < nextUnlockAt) {
             // 冷却期：静默忽略（不弹窗、不计数），防连续尝试
@@ -732,16 +760,19 @@ class ShieldController(
                     }
                     // 未达次数：保持锁定（密钥保持释放）
                 } else {
-                    // 解锁成功：清零暴力失败计数与冷却；会话密钥轮换（前向安全）
+                    // 解锁成功：清零暴力失败计数与冷却
                     biometricFailsM.value = 0
                     persistBiometricFails(0)
                     nextUnlockAt = 0L
                     cooldownMs = 0L
-                    sessionRotateCallback?.invoke()
+                    // 先恢复门禁（gate 放行），再捕获会话密钥并轮换（前向安全）：
+                    // 顺序保证迁移前能解密旧数据（解锁时序修复）
                     setState(ShieldState.UNLOCKED)
+                    SessionKeyStore.captureAuth()
                     recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
                     scheduleRelockIfCritical()
                     scheduleUnlockExpiry()
+                    sessionRotateCallback?.invoke()
                 }
             } else {
                 onBiometricFailed()
@@ -780,14 +811,15 @@ class ShieldController(
                 cb?.invoke()
                 return
             }
-            // 解锁成功：会话密钥轮换（前向安全）
+            // 解锁成功：门禁恢复后捕获会话密钥并轮换（前向安全）
             honeypotM.value = false
             honeypotStreak = 0
-            sessionRotateCallback?.invoke()
             setState(ShieldState.UNLOCKED)
+            SessionKeyStore.captureAuth()
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
             scheduleRelockIfCritical()
             scheduleUnlockExpiry()
+            sessionRotateCallback?.invoke()
         } else {
             // 错误码：回到锁定，计入失败（触发冷却与暴力上限）
             setState(ShieldState.LOCKED)
@@ -798,7 +830,9 @@ class ShieldController(
     /** 开启双重验证：生成种子并保存（首次需在 TOTP 应用中导入 otpauth URI） */
     fun enableTotp(): String? {
         val seed = TotpCode.newSeed()
+        // 种子保存失败则不启用（避免"看似开启实则无种子"的永久锁定）
         TotpSeedStore.save(seed, totpSeedPath)
+        if (TotpSeedStore.load(totpSeedPath) == null) return null
         totpEnabledM.value = true
         return TotpCode.otpauthUri(seed, deviceLabel())
     }
@@ -1017,6 +1051,13 @@ class ShieldController(
                     ?: plain
                 val hash = sha256("$prevHash|$content")
                 file.appendText("$content|$prevHash|$hash\n")
+                // 事件文件封顶：超过上限保留最近 N 条（截断哈希链起点）
+                if (file.length() > MAX_PERSISTED_EVENTS * 220L) {
+                    val keep = file.readLines().takeLast(MAX_PERSISTED_EVENTS)
+                    java.io.FileOutputStream(file).use { out ->
+                        keep.forEach { out.write((it + "\n").toByteArray()) }
+                    }
+                }
             } catch (e: Exception) {
             }
         }
@@ -1068,6 +1109,7 @@ class ShieldController(
         const val RELOCK_AFTER_UNLOCK_MS = 30_000L
         const val UNLOCK_TTL_MS = 5 * 60_000L // 解锁有效期：5 分钟自动再锁
         const val MAX_EVENTS = 100
+        const val MAX_PERSISTED_EVENTS = 2_000 // 事件文件封顶（防无限增长）
         const val GENESIS_HASH = "genesis" // 哈希链起点
         const val BIOMETRIC_FAIL_LIMIT = 5
         const val MEMORY_WIPE_DELAY_MS = 60_000L // 切后台 60 秒后擦除内存明文

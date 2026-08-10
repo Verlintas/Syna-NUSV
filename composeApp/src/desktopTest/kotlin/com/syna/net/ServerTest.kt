@@ -39,7 +39,7 @@ class ServerTest {
     private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     private fun startServer(dataDir: java.nio.file.Path): SynaServer {
@@ -266,7 +266,7 @@ class ServerManagementTest {
     private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 3_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     @Test

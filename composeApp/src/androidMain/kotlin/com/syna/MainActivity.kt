@@ -92,8 +92,10 @@ class MainActivity : FragmentActivity() {
             if (com.syna.shield.ShieldController.current?.state?.value == com.syna.shield.ShieldState.LOCKED) {
                 // 锁定期间吞掉返回键
             } else {
+                // 用后即恢复（否则同实例内 Shield 再次锁定后返回键不再被拦截）
                 isEnabled = false
                 onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
             }
         }
     }
@@ -139,5 +141,9 @@ class MainActivity : FragmentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         if (sCurrent === this) sCurrent = null
+        // 清理挂起的文件选择回调：旋转重建后旧回调捕获已销毁的 engine，
+        // 继续持有会导致结果写入死实例（静默丢失）
+        pendingImagePick = null
+        pendingFilePick = null
     }
 }

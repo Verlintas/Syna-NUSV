@@ -46,11 +46,13 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.1.0",
+    private val version: String = "0.7.5",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
     private val tempChatTtlMsOverride: Long? = null,
+    /** 聊天记录持久化（默认启用；测试可传 null 关闭落盘） */
+    chatPersistence: com.syna.storage.ChatPersistence? = com.syna.storage.ChatPersistence(),
 ) {
     val userId: String = settings.userId
         .ifEmpty { Uuid.random().toString().also { settings.userId = it } }
@@ -89,7 +91,7 @@ class SynaEngine(
     private val outboxM = MutableStateFlow<Map<String, List<TransportFrame>>>(emptyMap())
     val outbox: StateFlow<Map<String, List<TransportFrame>>> = outboxM.asStateFlow()
 
-    val chatStore = ChatStore()
+    val chatStore = ChatStore(persistence = chatPersistence)
 
     private val serverStateM = MutableStateFlow(ServerState.DISCONNECTED)
     val serverState: StateFlow<ServerState> = serverStateM.asStateFlow()
@@ -116,6 +118,7 @@ class SynaEngine(
     ) {
         val chunks = arrayOfNulls<ByteArray>(totalChunks)
         var received = 0
+        var receivedBytes = 0
         var lastUpdate: Long = System.currentTimeMillis()
     }
 
@@ -187,7 +190,12 @@ class SynaEngine(
         }
         scope.launch {
             incomingM.collect { event ->
-                if (event is IncomingEvent.PeerFrame) handleChatFrame(event.frame)
+                try {
+                    if (event is IncomingEvent.PeerFrame) handleChatFrame(event.frame)
+                } catch (e: Throwable) {
+                    // 单帧异常隔离：恶意/损坏帧不得杀死整条收信管线
+                    synaLog("Frame") { "帧处理异常: ${e.message}" }
+                }
             }
         }
         scope.launch {
@@ -420,7 +428,13 @@ class SynaEngine(
                 val conversationId = if (groupsM.value.any { it.id == frame.to }) frame.to else frame.from
                 typingM.updateMap { it + (conversationId to (System.currentTimeMillis() to frame.from)) }
             }
-            FrameType.RECALL -> frame.body?.let { msgId -> chatStore.markRecalledByMsgId(msgId) }
+            FrameType.RECALL -> frame.body?.let { msgId ->
+                // 防伪造：仅消息发送者本人可撤回（群聊防他人撤回）
+                val msg = chatStore.messageById(msgId)
+                if (msg != null && msg.senderId == frame.from) {
+                    chatStore.markRecalledByMsgId(msgId)
+                }
+            }
             FrameType.REQ_KEY -> {
                 // 对方请求我们的公钥：必须无节流直发（sendKeyFrame 有 30s 节流，
                 // 若被拦截则丢失 KEY 的一方永远无法自愈）
@@ -467,7 +481,14 @@ class SynaEngine(
                 }
             }
             FrameType.READ -> frame.body?.let { msgId -> chatStore.updateStatus(msgId, MessageStatus.READ) }
-            FrameType.BURN_ACK -> frame.body?.let { msgId -> chatStore.removeMessageById(msgId) }
+            FrameType.BURN_ACK -> frame.body?.let { msgId ->
+                // 防伪造：仅"我发出的"且"来自对话对端"的确认才清除焚毁副本
+                // （攻击者嗅探 msgId 后伪造 ACK 无法删除他人消息）
+                val msg = chatStore.messageById(msgId)
+                if (msg != null && msg.senderId == userId && frame.from == msg.conversationId) {
+                    chatStore.removeMessageById(msgId)
+                }
+            }
             else -> Unit
         }
     }
@@ -1057,19 +1078,31 @@ class SynaEngine(
         } catch (e: Exception) {
             return
         }
+        // 恶意/损坏元数据防护：尺寸上限、分片索引/总数范围校验（防 OOM/越界）
+        if (fc.fileSize <= 0 || fc.fileSize > MAX_FILE_SIZE_BYTES) return
+        if (fc.totalChunks <= 0 || fc.totalChunks > MAX_FILE_CHUNKS) return
+        if (fc.index < 0 || fc.index >= fc.totalChunks) return
         val conversationId = if (groupsM.value.any { it.id == frame.to }) frame.to else frame.from
         val assembler = fileAssemblers.getOrPut(fc.fileId) {
             FileAssembler(fc.fileName, fc.fileSize, fc.mimeType, fc.totalChunks)
         }
         if (assembler.chunks[fc.index] == null) {
-            assembler.chunks[fc.index] = @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
-            kotlin.io.encoding.Base64.Default.decode(fc.dataB64)
+            val chunkBytes = try {
+                @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+                kotlin.io.encoding.Base64.Default.decode(fc.dataB64)
+            } catch (e: Exception) {
+                return
+            }
+            // 累计长度不能超过声明的 fileSize
+            if (assembler.receivedBytes + chunkBytes.size > fc.fileSize) return
+            assembler.chunks[fc.index] = chunkBytes
             assembler.received++
+            assembler.receivedBytes += chunkBytes.size
             assembler.lastUpdate = System.currentTimeMillis()
         }
         if (assembler.received >= assembler.totalChunks) {
             fileAssemblers.remove(fc.fileId)
-            val full = ByteArray(assembler.fileSize.toInt())
+            val full = ByteArray(assembler.receivedBytes)
             var offset = 0
             for (i in 0 until assembler.totalChunks) {
                 val c = assembler.chunks[i] ?: continue
@@ -1077,7 +1110,7 @@ class SynaEngine(
                 offset += c.size
             }
             val path = try {
-                saveReceivedFile(assembler.fileName, full.copyOfRange(0, offset))
+                saveReceivedFile(assembler.fileName, full)
             } catch (e: Exception) {
                 synaLog("File") { "保存失败: ${e.message}" }
                 return
@@ -1410,10 +1443,20 @@ class SynaEngine(
 private fun IncomingEvent.PeerFrame.copyWith(frame: TransportFrame): IncomingEvent =
     IncomingEvent.PeerFrame(this.peerId, frame)
 
+// CAS 原子更新
 private fun <T> MutableStateFlow<List<T>>.updateList(transform: (List<T>) -> List<T>) {
-    value = transform(value)
+    while (true) {
+        val cur = value
+        val next = transform(cur)
+        if (compareAndSet(cur, next)) return
+    }
 }
 
+// CAS 原子更新（读-改-写不再跨线程丢失更新）
 private fun <K, V> MutableStateFlow<Map<K, V>>.updateMap(transform: (Map<K, V>) -> Map<K, V>) {
-    value = transform(value)
+    while (true) {
+        val cur = value
+        val next = transform(cur)
+        if (compareAndSet(cur, next)) return
+    }
 }

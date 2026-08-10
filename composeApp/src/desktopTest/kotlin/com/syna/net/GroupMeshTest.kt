@@ -37,7 +37,7 @@ class GroupMeshTest {
     private fun newEngine(name: String, scope: CoroutineScope): SynaEngine {
         val settings = SettingsRepository(MapSettings())
         settings.username = name
-        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+        return SynaEngine(settings, scope, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
     }
 
     @Test

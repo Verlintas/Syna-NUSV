@@ -32,12 +32,30 @@ actual fun saveReceivedFile(fileName: String, bytes: ByteArray): String {
     val dir = Paths.get(System.getProperty("user.home") ?: ".", "Downloads", "Syna")
     Files.createDirectories(dir)
     val safeName = fileName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-    val target = dir.resolve(safeName)
+    // 同名文件加序号（防重复接收覆盖前一份）
+    var target = dir.resolve(safeName)
+    if (Files.exists(target)) {
+        val dot = safeName.lastIndexOf('.')
+        val base = if (dot > 0) safeName.substring(0, dot) else safeName
+        val ext = if (dot > 0) safeName.substring(dot) else ""
+        var n = 1
+        while (Files.exists(target)) {
+            target = dir.resolve("$base($n)$ext")
+            n++
+        }
+    }
     Files.write(target, bytes)
     return target.toString()
 }
 
-actual fun readFileBytes(path: String): ByteArray = Files.readAllBytes(Paths.get(path))
+actual fun readFileBytes(path: String): ByteArray {
+    val f = Paths.get(path)
+    // 大文件预检（与 Android 侧 200MB 上限一致，防 OOM）
+    if (Files.size(f) > com.syna.net.MAX_FILE_SIZE_BYTES) {
+        throw IllegalArgumentException("文件过大（上限 ${com.syna.net.MAX_FILE_SIZE_BYTES / 1024 / 1024}MB）")
+    }
+    return Files.readAllBytes(f)
+}
 
 @Composable
 actual fun ImagePickerButton(

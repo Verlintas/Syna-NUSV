@@ -85,9 +85,14 @@ fun main() = application {
 
     Window(
         onCloseRequest = {
-            // 关闭按钮 → 最小化到托盘（继续后台收消息）；托盘菜单"退出"才真正退出
-            windowVisible = false
-            ensureTray(onOpen = { windowVisible = true }, onExit = ::exitApplication)
+            // 关闭按钮 → 最小化到托盘（继续后台收消息）；托盘菜单"退出"才真正退出。
+            // 平台无托盘（如 macOS）时不得隐藏窗口——隐藏后无恢复入口，只能强杀重启
+            if (SystemTray.isSupported()) {
+                windowVisible = false
+                ensureTray(onOpen = { windowVisible = true }, onExit = ::exitApplication)
+            } else {
+                exitApplication()
+            }
         },
         visible = windowVisible,
         title = "Syna",

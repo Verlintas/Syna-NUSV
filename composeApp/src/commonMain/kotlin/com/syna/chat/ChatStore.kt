@@ -241,6 +241,10 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
     /** 锁定期间释放内存中的消息（防 root 进程 dump 读取），会话元数据保留 */
     fun releaseMemory() {
         messagesM.value = emptyMap()
+        // 会话元数据中的消息明文预览一并清除（锁定期间防 root dump 泄露）
+        conversationsM.value = conversationsM.value.map { c ->
+            c.copy(lastMessage = "", unreadCount = 0)
+        }
     }
 
     /** 解锁后从持久化重新加载消息 */
@@ -312,10 +316,19 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
     }
 }
 
+// CAS 原子更新（读-改-写不再跨线程丢失更新）
+internal fun <T> MutableStateFlow<T>.casUpdate(transform: (T) -> T) {
+    while (true) {
+        val cur = value
+        val next = transform(cur)
+        if (compareAndSet(cur, next)) return
+    }
+}
+
 internal fun <K, V> MutableStateFlow<Map<K, V>>.updateMap(transform: (Map<K, V>) -> Map<K, V>) {
-    value = transform(value)
+    casUpdate(transform)
 }
 
 internal fun <T> MutableStateFlow<List<T>>.updateList(transform: (List<T>) -> List<T>) {
-    value = transform(value)
+    casUpdate(transform)
 }

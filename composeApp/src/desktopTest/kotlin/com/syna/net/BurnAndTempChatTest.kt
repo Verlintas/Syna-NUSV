@@ -45,8 +45,8 @@ class BurnAndTempChatTest {
         val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-        val a = SynaEngine(settingsA, scopeA, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
-        val b = SynaEngine(settingsB, scopeB, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000)
+        val a = SynaEngine(settingsA, scopeA, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
+        val b = SynaEngine(settingsB, scopeB, discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 1_000, chatPersistence = null)
 
         try {
             a.start()
@@ -122,11 +122,13 @@ class BurnAndTempChatTest {
             settingsA, scopeA,
             discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 500,
             tempChatTtlMsOverride = 1_500,
+            chatPersistence = null,
         )
         val b = SynaEngine(
             settingsB, scopeB,
             discoveryIntervalMs = 1_000, peerTimeoutMs = 5_000, sweepIntervalMs = 500,
             tempChatTtlMsOverride = 1_500,
+            chatPersistence = null,
         )
 
         try {

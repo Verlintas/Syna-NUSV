@@ -151,7 +151,9 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
             Files.createDirectories(file.parent)
             val plain = if (lines.isEmpty()) ByteArray(0) else "$lines\n".toByteArray()
             val payload = ShieldStorageKey.encrypt(plain)
-            java.io.FileOutputStream(file.toFile()).use { out ->
+            // 原子写：先写临时文件再 rename，防进程被杀/断电产生截断主文件
+            val tmp = Path.of(path + ".tmp")
+            java.io.FileOutputStream(tmp.toFile()).use { out ->
                 if (payload != null) {
                     out.write(MAGIC.toByteArray())
                     out.write(payload)
@@ -159,6 +161,12 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
                     // 加密密钥不可用（异常环境）：降级明文存储并提示
                     out.write(plain)
                 }
+            }
+            try {
+                Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+            } catch (e: Exception) {
+                // 文件系统不支持原子移动：退化为普通替换
+                Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             }
         } catch (e: Exception) {
             println("[Syna:Persist] 写入失败: ${e.message}")
