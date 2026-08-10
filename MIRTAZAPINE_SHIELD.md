@@ -257,6 +257,7 @@ Beyond passive detection, the Shield actively fights back:
 | Countermeasure | Mechanism |
 |---|---|
 | **Operation-triggered integrity probing** | Every ~8th decrypt runs a native code-integrity check. The periodic scanner can be paused by an attacker — but the decrypt path is one they must use, turning every decrypt into a detection window (millisecond overhead) |
+| **Active crash defense (v0.7.9)** | High-confidence signals — `TracerPid ≠ 0` (ptrace-attached) and integrity bits 0/1 (own code / libc hooked) — trigger an immediate native `SIGABRT` instead of a polite lock. An attacker who attaches a debugger or hooks a detector gets a crash on **every** attempt; there is no stable window to debug step-by-step. Audit is written best-effort before the crash. Low-confidence signals (ports/paths/maps) keep the honeypot flow, so false-positive crashes are impossible |
 | **Watchdog self-healing** | A watchdog trip immediately restarts the detection loop — a paused scanner is revived, a killed one reborn; the heartbeat resumes instead of staying dead |
 | **Honeypot data pollution** | Engaging the fake-lock writes decoy messages into the local store (audited). An attacker who eventually unlocks faces polluted data and cannot tell real records from decoys |
 
@@ -575,6 +576,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.7.6 | Review second pass: shield lifecycle on dispose, desktop key quarantine, captureAuth TOCTOU, native maps buffers, outbox mutex, receipt/key-frame guards, inbound TCP read timeout |
 | v0.7.7 | All client bugs closed: TCP-failure → offline queue, bidirectional heartbeat (PONG), burn TTL fallback, server-group disconnect awareness, discovery resilience, quote-bar/image-decode/EDT UI fixes, CA user-cert-only, mirroring both directions, exact process matching |
 | v0.7.8 | **Expanded detection & active countermeasures**: Riru/EdXposed/TaiChi + SELinux domain in root detection, IME/USB/suspicious-module advisories (LOW); **operation-triggered integrity probing on the decrypt path**, **watchdog self-healing** (scanner restart), **honeypot data pollution** (decoy messages) |
+| v0.7.9 | **Active crash defense**: native `SIGABRT` on high-confidence signals (ptrace attach / code or libc hooked) — no stable debugging window; usage-access grant now targets Syna (`EXTRA_APP_PACKAGE`); full permission self-check on every launch |
 
 ---
 
