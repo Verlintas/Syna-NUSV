@@ -144,23 +144,40 @@ prevents an attacker from predicting exactly when the next scan happens.
 | `checkDowngradeAttempt` | `versionCode` compared against an encrypted baseline (`syna_version_base`); rollback → CRITICAL `DOWNGRADE_ATTEMPT` (downgrade is a common way to re-enable a patched build). Normal upgrades update the baseline. | CRITICAL `DOWNGRADE_ATTEMPT` |
 | `ShieldConfigGuard` | Settings file carries an HMAC signature; tamper or wipe → force-restore of safe defaults + `SHIELD_TAMPERED` | CRITICAL + forced restore |
 
-### 3.4 Native anti-debug layer (NDK, since v0.7.2)
+### 3.4 Native anti-debug & anti-hook layer (NDK, v0.7.2 → v0.7.3)
 
 `libsyna_shield.so` (C, GPL-3.0, shipped for arm64-v8a / armeabi-v7a / x86_64 / x86)
-reads the same process signals **in C**:
+reads process signals **in C** and actively fights hooking of the detectors themselves.
+
+#### Detection channels
 
 | C function | What it reads |
 |---|---|
 | `tracerPid()` | `/proc/self/status` `TracerPid` (kernel-maintained, reliable — unlike self-ptrace probes which false-positive under SELinux) |
 | `fridaMaps()` | `/proc/self/maps` scan for frida / gum / libgadget mappings |
 | `fridaThreads()` | `/proc/self/task/*/comm` scan for frida / gum-js thread names |
+| `integrity()` | bitmask: bit0 = own code segment / export entries modified, bit1 = libc functions modified |
 
-Why it matters: JVM-level hooks (Java API hooking, repackaged dex hooks) **cannot
-cover C call sites**. Bypassing the native channel requires gadget-level native hooking
-(frida-gadget with an explicit native script) — a materially higher bar. Every scan
-runs **both channels**; either one hitting triggers the lock. If the library fails to
-load (unsupported platform), the JVM implementation continues alone — no loss of
-protection.
+JVM-level hooks (Java API hooking, repackaged dex hooks) cannot cover C call sites at
+all. Every scan runs **both channels**; either one hitting triggers the lock. If the
+library fails to load, the JVM implementation continues alone.
+
+#### Anti-hook mechanisms (v0.7.3)
+
+| Threat | Countermeasure |
+|---|---|
+| **GOT / PLT / LD_PRELOAD hook** of libc | All detection I/O uses raw `SYS_openat` / `SYS_read` / `SYS_close` / `SYS_getdents64` syscalls — GOT rewriting cannot reach a syscall instruction. String primitives (strstr / strlen / atoi / compare) are self-implemented, so the detectors never call hookable libc routines. |
+| **Inline hook** of `libsyna_shield.so` code | `integrity()` computes a self-contained SHA-256 (no crypto library) over every `PT_LOAD` executable segment **in memory vs. on disk** (`dl_iterate_phdr` resolves the load mapping; `useLegacyPackaging` guarantees the .so is a real file). Any byte patch → mismatch → bit0. |
+| **Inline hook of the detectors themselves** | Every JNI export entry — including `integrity()` itself — is compared byte-wise against the disk file (self-referential: hooking the verifier is also a code modification). |
+| **Inline hook of libc functions** | `openat` / `read` / `close` / `getdents64` / `dlsym` / `dlopen` / `pthread_create` entry bytes are compared against the on-disk bionic libc; the address is resolved via `dlsym` (**not** through GOT) → mismatch → bit1. |
+
+Response: bit0 → CRITICAL `SHIELD_TAMPERED` (honeypot lock, key release); bit1 →
+CRITICAL `FRIDA_DETECTED` (injection). Combined with the watchdog ring, the fail-closed
+gate, and the JVM channel, the cost of a silent bypass is deliberately very high.
+
+Honest ceiling (app-layer): hooking the verifier *and* suppressing the execution chain
+is the theoretical limit of any in-process defense — but that itself requires an
+injection which the remaining channels are watching for.
 
 ### 3.5 Runtime change detectors (Android)
 
@@ -539,6 +556,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.7.0 | **TOTP 2FA**: biometric + 6-digit dynamic code dual unlock, `otpauth://` seed import, wrong codes feed brute-force pipeline |
 | v0.7.1 | **Data-level key gate**: session-key layer wrapped by biometric-authenticated Keystore key; no auth → new data unreadable; lock invalidates session; master-key fallback for history |
 | v0.7.2 | **Native anti-debug (NDK)**: TracerPid/maps/threads read in C (4 ABIs), JVM + native dual-channel verification, graceful fallback |
+| v0.7.3 | **Native anti-hook**: syscall-direct I/O (GOT/PLT/LD_PRELOAD dead), own-code-segment memory-vs-disk hashing (inline-hook detection), export-entry self-verification, libc entry verification — bitmask wired into SHIELD_TAMPERED / FRIDA_DETECTED |
 
 ---
 
