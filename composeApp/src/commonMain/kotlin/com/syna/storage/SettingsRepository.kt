@@ -56,6 +56,13 @@ class SettingsRepository(private val settings: Settings = Settings()) {
             settings.putBoolean(KEY_E2E_ENABLED, value)
         }
 
+    /** 仅加密会话：密钥未就绪时拒发明文（防静默降级） */
+    var e2eOnlyEnabled: Boolean
+        get() = settings.getBoolean(KEY_E2E_ONLY_ENABLED, false)
+        set(value) {
+            settings.putBoolean(KEY_E2E_ONLY_ENABLED, value)
+        }
+
     var burnAfterReadingEnabled: Boolean
         get() = settings.getBoolean(KEY_BURN_ENABLED, false)
         set(value) {
@@ -133,6 +140,7 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         const val KEY_CONNECTION_MODE = "connection_mode"
         const val KEY_THEME_MODE = "theme_mode"
         const val KEY_E2E_ENABLED = "e2e_enabled"
+        const val KEY_E2E_ONLY_ENABLED = "e2e_only_enabled"
         const val KEY_BURN_ENABLED = "burn_after_reading"
         const val KEY_TEMP_CHAT_ENABLED = "temp_chat_enabled"
         const val KEY_TEMP_CHAT_TTL_HOURS = "temp_chat_ttl_hours"

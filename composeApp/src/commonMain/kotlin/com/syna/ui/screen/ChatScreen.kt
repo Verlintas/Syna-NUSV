@@ -91,6 +91,8 @@ fun ChatScreen(
     val outbox by engine.outbox.collectAsState()
     val serverState by engine.serverState.collectAsState()
     val typing by engine.typing.collectAsState()
+    // 密钥指纹核对对话框（存对端公钥）
+    var fingerprintDialog by remember { mutableStateOf<String?>(null) }
     val peer = peers.firstOrNull { it.id == peerId }
     val group = groups.firstOrNull { it.id == peerId }
     val isGroup = group != null
@@ -194,6 +196,21 @@ fun ChatScreen(
                         text = typingInfo,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            // 密钥指纹（TOFU 安全号码）：1:1 且已加密时显示短码，点击核对完整指纹
+            if (!isGroup) {
+                val peerKey = engine.peerKeys.value[peerId]
+                if (peerKey != null) {
+                    val fp = com.syna.shield.KeyPinning.fingerprint(peerKey)
+                    Text(
+                        text = "🔑 $fp",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { fingerprintDialog = peerKey }
+                            .padding(horizontal = 16.dp),
                     )
                 }
             }
@@ -512,6 +529,47 @@ fun ChatScreen(
         }
     }
     } // BoxWithConstraints
+
+        // 密钥指纹核对：完整指纹 + 信任新密钥（重装/确认无中间人后重新固定）
+        fingerprintDialog?.let { key ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { fingerprintDialog = null },
+                title = { Text("对端密钥指纹") },
+                text = {
+                    Column {
+                        Text(
+                            "通过其他可信渠道（口头/线下）与对方核对以下指纹一致后，可放心通信。若指纹变化，可能是对方重装应用或中间人攻击。",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = com.syna.shield.KeyPinning.fingerprintFull(key),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        val pinned = com.syna.shield.KeyPinning.pinnedKey(peerId)
+                        if (pinned != null && pinned != key) {
+                            Text(
+                                "⚠️ 该公钥与已固定指纹不一致（密钥变更被拒）——确认安全后可点击下方按钮信任新密钥",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = {
+                        // 信任新密钥（重新固定 + 接受新公钥）
+                        engine.retrustPeerKey(peerId, key)
+                        fingerprintDialog = null
+                    }) { Text("信任此密钥") }
+                },
+                dismissButton = {
+                    androidx.compose.material3.TextButton(onClick = { fingerprintDialog = null }) { Text("关闭") }
+                },
+            )
+        }
 }
 
 @Composable

@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.8.0",
+    private val version: String = "0.8.1",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -217,17 +217,50 @@ class SynaEngine(
         if (event is IncomingEvent.PeerFrame) emit(event.frame)
     }
 
+    /**
+     * TOFU 密钥固定：首次记录为基准；变更不自动接受（防 P2P 公钥毒化/中间人）。
+     * 变更时保留旧密钥并上报 KEY_CHANGED（HIGH 锁定），用户核对指纹后
+     * 可在聊天页主动"信任新密钥"重新固定。
+     */
+    private fun pinPeerKey(peerId: String, key: String) {
+        if (peerId == userId) return
+        when (com.syna.shield.KeyPinning.checkAndPin(peerId, key)) {
+            com.syna.shield.KeyPinning.PinResult.PINNED_FIRST,
+            com.syna.shield.KeyPinning.PinResult.PINNED_MATCH,
+            -> peerKeysM.updateMap { it + (peerId to key) }
+            com.syna.shield.KeyPinning.PinResult.PINNED_CHANGED -> {
+                // 公钥变更：不覆盖旧密钥（攻击者无法毒化），锁定并提示
+                synaLog("Crypto") { "密钥变更被拒: $peerId (potential MITM)" }
+                com.syna.shield.ShieldController.current?.reportThreat(com.syna.shield.ShieldThreat.KEY_CHANGED)
+            }
+        }
+    }
+
+    /** 用户确认信任新密钥（重装/核对指纹后）：重新固定并接受新公钥 */
+    fun retrustPeerKey(peerId: String, key: String) {
+        com.syna.shield.KeyPinning.rePin(peerId, key)
+        peerKeysM.updateMap { it + (peerId to key) }
+    }
+
+    /** 重放防护：拒绝超过 [MAX_FRAME_AGE_MS] 的实时帧（服务器历史回放走独立入口不受影响） */
+    private fun isReplay(frame: TransportFrame): Boolean {
+        return when (frame.type) {
+            FrameType.TEXT, FrameType.IMAGE, FrameType.FILE_CHUNK, FrameType.KEY,
+            FrameType.READ, FrameType.BURN_ACK, FrameType.RECALL, FrameType.REQ_KEY,
+            -> frame.ts > 0 && System.currentTimeMillis() - frame.ts > MAX_FRAME_AGE_MS
+            else -> false
+        }
+    }
+
     private suspend fun decryptEvent(event: IncomingEvent): IncomingEvent? {
         if (event !is IncomingEvent.PeerFrame) return event
         val frame = event.frame
+        // 重放防护：超时窗口的实时帧直接丢弃
+        if (isReplay(frame)) return null
         when (frame.type) {
-            FrameType.HELLO -> frame.body?.let { key ->
-                peerKeysM.updateMap { it + (frame.from to key) }
-            }
+            FrameType.HELLO -> frame.body?.let { key -> pinPeerKey(frame.from, key) }
             FrameType.KEY -> {
-                frame.body?.let { key ->
-                    peerKeysM.updateMap { it + (frame.from to key) }
-                }
+                frame.body?.let { key -> pinPeerKey(frame.from, key) }
                 // 收到公钥后回发自己的公钥，节流避免回复风暴
                 val now = System.currentTimeMillis()
                 val lastSent = peerKeySentM.value[frame.from] ?: 0L
@@ -1324,6 +1357,11 @@ class SynaEngine(
         if (text.isBlank()) return ""
         val peer = peersM.value.firstOrNull { it.id == peerId } ?: return ""
         val peerKey = peerKeysM.value[peerId]
+        // 仅加密会话：密钥未就绪时拒发（不静默明文降级）
+        if (settings.e2eOnlyEnabled && peerKey == null) {
+            notifyMessage("Syna", "对方加密密钥未就绪，已拒绝明文发送（仅加密会话模式）")
+            return ""
+        }
         val encrypted = settings.e2eEnabled && peerKey != null
         val msgId = newMsgId()
         val frame = TransportFrame(

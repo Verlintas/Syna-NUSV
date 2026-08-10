@@ -5,6 +5,9 @@ import android.content.ClipDescription
 import com.syna.SynaApp
 import java.io.File
 
+actual fun keyPinsPath(): String =
+    java.io.File(com.syna.SynaApp.context.filesDir, "syna_key_pins").absolutePath
+
 actual fun shieldEventsPath(): String =
     File(SynaApp.context.filesDir, "shield_events.jsonl").absolutePath
 

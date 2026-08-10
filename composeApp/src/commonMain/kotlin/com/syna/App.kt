@@ -154,6 +154,7 @@ fun App() {
         }
     }
     var e2eEnabled by remember { mutableStateOf(settings.e2eEnabled) }
+    var e2eOnlyEnabled by remember { mutableStateOf(settings.e2eOnlyEnabled) }
     var burnAfterReading by remember { mutableStateOf(settings.burnAfterReadingEnabled) }
     var tempChatEnabled by remember { mutableStateOf(settings.tempChatEnabled) }
     var tempChatTtlHours by remember { mutableStateOf(settings.tempChatTtlHours) }
@@ -187,6 +188,7 @@ fun App() {
             themeMode = themeMode,
             burnAfterReading = burnAfterReading,
             e2eEnabled = e2eEnabled,
+            e2eOnlyEnabled = e2eOnlyEnabled,
             tempChatEnabled = tempChatEnabled,
             tempChatTtlHours = tempChatTtlHours,
             onUsernameChange = {
@@ -208,6 +210,10 @@ fun App() {
             onE2eEnabledChange = {
                 e2eEnabled = it
                 settings.e2eEnabled = it
+            },
+            onE2eOnlyEnabledChange = {
+                e2eOnlyEnabled = it
+                settings.e2eOnlyEnabled = it
             },
             onTempChatEnabledChange = {
                 tempChatEnabled = it

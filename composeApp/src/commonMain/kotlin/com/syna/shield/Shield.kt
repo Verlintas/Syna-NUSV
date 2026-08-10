@@ -110,6 +110,11 @@ enum class ShieldThreat(
         "检测到可疑可执行模块",
         "进程加载了非系统目录的可执行模块，疑似注入",
     ),
+    KEY_CHANGED(
+        "keychanged",
+        "检测到对端密钥变更",
+        "对方的加密密钥发生变化，可能是重装应用或中间人攻击，请核对密钥指纹",
+    ),
     SHIELD_TAMPERED(
         "tampered",
         "检测到安全设置被篡改",
@@ -204,7 +209,9 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.NETWORK_MITM,
     -> ThreatSeverity.MEDIUM
 
-    ShieldThreat.SCREEN_RECORDING -> ThreatSeverity.HIGH
+    ShieldThreat.SCREEN_RECORDING,
+    ShieldThreat.KEY_CHANGED,
+    -> ThreatSeverity.HIGH
     ShieldThreat.INACTIVE,
     ShieldThreat.CLOCK_CHANGED,
     ShieldThreat.WEAK_LOCK,

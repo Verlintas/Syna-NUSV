@@ -70,9 +70,11 @@ fun SettingsScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     onBurnAfterReadingChange: (Boolean) -> Unit,
     onE2eEnabledChange: (Boolean) -> Unit,
+    onE2eOnlyEnabledChange: (Boolean) -> Unit,
     onTempChatEnabledChange: (Boolean) -> Unit,
     onTempChatTtlChange: (Int) -> Unit,
     e2eEnabled: Boolean,
+    e2eOnlyEnabled: Boolean,
     tempChatEnabled: Boolean,
     tempChatTtlHours: Int,
     shieldEnabled: Boolean,
@@ -180,6 +182,20 @@ fun SettingsScreen(
                 Text("X25519 密钥交换 + AES-256-GCM，密钥仅存于本机", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Switch(checked = e2eEnabled, onCheckedChange = onE2eEnabledChange)
+        }
+        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onE2eOnlyEnabledChange(!e2eOnlyEnabled) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("仅加密会话", style = MaterialTheme.typography.bodyLarge)
+                Text("对方密钥未就绪时拒发明文（防静默降级为明文）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = e2eOnlyEnabled, onCheckedChange = onE2eOnlyEnabledChange)
         }
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         Row(
