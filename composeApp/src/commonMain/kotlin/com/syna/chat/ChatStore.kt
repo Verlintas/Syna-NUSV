@@ -155,6 +155,14 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         scheduleRewrite()
     }
 
+    fun markEncrypted(msgId: String, encrypted: Boolean) {
+        messagesM.updateMap { map ->
+            map.mapValues { (_, list) ->
+                list.map { if (it.id == msgId) it.copy(encrypted = encrypted) else it }
+            }
+        }
+    }
+
     fun updateProgressClear(msgId: String) {
         messagesM.updateMap { map ->
             map.mapValues { (_, list) ->

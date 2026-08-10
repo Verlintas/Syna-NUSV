@@ -69,6 +69,9 @@ class AndroidShieldEngine private constructor(
             instance?.activeActivity = null
             instance?.unregisterScreenCapture()
         }
+
+        /** 当前宿主 Activity（供权限请求等使用；无宿主返回 null） */
+        fun activeActivityOrNull(): Activity? = instance?.activeActivity
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

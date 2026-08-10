@@ -109,6 +109,9 @@ expect fun clearReceivedFiles()
 /** 平台附加痕迹清理（自毁时覆写删除：种子/blob/基准/崩溃日志等） */
 expect fun destructPlatformArtifacts()
 
+/** 复制文本到系统剪贴板（供短 TTL 自动清除机制使用） */
+expect fun copyTextToClipboard(text: String)
+
 /**
  * 聊天记录 JSONL 文件持久化（零依赖、跨平台一致）：
  * 启动加载全部消息，变更后全量重写（保留最近 [MAX_MESSAGES] 条防无限增长）。

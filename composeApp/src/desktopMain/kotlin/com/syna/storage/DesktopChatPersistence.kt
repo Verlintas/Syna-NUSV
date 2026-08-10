@@ -18,6 +18,14 @@ actual fun receivedFilesSize(): Long = try {
     0L
 }
 
+actual fun copyTextToClipboard(text: String) {
+    try {
+        val selection = java.awt.datatransfer.StringSelection(text)
+        java.awt.Toolkit.getDefaultToolkit().systemClipboard.setContents(selection, null)
+    } catch (e: Exception) {
+    }
+}
+
 actual fun destructPlatformArtifacts() {
     try {
         val dir = java.io.File(System.getProperty("user.home") ?: ".", ".syna")

@@ -52,6 +52,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -59,6 +60,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -365,6 +367,19 @@ fun ChatScreen(
                                 },
                             ) { Text("转发") }
                         }
+                        if (target != null && target.body.isNotBlank()) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    com.syna.storage.copyTextToClipboard(target.body)
+                                    // 剪贴板短 TTL：30 秒后自动清除（防敏感内容滞留）
+                                    scope.launch {
+                                        kotlinx.coroutines.delay(30_000)
+                                        com.syna.shield.clearOwnClipboard()
+                                    }
+                                    recallTarget = null
+                                },
+                            ) { Text("复制") }
+                        }
                         androidx.compose.material3.TextButton(onClick = { recallTarget = null }) { Text("取消") }
                     }
                 },
@@ -444,19 +459,102 @@ fun ChatScreen(
                 modifier = Modifier.weight(1f),
                 maxLines = 4,
             )
-            Spacer(Modifier.size(6.dp))
+            // 语音消息：长按录音，松开发送（30 秒上限）
+            var recording by remember { mutableStateOf(false) }
+            var recordingSecs by remember { mutableStateOf(0) }
+            val recorder = com.syna.util.VoiceRecorder
+            var voiceDuration by remember { mutableStateOf(0L) }
+            var voiceFile by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(recording) {
+                if (recording) {
+                    recordingSecs = 0
+                    while (recording) {
+                        delay(1_000)
+                        recordingSecs++
+                        if (recordingSecs >= 30) {
+                            val r = recorder.stop()
+                            if (r != null) {
+                                voiceFile = r.first
+                                voiceDuration = r.second
+                            }
+                            recording = false
+                        }
+                    }
+                }
+            }
+            Text(
+                text = if (recording) "● ${recordingSecs}s" else "🎤",
+                style = MaterialTheme.typography.titleMedium,
+                color = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .combinedClickable(
+                        onClick = {
+                            // 点按：录音中=停止并发送；已录好=发送；否则请求权限
+                            if (recording) {
+                                recording = false
+                                val r = recorder.stop()
+                                if (r != null) {
+                                    voiceFile = r.first
+                                    voiceDuration = r.second
+                                }
+                            }
+                            val f = voiceFile
+                            if (f != null) {
+                                voiceFile = null
+                                scope.launch {
+                                    engine.sendFile(peerId, "语音消息.amr", java.io.File(f).readBytes(), "audio/amr")
+                                }
+                            } else if (!com.syna.util.canRecordVoice()) {
+                                com.syna.util.requestRecordAudioPermission()
+                            }
+                        },
+                        onLongClick = {
+                            if (com.syna.util.canRecordVoice()) {
+                                voiceFile = null
+                                recording = true
+                                recorder.start()
+                            } else {
+                                com.syna.util.requestRecordAudioPermission()
+                            }
+                        },
+                    )
+                    .padding(8.dp),
+            )
+            Spacer(Modifier.size(4.dp))
             IconButton(
                 onClick = {
                     val text = input.trim()
                     if (text.isNotEmpty()) {
                         val replyId = replyingTo?.id
                         val mentions = pendingMention?.let { listOf(it) } ?: emptyList()
-                        scope.launch {
-                            if (isGroup) {
-                                engine.sendGroupText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
-                            } else {
-                                engine.sendText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
+                        val doSend = {
+                            scope.launch {
+                                if (isGroup) {
+                                    engine.sendGroupText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
+                                } else {
+                                    engine.sendText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
+                                }
                             }
+                            input = ""
+                            replyingTo = null
+                            pendingMention = null
+                            scope.launch {
+                                if (chatMessages.isNotEmpty()) {
+                                    listState.scrollToItem(0)
+                                }
+                            }
+                        }
+                        if (burn) {
+                            // 敏感操作二次认证：发送阅后即焚消息前需生物识别确认
+                            com.syna.shield.ShieldController.current?.verifyIdentity { granted ->
+                                if (granted) {
+                                    doSend()
+                                } else {
+                                    com.syna.util.notifyMessage("Syna", "阅后即焚发送已取消（需生物识别确认）")
+                                }
+                            }
+                        } else {
+                            doSend()
                         }
                         input = ""
                         replyingTo = null
@@ -793,7 +891,32 @@ private fun MessageBubble(
                                     )
                                 }
                             }
-                            MessageKind.FILE -> Text("📄 ${message.fileName ?: "文件"}${message.fileSize?.let { " · ${it / 1024}KB" } ?: ""}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                            MessageKind.FILE -> {
+                                val isVoice = message.fileName?.contains("语音消息") == true ||
+                                    message.fileName?.endsWith(".amr") == true ||
+                                    message.fileName?.endsWith(".wav") == true
+                                if (isVoice && message.localPath != null) {
+                                    // 语音气泡：播放按钮 + 时长
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .clickable {
+                                                com.syna.util.playVoiceAudio(message.localPath!!)
+                                            }
+                                            .padding(vertical = 2.dp),
+                                    ) {
+                                        Text("▶️", style = MaterialTheme.typography.titleMedium, color = textColor)
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            "语音 ${message.fileSize?.let { "${it / 1024}KB" } ?: ""}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = textColor,
+                                        )
+                                    }
+                                } else {
+                                    Text("📄 ${message.fileName ?: "文件"}${message.fileSize?.let { " · ${it / 1024}KB" } ?: ""}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                                }
+                            }
                             MessageKind.TEXT -> Text(
                                 text = message.body,
                                 style = MaterialTheme.typography.bodyMedium,

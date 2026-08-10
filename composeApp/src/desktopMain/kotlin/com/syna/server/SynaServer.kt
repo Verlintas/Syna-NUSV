@@ -61,6 +61,7 @@ class SynaServer(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private val MAX_SESSIONS = 64
+    private val BURN_HISTORY_TTL_MS = 60 * 60 * 1000L // burn 消息服务器历史 1h TTL
     val boundPort: Int
         get() = serverSocket?.localPort ?: 0
 
@@ -123,6 +124,13 @@ class SynaServer(
         }
         serverSocket = ss
         scope.launch { acceptLoop(ss) }
+        // burn 消息历史 TTL 清理（每小时）
+        scope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(BURN_HISTORY_TTL_MS)
+                sweepBurnExpired()
+            }
+        }
         printBanner()
     }
 
@@ -169,6 +177,7 @@ class SynaServer(
             val output = DataOutputStream(socket.getOutputStream())
             session = ClientSession(socket, input, output)
             synchronized(sessions) { sessions.add(session) }
+            session.startSender(scope)
 
             // 1. 明文 SRV_HELLO（携带 salt，客户端据此派生通道密钥）；发送完成后再启用加密
             val salt = randomSalt()
@@ -181,7 +190,7 @@ class SynaServer(
                     ts = System.currentTimeMillis(),
                     body = synaJson.encodeToString(
                         ServerHello.serializer(),
-                        ServerHello(serverId, salt, "0.8.2", groupName),
+                        ServerHello(serverId, salt, "0.9.0", groupName),
                     ),
                 ),
             )
@@ -378,6 +387,20 @@ class SynaServer(
         log("[SynaServer] 阅后即焚清除: ${msgId.take(8)}")
     }
 
+    /** 阅后即焚 TTL：服务器历史中的 burn 消息 1 小时后自动清除（不依赖 BURN_ACK） */
+    private fun sweepBurnExpired() {
+        val cutoff = System.currentTimeMillis() - BURN_HISTORY_TTL_MS
+        val changed = synchronized(messages) {
+            val before = messages.size
+            messages.removeAll { it.burn && it.ts < cutoff }
+            messages.size != before
+        }
+        if (changed) {
+            publishMessageCount()
+            rewriteHistory()
+        }
+    }
+
     private fun rewriteHistory() {
         try {
             // 锁内快照（防并发 CME）+ 原子写（tmp+rename 防截断）
@@ -428,7 +451,7 @@ class SynaServer(
 
     private fun printBanner() {
         println("================================================")
-        println("  Syna 私人聊天服务器 v0.8.2")
+        println("  Syna 私人聊天服务器 v0.9.0")
         println("  群名称: $groupName")
         println("  端口:   ${boundPort}")
         println("  数据目录: ${dataDir.toAbsolutePath()}")
@@ -589,13 +612,41 @@ class SynaServer(
         var userId: String? = null
         var channelKey: com.syna.crypto.SessionKey? = null
 
+        /** 慢客户端隔离：有界发送队列（广播入队不阻塞其他成员；满则丢帧并计数） */
+        private val sendQueue = kotlinx.coroutines.channels.Channel<ByteArray>(256)
+        @Volatile
+        var droppedFrames = 0
+            private set
+        private var senderStarted = false
+
         fun isOpen(): Boolean = !socket.isClosed
+
+        fun startSender(scope: CoroutineScope) {
+            if (senderStarted) return
+            senderStarted = true
+            scope.launch {
+                for (payload in sendQueue) {
+                    try {
+                        kotlinx.coroutines.withContext(Dispatchers.IO) {
+                            synchronized(socket) {
+                                output.writeInt(payload.size)
+                                output.write(payload)
+                                output.flush()
+                            }
+                        }
+                    } catch (e: Exception) {
+                        break
+                    }
+                }
+            }
+        }
 
         fun close() {
             try {
                 socket.close()
             } catch (_: Exception) {
             }
+            sendQueue.close()
         }
 
         suspend fun sendRaw(frame: TransportFrame) {
@@ -606,7 +657,10 @@ class SynaServer(
                 com.syna.crypto.SynaCrypto.encrypt(key, synaJson.encodeToString(TransportFrame.serializer(), frame))
                     .encodeToByteArray()
             }
-            sendBytes(payload)
+            // 入队（有界）：慢客户端队列满时丢帧，不阻塞广播
+            if (!sendQueue.trySend(payload).isSuccess) {
+                droppedFrames++
+            }
         }
 
         suspend fun receiveFrame(): TransportFrame? {

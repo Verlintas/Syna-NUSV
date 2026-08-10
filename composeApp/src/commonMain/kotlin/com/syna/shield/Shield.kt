@@ -823,6 +823,18 @@ class ShieldController(
         }
     }
 
+    /**
+     * 身份确认（敏感操作二次认证）：纯生物识别验证，不改变状态机、不计入暴力计数。
+     * Shield 未启用时直接放行。
+     */
+    fun verifyIdentity(onResult: (Boolean) -> Unit) {
+        if (!enabledM.value) {
+            onResult(true)
+            return
+        }
+        engine.requestBiometricUnlock(onResult)
+    }
+
     /** 当前状态是否为 TOTP 等待（供 UI 判断） */
     val awaitingTotp: Boolean
         get() = stateM.value == ShieldState.AWAITING_TOTP

@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.8.2",
+    private val version: String = "0.9.0",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -1204,6 +1204,13 @@ class SynaEngine(
             ),
         )
 
+        // 文件传输加密（1:1 且有会话密钥时）：整个 FileChunk JSON 加密——
+        // 接收端经 decryptEvent 通用解密管线还原，局域网嗅探无法截获文件内容。
+        // 群文件暂保持明文（群 TEXT 的 per-member 密文机制文件未复制，如实记录）。
+        val isOneToOne = group == null && serverSession?.groupId != conversationId
+        val filePeerKey = if (isOneToOne) peerKeysM.value[conversationId] else null
+        val fileEncrypted = settings.e2eEnabled && filePeerKey != null
+
         var failed = false
         for (i in 0 until totalChunks) {
             val start = i * chunkSize
@@ -1219,13 +1226,20 @@ class SynaEngine(
                 dataB64 = @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
                 kotlin.io.encoding.Base64.Default.encode(chunk),
             )
+            val fileChunkJson = synaJson.encodeToString(FileChunk.serializer(), fileChunk)
             val frame = TransportFrame(
                 type = FrameType.FILE_CHUNK,
                 from = userId,
                 to = conversationId,
                 msgId = fileId,
                 ts = System.currentTimeMillis(),
-                body = synaJson.encodeToString(FileChunk.serializer(), fileChunk),
+                body = if (fileEncrypted) {
+                    SynaCrypto.encrypt(
+                        SynaCrypto.deriveSessionKey(identity.privateBytes, filePeerKey, sessionId(conversationId)),
+                        fileChunkJson,
+                    )
+                } else fileChunkJson,
+                enc = fileEncrypted,
             )
             try {
                 sendToConversation(conversationId, frame)
@@ -1244,6 +1258,8 @@ class SynaEngine(
             }
         }
         chatStore.updateStatus(fileId, if (failed) MessageStatus.FAILED else MessageStatus.SENT)
+        // 消息记录标记加密状态
+        chatStore.markEncrypted(fileId, fileEncrypted)
         // 发送完成：清进度（UI 不再显示 100% 残留）
         if (!failed) {
             chatStore.updateProgressClear(fileId)

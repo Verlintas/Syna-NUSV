@@ -10,6 +10,15 @@ private fun receivedDir(): File = File(SynaApp.context.filesDir, "syna_received"
 
 actual fun receivedFilesSize(): Long = receivedDir().walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
+actual fun copyTextToClipboard(text: String) {
+    try {
+        val cm = com.syna.SynaApp.context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("syna", text))
+    } catch (e: Exception) {
+    }
+}
+
 actual fun destructPlatformArtifacts() {
     try {
         val dir = com.syna.SynaApp.context.filesDir
