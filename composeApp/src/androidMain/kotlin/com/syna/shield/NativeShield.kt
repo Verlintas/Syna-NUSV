@@ -44,4 +44,7 @@ object NativeShield {
      * bit2 = 发现匿名可执行段（rwxp，非 ART JIT/系统库）——注入痕迹
      */
     external fun integrity(): Int
+
+    /** 主动崩溃：高置信度攻击信号（ptrace/代码被 hook）时立即 SIGABRT，防慢慢调试 */
+    external fun crash()
 }

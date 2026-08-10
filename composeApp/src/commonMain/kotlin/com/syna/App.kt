@@ -66,6 +66,13 @@ fun App() {
     val shieldTotpEnabled by shield.totpEnabled.collectAsState()
     LaunchedEffect(Unit) {
         shield.start()
+        // 启动全面权限自检：确保护盾所需权限全部就绪
+        if (settings.shieldEnabled) {
+            // 使用情况访问（前台感知增强）：未授权则引导开启（跳转已定位本应用）
+            if (!com.syna.shield.shieldUsageAccessGranted()) {
+                requestUsageAccessPermission()
+            }
+        }
         // 自我保护：启动时检测安全设置是否被篡改/存储被清除
         if (settings.shieldTampered) {
             shield.reportThreat(com.syna.shield.ShieldThreat.SHIELD_TAMPERED)

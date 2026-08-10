@@ -36,6 +36,11 @@ actual fun requestUsageAccessPermission() {
     try {
         val intent = android.content.Intent(android.provider.Settings.ACTION_USAGE_ACCESS_SETTINGS)
         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        // 定位到本应用（API 30+ 支持 EXTRA_APP_PACKAGE；低版本忽略该参数仍打开列表）
+        try {
+            intent.putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, SynaApp.context.packageName)
+        } catch (e: Exception) {
+        }
         SynaApp.context.startActivity(intent)
     } catch (e: Exception) {
     }

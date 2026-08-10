@@ -413,6 +413,7 @@ jint JNICALL Java_com_syna_shield_NativeShield_tracerPid(JNIEnv *, jobject);
 jint JNICALL Java_com_syna_shield_NativeShield_fridaMaps(JNIEnv *, jobject);
 jint JNICALL Java_com_syna_shield_NativeShield_fridaThreads(JNIEnv *, jobject);
 jint JNICALL Java_com_syna_shield_NativeShield_integrity(JNIEnv *, jobject);
+void JNICALL Java_com_syna_shield_NativeShield_crash(JNIEnv *, jobject);
 
 static void verify_self_entries(void) {
     void *targets[] = {
@@ -422,6 +423,7 @@ static void verify_self_entries(void) {
         (void *)&Java_com_syna_shield_NativeShield_integrity,
         (void *)&verify_entry_file,
         (void *)&verify_self_entries,
+        (void *)&Java_com_syna_shield_NativeShield_crash,
     };
     for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
         if (verify_entry_file(targets[i])) {
@@ -501,6 +503,16 @@ JNIEXPORT jint JNICALL Java_com_syna_shield_NativeShield_fridaMaps(JNIEnv *env, 
 JNIEXPORT jint JNICALL Java_com_syna_shield_NativeShield_fridaThreads(JNIEnv *env, jobject thiz) {
     (void)env; (void)thiz;
     return scan_threads();
+}
+
+/*
+ * 主动对抗：高置信度攻击信号（被 ptrace / 代码段被 hook）时主动崩溃——
+ * 攻击者每次 attach 调试器或 hook 检测函数，进程立即 SIGABRT，无法慢慢调试。
+ * 崩溃本身即证据（审计在崩溃前尽力写入）。
+ */
+JNIEXPORT void JNICALL Java_com_syna_shield_NativeShield_crash(JNIEnv *env, jobject thiz) {
+    (void)env; (void)thiz;
+    raise(SIGABRT);
 }
 
 JNIEXPORT jint JNICALL Java_com_syna_shield_NativeShield_integrity(JNIEnv *env, jobject thiz) {

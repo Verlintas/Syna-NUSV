@@ -74,7 +74,9 @@ actual object ShieldStorageKey {
                 if (NativeShield.loaded) {
                     val integrity = NativeShield.integrity()
                     if (integrity and 1 != 0 || integrity and 2 != 0) {
+                        // 主动对抗：解密路径发现代码被 hook → 直接崩溃（防慢慢调试）
                         ShieldController.current?.reportThreat(ShieldThreat.SHIELD_TAMPERED)
+                        NativeShield.crash()
                     }
                 }
             } catch (e: Throwable) {
