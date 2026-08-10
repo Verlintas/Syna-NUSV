@@ -64,22 +64,7 @@ actual fun ImagePickerButton(
 ) {
     // 桌面端复用文件对话框（可继续选择任意文件，功能不裁剪）
     TextButton(
-        onClick = {
-            Thread {
-                val dialog = FileDialog(null as Frame?, "选择图片", FileDialog.LOAD)
-                dialog.isVisible = true
-                val dir = dialog.directory
-                val file = dialog.file
-                if (dir != null && file != null) {
-                    try {
-                        val f = java.io.File(dir, file)
-                        onImagePicked(f.name, f.readBytes())
-                    } catch (e: Exception) {
-                        println("[Syna:Image] 读取失败: ${e.message}")
-                    }
-                }
-            }.start()
-        },
+        onClick = { showFileDialog("选择图片", onImagePicked) },
         modifier = modifier,
     ) {
         Text("🖼")
@@ -92,24 +77,40 @@ actual fun FilePickerButton(
     modifier: Modifier,
 ) {
     TextButton(
-        onClick = {
-            Thread {
-                val dialog = FileDialog(null as Frame?, "选择文件", FileDialog.LOAD)
-                dialog.isVisible = true
-                val dir = dialog.directory
-                val file = dialog.file
-                if (dir != null && file != null) {
-                    try {
-                        val f = java.io.File(dir, file)
-                        onFilePicked(f.name, f.readBytes())
-                    } catch (e: Exception) {
-                        println("[Syna:File] 读取失败: ${e.message}")
-                    }
-                }
-            }.start()
-        },
+        onClick = { showFileDialog("选择文件", onFilePicked) },
         modifier = modifier,
     ) {
         Text("📎")
     }
+}
+
+/**
+ * 在 EDT 上显示 AWT FileDialog（macOS 上非 EDT 线程创建/显示会违反 AWT 线程模型，
+ * 可能挂起）；读取仍在后台线程（读大文件不阻塞 EDT）。
+ */
+private fun showFileDialog(title: String, onPicked: (name: String, bytes: ByteArray) -> Unit) {
+    var result: Pair<String, String>? = null
+    try {
+        java.awt.EventQueue.invokeAndWait {
+            val dialog = FileDialog(null as Frame?, title, FileDialog.LOAD)
+            dialog.isVisible = true
+            val dir = dialog.directory
+            val file = dialog.file
+            if (dir != null && file != null) {
+                result = dir to file
+            }
+        }
+    } catch (e: Exception) {
+        println("[Syna:File] 对话框失败: ${e.message}")
+        return
+    }
+    val (dir, file) = result ?: return
+    Thread {
+        try {
+            val f = java.io.File(dir, file)
+            onPicked(f.name, f.readBytes())
+        } catch (e: Exception) {
+            println("[Syna:File] 读取失败: ${e.message}")
+        }
+    }.start()
 }

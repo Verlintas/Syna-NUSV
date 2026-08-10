@@ -53,6 +53,11 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
     override val localTcpPort: Int
         get() = server?.localPort ?: 0
 
+    private val lastPongAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private fun keyOf(socket: Socket): String =
+        outbound.entries.firstOrNull { it.value === socket }?.key ?: ""
+
     override val localUdpPort: Int
         get() = 0
 
@@ -86,6 +91,12 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
                     closeByKey(key)
                 } catch (e: Exception) {
                     closeByKey(key)
+                }
+                // 连续 3 个心跳周期无 PONG：判定死连接并清理
+                val last = lastPongAt[key] ?: 0L
+                if (System.currentTimeMillis() - last > TCP_HEARTBEAT_MS * 3) {
+                    closeByKey(key)
+                    lastPongAt.remove(key)
                 }
             }
         }
@@ -139,6 +150,29 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
                 incomingM.emit(IncomingEvent.PeerFrame(frame.from, frame))
                 if (frame.type == FrameType.HELLO) {
                     incomingM.emit(IncomingEvent.PeerConnected(frame.from))
+                }
+                if (frame.type == FrameType.PING) {
+                    // 收到 PING 回 PONG（双向保活：发送方据此判定连接健康）
+                    try {
+                        val pong = TransportFrame(
+                            type = FrameType.PONG,
+                            from = myId,
+                            to = frame.from,
+                            msgId = "",
+                            ts = System.currentTimeMillis(),
+                        )
+                        val pongBytes = pong.encode()
+                        synchronized(socket) {
+                            val out = DataOutputStream(socket.getOutputStream())
+                            out.writeInt(pongBytes.size)
+                            out.write(pongBytes)
+                            out.flush()
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                if (frame.type == FrameType.PONG) {
+                    lastPongAt[keyOf(socket)] = System.currentTimeMillis()
                 }
             }
         } catch (_: IOException) {

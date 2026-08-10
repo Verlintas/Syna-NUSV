@@ -44,7 +44,7 @@ class JvmDiscoveryService(
     private val intervalMs: Long = DISCOVERY_INTERVAL_MS,
 ) : DiscoveryService {
 
-    private val announcementsM = kotlinx.coroutines.flow.MutableSharedFlow<Pair<DiscoveryAnnouncement, String>>()
+    private val announcementsM = kotlinx.coroutines.flow.MutableSharedFlow<Pair<DiscoveryAnnouncement, String>>(extraBufferCapacity = 64)
     override val announcements = announcementsM.asSharedFlow()
 
     private var receiver: MulticastSocket? = null
@@ -92,6 +92,10 @@ class JvmDiscoveryService(
                 socket.receive(packet)
             } catch (e: SocketException) {
                 return
+            } catch (e: Exception) {
+                // 非 SocketException 异常：短暂停顿后继续（防 receiveLoop 永久死亡）
+                kotlinx.coroutines.delay(200)
+                continue
             }
             val data = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
             val ann = try {

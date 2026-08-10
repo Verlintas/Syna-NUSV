@@ -155,6 +155,14 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         scheduleRewrite()
     }
 
+    fun updateProgressClear(msgId: String) {
+        messagesM.updateMap { map ->
+            map.mapValues { (_, list) ->
+                list.map { if (it.id == msgId) it.copy(progress = null) else it }
+            }
+        }
+    }
+
     fun updateProgress(msgId: String, progress: Int) {
         messagesM.updateMap { map ->
             map.mapValues { (_, list) ->

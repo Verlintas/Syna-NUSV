@@ -385,6 +385,10 @@ internal class WatchdogRing(
     var trips = 0
         private set
 
+    /** 环是否存活：任何线程正在运行即为存活（trips 是历史计数，不等于线程死亡） */
+    val isRingAlive: Boolean
+        get() = threads.any { it.isAlive }
+
     fun start() {
         if (threads.isNotEmpty()) return
         // 重启时复位所有槽位（防止旧时间戳立即 stale 误 trip）
@@ -630,7 +634,8 @@ class ShieldController(
                     gateFresh = ShieldGate.isFresh(),
                     lastBeatAt = ShieldGate.lastBeatAt(),
                     watchdogTrips = watchdog.trips,
-                    watchdogAlive = watchdog.trips == 0,
+                    // 存活 = 环未断裂（trips 只是历史计数，不代表线程死亡）
+                    watchdogAlive = watchdog.isRingAlive,
                     biometricFailCount = biometricFailsM.value,
                     lastCheckAt = now,
                 )

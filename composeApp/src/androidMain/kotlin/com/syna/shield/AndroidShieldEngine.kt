@@ -118,6 +118,22 @@ class AndroidShieldEngine private constructor(
     override fun stop() {
         scanJob?.cancel()
         scanJob = null
+        // 注销 VPN 回调（防反复启停重复注册）
+        vpnCallback?.let { cb ->
+            try {
+                val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                cm.unregisterNetworkCallback(cb)
+            } catch (e: Exception) {
+            }
+            vpnCallback = null
+        }
+        lifecycleObserver?.let { obs ->
+            try {
+                ProcessLifecycleOwner.get().lifecycle.removeObserver(obs)
+            } catch (e: Exception) {
+            }
+            lifecycleObserver = null
+        }
     }
 
     /** 轻量高频检测（3s）：注入/调试/签名类，反应迅速 */
@@ -297,7 +313,8 @@ class AndroidShieldEngine private constructor(
             false
         }
         val prev = lastMirroring
-        if (prev != null && prev != now && now) {
+        if (prev != null && prev != now) {
+            // 出现或消失均视为投屏状态变化（共享/镜像会话的起止）
             onThreat(ShieldThreat.SCREEN_SHARE_SUSPECT)
         }
         lastMirroring = now
@@ -333,8 +350,10 @@ class AndroidShieldEngine private constructor(
             val ks = java.security.KeyStore.getInstance("AndroidCAStore")
             ks.load(null)
             val aliases = ks.aliases().toList().sorted()
-            // 仅关注用户新增证书（别名含 u0 的通常为用户 CA；全部列出保证不遗漏）
-            val signature = aliases.joinToString("|")
+            // 仅关注用户证书域（系统 CA 随 OTA 更新会变化，纳入会误锁）：
+            // AndroidCAStore 用户证书别名通常以 u0 开头或含 "/u0/"
+            val userAliases = aliases.filter { it.startsWith("u") || it.contains("/u") }
+            val signature = userAliases.joinToString("|")
             val prev = lastCaSignature
             if (prev != null && prev.isNotEmpty() && prev != signature) {
                 onThreat(ShieldThreat.NETWORK_MITM)
@@ -666,8 +685,17 @@ class AndroidShieldEngine private constructor(
         screenCaptureCallback = null
     }
 
+    private var vpnCallback: ConnectivityManager.NetworkCallback? = null
+
     private fun monitorVpn() {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        // 防重复注册：先注销旧的
+        vpnCallback?.let { old ->
+            try {
+                cm.unregisterNetworkCallback(old)
+            } catch (e: Exception) {
+            }
+        }
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 val vpnActive = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
@@ -687,13 +715,15 @@ class AndroidShieldEngine private constructor(
         }
         try {
             cm.registerDefaultNetworkCallback(callback)
+            vpnCallback = callback
         } catch (e: Exception) {
         }
     }
 
+    private var lifecycleObserver: LifecycleEventObserver? = null
+
     private fun monitorLifecycle() {
-        ProcessLifecycleOwner.get().lifecycle.addObserver(
-            LifecycleEventObserver { _, event ->
+        val observer = LifecycleEventObserver { _, event ->
                 when (event) {
                     Lifecycle.Event.ON_STOP -> {
                         isForeground = false
@@ -716,8 +746,9 @@ class AndroidShieldEngine private constructor(
                     }
                     else -> Unit
                 }
-            },
-        )
+            }
+        lifecycleObserver = observer
+        ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
     }
 
     override fun onForeground() {

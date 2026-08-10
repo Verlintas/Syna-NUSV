@@ -27,18 +27,31 @@ class DesktopShieldEngine(
     private var beatTimer: Timer? = null
     private var lastMouseEvent: MouseEvent? = null
     private var lastScreenCount: Int? = null
+    private var awtListener: java.awt.event.AWTEventListener? = null
 
     override fun start() {
         lastActivity = System.currentTimeMillis()
-        // 全局鼠标移动监听（桌面无 touch 事件源，以鼠标活动为准）
+        // 全局活动监听（鼠标移动/拖动 + 键盘输入都算活动，防纯键盘工作被误锁）
         try {
-            java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(
-                { event ->
-                    if (event is MouseEvent && event.id == MouseEvent.MOUSE_MOVED) {
-                        lastActivity = System.currentTimeMillis()
+            val listener = java.awt.event.AWTEventListener { event ->
+                when (event) {
+                    is MouseEvent -> {
+                        if (event.id == MouseEvent.MOUSE_MOVED || event.id == MouseEvent.MOUSE_DRAGGED) {
+                            lastActivity = System.currentTimeMillis()
+                        }
                     }
-                },
-                java.awt.AWTEvent.MOUSE_MOTION_EVENT_MASK,
+                    is java.awt.event.KeyEvent -> {
+                        if (event.id == java.awt.event.KeyEvent.KEY_PRESSED) {
+                            lastActivity = System.currentTimeMillis()
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+            awtListener = listener
+            java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(
+                listener,
+                java.awt.AWTEvent.MOUSE_MOTION_EVENT_MASK or java.awt.AWTEvent.KEY_EVENT_MASK,
             )
         } catch (e: Exception) {
         }
@@ -74,6 +87,14 @@ class DesktopShieldEngine(
         idleTimer = null
         beatTimer?.stop()
         beatTimer = null
+        // 移除全局监听（防重复 start 累积泄漏）
+        awtListener?.let { l ->
+            try {
+                java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(l)
+            } catch (e: Exception) {
+            }
+            awtListener = null
+        }
     }
 
     override fun onForeground() {
@@ -103,9 +124,24 @@ class DesktopShieldEngine(
                 else -> listOf("ps", "-e", "-o", "comm=")
             }
             val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
-            val output = proc.inputStream.bufferedReader().readText()
-            proc.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
-            keywords.filter { keyword -> output.lowercase().contains(keyword) }
+            // 后台线程读完输出（防读阻塞），等待最多 3 秒
+            val future = java.util.concurrent.CompletableFuture.supplyAsync {
+                proc.inputStream.bufferedReader().readText()
+            }
+            val output = try {
+                future.get(3, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                proc.destroy()
+                return emptyList()
+            }
+            val lower = output.lowercase()
+            keywords.filter { keyword ->
+                // 逐行精确匹配进程名（"obs" 不再误命中 obsidian 等）
+                lower.lines().any { line ->
+                    val name = line.trim().substringAfterLast('/').substringAfterLast('\\').lowercase()
+                    name == keyword || name.startsWith(keyword + " ")
+                }
+            }
         } catch (e: Exception) {
             emptyList()
         }

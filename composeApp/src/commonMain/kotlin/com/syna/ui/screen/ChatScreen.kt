@@ -611,7 +611,7 @@ private fun MessageBubble(
                             Box(
                                 modifier = Modifier
                                     .width(3.dp)
-                                    .fillMaxHeight()
+                                    .height(28.dp)
                                     .background(if (isMine) androidx.compose.ui.graphics.Color.White.copy(alpha = 0.5f) else MaterialTheme.colorScheme.primary),
                             )
                             Spacer(Modifier.width(6.dp))
@@ -646,10 +646,12 @@ private fun MessageBubble(
                                 val path = message.localPath
                                 if (path != null && message.progress == null && !message.recalled) {
                                     val bitmap by produceState<ImageBitmap?>(null, path) {
-                                        value = runCatching {
-                                            val bytes = readFileBytes(path)
-                                            if (bytes.size <= 4 * 1024 * 1024) bytes.decodeToImageBitmap() else null
-                                        }.getOrNull()
+                                        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                            runCatching {
+                                                val bytes = readFileBytes(path)
+                                                if (bytes.size <= 4 * 1024 * 1024) bytes.decodeToImageBitmap() else null
+                                            }.getOrNull()
+                                        }
                                     }
                                     val bmp = bitmap
                                     if (bmp != null) {

@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.7.6",
+    private val version: String = "0.7.7",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -89,6 +89,7 @@ class SynaEngine(
     val groups: StateFlow<List<GroupInfo>> = groupsM.asStateFlow()
 
     private val pendingBurnsM = MutableStateFlow<List<Triple<String, String, String>>>(emptyList())
+    private val burnSweepMarks = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     private val outboxM = MutableStateFlow<Map<String, List<TransportFrame>>>(emptyMap())
     val outbox: StateFlow<Map<String, List<TransportFrame>>> = outboxM.asStateFlow()
@@ -895,6 +896,7 @@ class SynaEngine(
                     serverSession = null
                     serverStateM.value = ServerState.DISCONNECTED
                     synaLog("Server") { "连接断开 $host:$port" }
+                    notifyMessage("Syna", "服务器连接已断开")
                 }
             }
 
@@ -1052,6 +1054,10 @@ class SynaEngine(
             }
         }
         chatStore.updateStatus(fileId, if (failed) MessageStatus.FAILED else MessageStatus.SENT)
+        // 发送完成：清进度（UI 不再显示 100% 残留）
+        if (!failed) {
+            chatStore.updateProgressClear(fileId)
+        }
         synaLog("File") { "send $fileName (${bytes.size}B, $totalChunks chunks) ${if (failed) "FAILED" else "ok"}" }
     }
 
@@ -1060,6 +1066,13 @@ class SynaEngine(
         val serverSession = serverSession
         if (serverSession != null && serverSession.groupId == conversationId) {
             serverSession.channel.send(frame)
+            return
+        }
+        // 服务器群已断线：标记失败（UI 显示红色），不静默丢弃
+        if (groupsM.value.any { it.id == conversationId } && serverSession == null) {
+            if (frame.msgId.isNotEmpty()) {
+                chatStore.updateStatus(frame.msgId, MessageStatus.FAILED)
+            }
             return
         }
         val group = groupsM.value.firstOrNull { it.id == conversationId }
@@ -1193,6 +1206,21 @@ class SynaEngine(
     }
 
     private fun sweep() {
+        // pendingBurns 兜底：超过 TTL 未查看的焚毁消息直接本地烧毁并回 ACK
+        // （防未打开会话中的 burn 消息无限累积）
+        val sweepNow = System.currentTimeMillis()
+        val overdue = pendingBurnsM.value.filter {
+            (burnSweepMarks[it.second] ?: sweepNow) + BURN_SWEEP_TTL_MS < sweepNow
+        }
+        if (overdue.isNotEmpty()) {
+            overdue.forEach { (_, msgId, senderId) ->
+                chatStore.removeMessageById(msgId)
+                burnSweepMarks.remove(msgId)
+                // 告知发送方已焚毁（双向销毁语义）
+                scope.launch { sendBurnAck(senderId, msgId) }
+            }
+            pendingBurnsM.updateList { list -> list.filterNot { it in overdue } }
+        }
         val now = System.currentTimeMillis()
         peersM.updateList { list ->
             list.map { peer ->
@@ -1293,6 +1321,7 @@ class SynaEngine(
         replyTo: String? = null,
         mentions: List<String> = emptyList(),
     ): String {
+        if (text.isBlank()) return ""
         val peer = peersM.value.firstOrNull { it.id == peerId } ?: return ""
         val peerKey = peerKeysM.value[peerId]
         val encrypted = settings.e2eEnabled && peerKey != null
@@ -1371,6 +1400,8 @@ class SynaEngine(
 
     private suspend fun send(peer: Peer, frame: TransportFrame) {
         if (!peer.online) {
+            // 瞬时状态帧（输入中/已读）离线直接丢弃，不进队列（避免无意义膨胀）
+            if (frame.type == FrameType.TYPING || frame.type == FrameType.READ) return
             enqueueOutbox(peer.id, frame)
             synaLog("Outbox") { "queued ${frame.type} to=${peer.id.take(6)} (offline)" }
             return
@@ -1386,7 +1417,9 @@ class SynaEngine(
                 try {
                     tcp?.send(peer.addr, frame)
                 } catch (e: Exception) {
-                    udp?.send(peer.addr, frame)
+                    // TCP 不可达：不再静默回退 UDP 丢失——入离线队列，
+                    // 重连后由 outbox 补发（TEXT 有 msgId 去重，重复帧无害）
+                    enqueueOutbox(peer.id, frame)
                 }
             }
         }

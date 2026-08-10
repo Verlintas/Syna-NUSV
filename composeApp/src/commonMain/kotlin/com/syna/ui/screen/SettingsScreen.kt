@@ -228,8 +228,12 @@ fun SettingsScreen(
         Spacer(Modifier.height(24.dp))
 
         SectionTitle("存储")
-        val historySize = engine.chatStore.historyFileSize()
-        val filesSize = receivedFilesSize()
+        // 文件系统查询移出组合期（防重组阻塞主线程）
+        val storageInfo by androidx.compose.runtime.produceState(Pair(0L, 0L)) {
+            value = Pair(engine.chatStore.historyFileSize(), receivedFilesSize())
+        }
+        val historySize = storageInfo.first
+        val filesSize = storageInfo.second
         var confirmClear by remember { mutableStateOf(false) }
         Row(
             modifier = Modifier

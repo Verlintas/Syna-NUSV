@@ -113,9 +113,13 @@ fun App() {
     var connectionMode by remember { mutableStateOf(settings.connectionMode) }
     var username by remember { mutableStateOf(settings.username) }
     // 防抖：停止输入 1.2s 后再重启发现服务，避免每个按键都重建 socket
+    // 仅用户名实际变化时重建 discovery（防 Android 旋转无条件重启发现服务）
+    val prevUsername = remember { username }
     LaunchedEffect(username) {
-        delay(1_200)
-        engine.refreshUsername()
+        if (username != prevUsername) {
+            delay(1_200)
+            engine.refreshUsername()
+        }
     }
     var e2eEnabled by remember { mutableStateOf(settings.e2eEnabled) }
     var burnAfterReading by remember { mutableStateOf(settings.burnAfterReadingEnabled) }
