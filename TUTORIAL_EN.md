@@ -76,9 +76,22 @@ adb install composeApp/build/outputs/apk/debug/composeApp-debug.apk
 | **Temporary chat** | Settings → Enhanced protection → Temporary chat ON, choose TTL (1h / 24h / 7d). Conversations auto-purge after inactivity. |
 | **System notifications** | New messages pop up in the Android notification bar or the desktop tray while the chat is not open (burn-after-reading content stays hidden). |
 | **Offline messages** | If the target is offline, messages queue locally and flush automatically when they come back online. |
+| **◇Mirtazapine Shield** | Settings → ◇Mirtazapine Shield → one switch enables real-time monitoring + app lock (see section 2.5): detection, biometric + optional TOTP unlock, data-level key gate, self-destruct, live status panel. |
 
 **Tip:** in the chat header you can see connection mode, encryption status, and pending offline messages (`N pending`).
 
+## 2.5 ◇Mirtazapine Shield
+
+A real-time security monitor and app lock built into the client. Full design & detection matrix: [MIRTAZAPINE_SHIELD.md](MIRTAZAPINE_SHIELD.md).
+
+- **Enable**: Settings → ◇Mirtazapine Shield → toggle on (disabling requires biometric verification). One switch enables every protection.
+- **What it detects**: Root (incl. Magisk hidden root, Xposed, Zygisk/Shamiko/LSPosed), Frida injection (paths, ports 27042+27043, memory maps, threads, TracerPid — **JVM + native (NDK) dual-channel**), emulator (incl. test-keys), USB debugging/ADB, SELinux, device-admin takeover (MDM), credential changes, VPN/proxy changes, **user CA additions & ARP spoofing (LAN MITM)**, network fingerprint (SSID change), rapid background switching, accessibility abuse, monitoring apps (installed + foreground), **screen capture/recording events (Android 14+)**, mirroring changes, clock tampering, weak lock screen, downgrade attempts, JVM agents, remote-control processes.
+- **When a threat is detected**: full-screen shield page listing the threat(s); unlock requires **biometrics + (optional) TOTP second factor** (6-digit RFC 6238 code from your authenticator app; seed via `otpauth://` import in Settings). Unlock expires after 5 minutes; critical threats re-lock after 30s; injection threats engage a honeypot fake-lock (real key release, repeated verification).
+- **Data-level key gate**: chat data is encrypted with a session key wrapped by a **biometric-authenticated Keystore key** — without an authentication event, newly written data is unreadable (data-level protection on device loss/compromise, independent of detection); locking releases the in-memory session key.
+- **Self-destruct protocol (optional)**: a critical compromise signal wipes local chats & received files immediately and clears clipboard & notifications.
+- **Self-protection**: APK signature verification (anti-repackaging), dex hash self-verification, downgrade defense, HMAC-signed settings, in-memory state HMAC, **fail-closed heartbeat gate** (stalled detector → decrypt refused), **watchdog ring** (3 threads monitor each other), screen-capture protection & capture-event detection, clipboard/notification protection, hash-chained + AES-GCM audit log, brute-force protection (fail limit + exponential cooldown), 60s background memory wipe.
+- **Live status panel**: gate freshness, watchdog trips, honeypot state, biometric fail counter, latest audit events.
+- **Honest boundary**: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be detected by an app — the Shield provides the strongest app-layer protection, and it stays effective under full disclosure (GPL-3.0).
 
 ## 3. Private Server
 

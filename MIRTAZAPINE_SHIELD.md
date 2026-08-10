@@ -105,7 +105,22 @@ For those scenarios the only app-layer answer is the **self-destruct protocol** 
 | `checkDowngradeAttempt` | `versionCode` rollback vs. encrypted baseline → CRITICAL `DOWNGRADE_ATTEMPT` |
 | `ShieldConfigGuard` | Settings file is HMAC-signed; tamper or wipe → force-restore + `SHIELD_TAMPERED` |
 
-### 3.4 Meta-detection (the Shield watching the Shield)
+### 3.4 Native anti-debug layer (NDK, since v0.7.2)
+
+`libsyna_shield.so` (C, same GPL-3.0 license, all 4 ABIs) reads the same signals in C:
+
+| Signal | Notes |
+|---|---|
+| `TracerPid` | kernel-maintained ptrace flag, read via `/proc/self/status` in C |
+| Frida / gum maps | `/proc/self/maps` scanned in C |
+| Frida / gum-js thread names | `/proc/self/task/*/comm` scanned in C |
+
+JVM-level hooks (Java API hooking, repackaging hooks) cannot cover these call sites —
+only gadget-level native hooks could, a far higher bar. **Every scan runs both the JVM
+and the native channel; either one hitting triggers the lock.** If the library cannot
+load, the JVM implementation takes over (no loss of protection).
+
+### 3.5 Meta-detection (the Shield watching the Shield)
 
 | Mechanism | Behavior |
 |---|---|
@@ -113,7 +128,7 @@ For those scenarios the only app-layer answer is the **self-destruct protocol** 
 | `WatchdogRing` | 3 daemon threads, randomized 4–7 s cadence, each monitors the next slot (ring). Stale/fingerprint-broken slot → CRITICAL `WATCHDOG_TRIP` + lock. |
 | State HMAC | In-memory `ShieldState` is HMAC-signed on every transition; any inconsistent read forces a lock (`SHIELD_TAMPERED`). |
 
-### 3.5 Network environment (LAN MITM defense)
+### 3.6 Network environment (LAN MITM defense)
 
 | Detector | Indicators |
 |---|---|
@@ -122,7 +137,7 @@ For those scenarios the only app-layer answer is the **self-destruct protocol** 
 | `checkNetworkFingerprint` | SSID change → advisory `NETWORK_CHANGED` |
 | VPN callback | `ConnectivityManager` transport VPN change → `VPN_CHANGE` |
 
-### 3.6 Screen attack surface
+### 3.7 Screen attack surface
 
 | Detector | Behavior |
 |---|---|
@@ -148,6 +163,19 @@ Pure-black background, red ◇, white text, white unlock button. All keys are in
 (including ESC/back). Unlock requires the system biometric prompt; the session stays open
 for 5 minutes (`UNLOCK_TTL`) then re-locks automatically; critical threats re-lock after
 30 s even after a successful unlock.
+
+### 4.1.1 Two-factor unlock (TOTP, since v0.7.0)
+
+Optional **dual verification** (Settings → ◇Mirtazapine Shield → 双重验证): after the
+biometric passes, the lock screen turns into a code-entry view and a **6-digit RFC 6238
+TOTP code** from your authenticator app is required. The seed is generated on-device and
+shown as an `otpauth://` URI to import into Google Authenticator / Microsoft
+Authenticator / Aegis etc. (stored encrypted in the same Keystore/0600 key domain).
+
+- Wrong codes feed the existing brute-force pipeline: fail limit → key release →
+  self-destruct; exponential unlock cooldown applies.
+- Security rests on the seed (encrypted at rest) — the algorithm is fully public and
+  that does not weaken it (RFC 6238 is a standard).
 
 ### 4.2 Honeypot fake-lock
 
@@ -177,6 +205,23 @@ destruction only once.
 - Locked (or heartbeat stalled / watchdog tripped / honeypot engaged) → gate fails
   closed: **decrypt refused, session capability released**.
 - Unlocked → gate re-armed, keys re-derived from Keystore-backed storage.
+
+### 4.6 Data-level key gate (since v0.7.1)
+
+A **session key layer** sits between the data and the Keystore master key:
+
+- Data is encrypted with a random session key; the session key is wrapped in a blob by
+  a **biometric-authenticated Keystore key** (`setUserAuthenticationRequired`, 300 s
+  window).
+- **Without an authentication event, newly written data is unreadable** — a stolen or
+  compromised device cannot decrypt anything written after the last lock, regardless of
+  what detection sees. Locking invalidates the in-memory session key immediately.
+- Historical data (master-key encryption) still decrypts via fallback — smooth upgrade,
+  no data loss; new writes transition to session-key encryption automatically.
+- The biometric prompt carries a `CryptoObject` bound to the authenticated key; a
+  post-auth `captureAuth` guarantees the session key even when the prompt started
+  outside the auth window.
+- Desktop has no system biometric gate — honestly unchanged (master-key path).
 
 ---
 
@@ -224,14 +269,19 @@ itself an anomaly signal.
 | v0.6.6 | Clock-tamper & weak-lock advisories, Frida port 27043, emulator test-keys, audit encryption harden |
 | v0.6.7 | **Open-source-proof hardening**: heartbeat gate (fail-closed), watchdog ring, honeypot fake-lock, brute-force protection, dex self-verification, key release on lock, live status panel |
 | v0.6.8 | **Network & screen attack surface**: capture/recording events (API 34), mirroring change detection, CA-cert & ARP-spoof detection, SSID fingerprint, Zygisk/Shamiko/LSPosed, SELinux, scan jitter, background memory wipe, unlock cooldown backoff, downgrade defense |
+| v0.6.9 | Fixed gallery/file picker crash on all real devices (androidx.activity requestCode ≥ 65536 vs. platform 16-bit limit) — moved to fixed requestCode `startActivityForResult` |
+| v0.7.0 | **TOTP 2FA**: biometric + 6-digit dynamic code dual unlock, `otpauth://` seed import, wrong codes feed brute-force pipeline |
+| v0.7.1 | **Data-level key gate**: session-key layer wrapped by biometric-authenticated Keystore key; no auth → new data unreadable; lock invalidates session; master-key fallback for history |
+| v0.7.2 | **Native anti-debug (NDK)**: TracerPid/maps/threads read in C (4 ABIs), JVM + native dual-channel verification, graceful fallback |
 
 ---
 
 ## 8. Verification
 
-- 62 automated tests, including: gate fail-closed behavior, watchdog trip, honeypot
+- 68 automated tests, including: gate fail-closed behavior, watchdog trip, honeypot
   repeated-verification, brute-force self-destruct, hash-chain round-trip & tamper
-  detection, unlock cooldown, background memory wipe/restore.
+  detection, unlock cooldown, background memory wipe/restore, and the **official
+  RFC 6238 TOTP vectors** plus the full 2FA state-machine flow.
 - Release artifacts are signed; each release ships a SHA-256 manifest in the GitHub
   release.
 

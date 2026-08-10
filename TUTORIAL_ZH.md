@@ -83,6 +83,7 @@ adb install composeApp/build/outputs/apk/debug/composeApp-debug.apk
 | **聊天细节** | 日期分隔线（今天/昨天/日期）+ 会话页总未读角标。 |
 | **托盘常驻（桌面）** | 关窗最小化到系统托盘，双击恢复、菜单退出。 |
 | **离线消息** | 对方离线时消息进入本地队列，对方上线后自动补发。 |
+| **◇Mirtazapine Shield** | 设置 → ◇Mirtazapine Shield → 一键开启实时监测 + 应用锁（见 2.5 节）：威胁检测、生物识别 + 可选 TOTP 双重解锁、数据级密钥门禁、自毁协议、实时状态面板。 |
 
 **小技巧：** 聊天页顶部可看到连接方式、加密状态和待发送消息数（`N 条待发送`）。
 
@@ -93,25 +94,29 @@ adb install composeApp/build/outputs/apk/debug/composeApp-debug.apk
 
 ### 中文
 
-内置的实时安全监测与应用锁（旗舰功能 ◇Mirtazapine Shield）。
+内置的实时安全监测与应用锁（旗舰功能 ◇Mirtazapine Shield）。详细介绍见 [MIRTAZAPINE_SHIELD.md](MIRTAZAPINE_SHIELD.md)（含检测矩阵、响应链、开源下仍有效的安全设计）。
 
-- **开启**：设置 → ◇Mirtazapine Shield → 打开（关闭需生物识别验证）。
-- **检测范围**：Root（含 Magisk 隐藏 root 与 Xposed）、Frida 注入（路径/端口 27042/内存映射/线程/TracerPid）、模拟器、USB 调试/ADB、设备管理接管（MDM）、凭据变更、VPN/代理变更、后台快速切换、无障碍滥用、监控类应用、屏幕共享可疑、JVM agent、远程控制进程。
-- **检测到威胁时**：应用锁定到全屏护盾页并列出威胁；需生物识别解锁。解锁 5 分钟后自动再锁；严重级威胁 30 秒内未消除将再次锁定。
-- **自毁协议（可选）**：设置中开启后，严重级破解信号（Root/调试/凭据/设备管理/设置篡改）会立即销毁本地聊天记录与接收文件（删除前覆写零值），并清除剪贴板与通知。
-- **额外防护**：聊天记录静态加密；锁定时内存消息清除；防截屏、剪贴板、通知内容保护；设置 HMAC 签名（篡改/清除即强制恢复）；APK 签名指纹校验（重打包触发锁定）；哈希链审计日志全程记录。
-- **能力边界**：系统级预装监控/企业 MDM 属设备所有者权限，普通应用无法检测与阻止——◇Mirtazapine Shield 提供应用层可实现的最强防护。
+- **开启**：设置 → ◇Mirtazapine Shield → 打开（关闭需生物识别验证）。开启即一键全开全部防护。
+- **检测范围**：Root（含 Magisk 隐藏 root、Xposed、Zygisk/Shamiko/LSPosed）、Frida 注入（路径/端口 27042+27043/内存映射/线程/TracerPid，**JVM 与 native（NDK）双通道**）、模拟器（含 test-keys）、USB 调试/ADB、SELinux、设备管理接管（MDM）、凭据变更、VPN/代理变更、**用户 CA 证书新增与 ARP 欺骗（局域网中间人）**、网络指纹（SSID 变化）、后台快速切换、无障碍滥用、监控类应用（安装+前台）、**屏幕录制/截屏事件（Android 14+）**、投屏变化、时钟跳变、弱锁屏、降级安装、JVM agent、远程控制进程。
+- **检测到威胁时**：应用锁定到全屏护盾页并列出威胁；需**生物识别 + （可选）TOTP 动态码第二因子**解锁。解锁 5 分钟后自动再锁；严重级威胁 30 秒内未消除将再次锁定；注入类威胁进入假锁模式（密钥真实释放，需连续多次验证）。
+- **数据级密钥门禁**：聊天数据由"会话密钥"加密，会话密钥经**生物识别认证绑定**的 Keystore 密钥包裹——**没有生物识别认证，新写入的数据不可解**（设备丢失/被攻陷时数据级防护，不依赖检测）；锁定即释放内存会话密钥。
+- **自毁协议（可选）**：设置中开启后，严重级破解信号（Root/调试/凭据/设备管理/暴力尝试）会立即销毁本地聊天记录与接收文件，并清除剪贴板与通知。
+- **自保护**：APK 签名指纹校验（重打包触发锁定）；dex 哈希自校验；版本降级防护；设置 HMAC 签名（篡改/清除即强制恢复）；内存状态 HMAC；**心跳门禁（fail-closed：检测线程停滞 → 拒绝解密）**；**看门狗环形哨兵**（3 线程互盯）；防截屏与截屏事件检测；剪贴板/通知保护；哈希链 + AES-GCM 加密审计日志；暴力防护（失败上限+指数冷却）；后台 60 秒自动擦除内存明文。
+- **实时状态面板**：设置页展示门禁新鲜度、看门狗状态、假锁模式、生物识别失败计数与最近审计事件。
+- **能力边界**：系统级预装监控/企业 MDM 属设备所有者权限，普通应用无法检测与阻止——◇Mirtazapine Shield 提供应用层可实现的最强防护（全开源（GPL-3.0）下依然有效）。
 
 ### English
 
-A real-time security monitor and app lock built into the client.
+A real-time security monitor and app lock built into the client. Full design & detection matrix: [MIRTAZAPINE_SHIELD.md](MIRTAZAPINE_SHIELD.md).
 
-- **Enable**: Settings → ◇Mirtazapine Shield → toggle on (disabling requires biometric verification).
-- **What it detects**: Root (incl. Magisk hidden root & Xposed), Frida injection (paths, port 27042, memory maps, threads, TracerPid), emulator, USB debugging/ADB, device-admin takeover (MDM), credential changes, VPN/proxy changes, rapid background switching, accessibility abuse, monitoring apps, screen-sharing suspects, JVM agents, remote-control processes.
-- **When a threat is detected**: the app locks into a full-screen shield page listing the threat(s); unlock requires your biometrics. Unlock expires after 5 minutes; critical threats re-lock after 30s if not cleared.
-- **Self-destruct protocol (optional)**: a critical compromise signal wipes local chats & received files immediately (zero-overwritten first) and clears the clipboard & notifications.
-- **Beyond that**: encrypted chat storage at rest, memory cleared while locked, screen-capture/clipboard/notification protection, HMAC-signed settings, APK signature verification, hash-chained audit log.
-- **Honest boundary**: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be detected by an app — ◇Mirtazapine Shield provides the strongest app-layer protection.
+- **Enable**: Settings → ◇Mirtazapine Shield → toggle on (disabling requires biometric verification). One switch enables every protection.
+- **What it detects**: Root (incl. Magisk hidden root, Xposed, Zygisk/Shamiko/LSPosed), Frida injection (paths, ports 27042+27043, memory maps, threads, TracerPid — **JVM + native (NDK) dual-channel**), emulator (incl. test-keys), USB debugging/ADB, SELinux, device-admin takeover (MDM), credential changes, VPN/proxy changes, **user CA additions & ARP spoofing (LAN MITM)**, network fingerprint (SSID change), rapid background switching, accessibility abuse, monitoring apps (installed + foreground), **screen capture/recording events (Android 14+)**, mirroring changes, clock tampering, weak lock screen, downgrade attempts, JVM agents, remote-control processes.
+- **When a threat is detected**: full-screen shield page listing the threat(s); unlock requires **biometrics + (optional) TOTP second factor**. Unlock expires after 5 minutes; critical threats re-lock after 30s; injection threats engage a honeypot fake-lock (real key release, repeated verification).
+- **Data-level key gate**: chat data is encrypted with a session key wrapped by a **biometric-authenticated Keystore key** — without an authentication event, newly written data is unreadable (data-level protection on device loss/compromise, independent of detection); locking releases the in-memory session key.
+- **Self-destruct protocol (optional)**: a critical compromise signal wipes local chats & received files immediately and clears clipboard & notifications.
+- **Self-protection**: APK signature verification (anti-repackaging), dex hash self-verification, downgrade defense, HMAC-signed settings, in-memory state HMAC, **fail-closed heartbeat gate**, **watchdog ring** (3 threads), screen-capture protection & capture-event detection, clipboard/notification protection, hash-chained + AES-GCM audit log, brute-force protection (fail limit + exponential cooldown), 60s background memory wipe.
+- **Live status panel**: gate freshness, watchdog trips, honeypot state, biometric fail counter, latest audit events.
+- **Honest boundary**: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be detected by an app — the Shield provides the strongest app-layer protection, and it stays effective under full disclosure (GPL-3.0).
 
 ## 3. 私人服务器
 
