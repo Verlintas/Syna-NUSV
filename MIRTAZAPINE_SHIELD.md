@@ -300,7 +300,7 @@ See [3.6](#36-screen-attack-surface). Additional behavior:
 | Severity | Threats | Response |
 |---|---|---|
 | CRITICAL | ROOT_DETECTED, DEBUG_MODE, CREDENTIAL_CHANGED, DEVICE_ADMIN_CHANGE, SHIELD_TAMPERED, FRIDA_DETECTED, WATCHDOG_TRIP, BRUTE_FORCE, DOWNGRADE_ATTEMPT | Lock + **self-destruct** (if enabled) + re-lock 30 s after any unlock while the threat persists |
-| HIGH | EMULATOR_DETECTED, MONITORING_APP, ACCESSIBILITY_ABUSE, BACKGROUND_SWITCH, SCREEN_RECORDING, SCREEN_SHARE_SUSPECT | Lock + audit |
+| HIGH | EMULATOR_DETECTED, MONITORING_APP, ACCESSIBILITY_ABUSE, BACKGROUND_SWITCH, SCREEN_RECORDING, SCREEN_SHARE_SUSPECT, KEY_CHANGED | Lock + audit |
 | MEDIUM | VPN_CHANGE, NETWORK_MITM (CA / ARP) | Lock + audit |
 | LOW | INACTIVE, CLOCK_CHANGED, WEAK_LOCK, NETWORK_CHANGED, SELINUX_DISABLED | **Audit only** — no forced lock (no false locks) |
 
@@ -587,6 +587,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.7.8 | **Expanded detection & active countermeasures**: Riru/EdXposed/TaiChi + SELinux domain in root detection, IME/USB/suspicious-module advisories (LOW); **operation-triggered integrity probing on the decrypt path**, **watchdog self-healing** (scanner restart), **honeypot data pollution** (decoy messages) |
 | v0.7.9 | **Active crash defense**: native `SIGABRT` on high-confidence signals (ptrace attach / code or libc hooked) — no stable debugging window; usage-access grant now targets Syna (`EXTRA_APP_PACKAGE`); full permission self-check on every launch |
 | v0.8.0 | **Deep self-destruct (anti-forensics)**: `SecureWipe` 2-pass random overwrite + fsync on every sensitive file, **Keystore/TEE storage-key destruction** (recovered ciphertext permanently undecryptable), audit log self-wiped after the event, TOTP seed / session blob / baselines / crash log all wiped |
+| v0.8.1 | **Key pinning (TOFU) & P2P MITM closure**: public keys pinned on first use (encrypted at rest), fingerprint badge in chat header (full fingerprint for out-of-band verification), key changes rejected + `KEY_CHANGED` lock (no more HELLO/KEY forgery poisoning); **encrypt-only session mode** (refuse plaintext fallback); **replay defense** (10-min window on real-time frames) |
 
 ---
 

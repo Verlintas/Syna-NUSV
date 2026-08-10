@@ -39,7 +39,7 @@
 - ✅ **Connection mode switching**: Auto / TCP (reliable) / UDP (fast) / Host Hotspot
 - ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), **group owner can dissolve the group**, members can leave
 - ✅ **Enhanced protection**:
-  - **End-to-end encryption**: X25519 key exchange + HKDF-SHA256 + AES-256-GCM; private keys stay on your device only
+  - **End-to-end encryption**: X25519 key exchange + HKDF-SHA256 + AES-256-GCM; private keys stay on your device only; **key fingerprinting + TOFU pinning** (P2P MITM defense, key changes rejected) · **encrypt-only mode** (no silent plaintext fallback) · replay defense
   - **Burn after reading**: message shows for 8 seconds, then is destroyed on both sides with BURN_ACK confirmation + 60s fallback
   - **Temporary chat**: conversations auto-purge after a TTL (1h / 24h / 7d) on both devices
 - ✅ **Dark / light / system theme**
