@@ -3,13 +3,35 @@
 **Real-time security monitor & application lock for Syna.**
 
 The Shield is the security core of Syna: it continuously watches the device for compromise
-indicators, locks the app behind a full-screen biometric gate when a threat is detected,
-and — at the highest severity — destroys local data rather than letting it fall into
-wrong hands.
+indicators, locks the app behind a full-screen gate when a threat is detected, refuses to
+decrypt anything when the process cannot prove it is healthy, and — at the highest
+severity — destroys local data rather than letting it fall into wrong hands.
 
-> This document describes the design, the detection matrix, the countermeasures, and —
-> most importantly — **why the protection remains meaningful even though Syna is fully
-> open source (GPL-3.0)**.
+This document is an engineering specification: every detector, every response, every
+mechanism below is implemented, tested, and fully open source. Nothing in this document
+is security-by-obscurity; the protection survives the fact that **all source code is
+public (GPL-3.0)**.
+
+---
+
+## Table of contents
+
+1. [Design philosophy](#1-design-philosophy-security-under-full-disclosure)
+2. [Threat model & honest boundary](#2-threat-model--honest-boundary)
+3. [Detection matrix (every detector in detail)](#3-detection-matrix)
+4. [Meta-detection: heartbeat gate & watchdog ring](#4-meta-detection-heartbeat-gate--watchdog-ring)
+5. [Network environment detection (LAN MITM)](#5-network-environment-detection-lan-mitm)
+6. [Screen attack surface](#6-screen-attack-surface)
+7. [Response chain](#7-response-chain)
+8. [The unlock pipeline (biometric → TOTP → session key)](#8-the-unlock-pipeline)
+9. [Data protection: key hierarchy & formats](#9-data-protection-key-hierarchy--formats)
+10. [State machine reference](#10-state-machine-reference)
+11. [Attack scenario walkthroughs](#11-attack-scenario-walkthroughs)
+12. [Platform comparison (Android vs desktop)](#12-platform-comparison-android-vs-desktop)
+13. [False-positive control & known trade-offs](#13-false-positive-control--known-trade-offs)
+14. [Version history](#14-version-history)
+15. [Verification & testing](#15-verification--testing)
+16. [Honest boundary (again, plainly)](#16-honest-boundary-again-plainly)
 
 ---
 
@@ -17,20 +39,25 @@ wrong hands.
 
 Every line of Shield code is public. An attacker can read the detectors, the thresholds,
 the key locations, and the lock logic. Classic "security by obscurity" is therefore
-**explicitly rejected**. Instead, the Shield relies on five properties that survive source
-disclosure:
+**explicitly rejected**. Instead, the Shield relies on five properties that survive
+source disclosure:
 
 | Property | Mechanism | Why it survives disclosure |
 |---|---|---|
 | **Fail-closed gate** | Every decrypt path checks a heartbeat gate first. If the detector loop is paused, killed, or hooked, decryption is *refused* — equivalent to a lock even with the UI bypassed. | The attacker must make the gate appear fresh. Faking the gate requires injecting code into the process — which is itself what the detectors watch for. |
-| **Redundant orthogonal detection** | The same attack is observed from multiple independent channels (files, ports, procfs, maps, threads, system callbacks, integrity hashes, watchdog timers). | Bypassing one channel is not enough; every channel must be bypassed, and each bypass is a detectable modification of the process. |
+| **Redundant orthogonal detection** | The same attack is observed from multiple independent channels (files, ports, procfs, maps, threads, system callbacks, integrity hashes, watchdog timers, native C code). | Bypassing one channel is not enough; every channel must be bypassed, and each bypass is a detectable modification of the process. |
 | **Meta-detection (watchdogs)** | 3 daemon threads monitor each other in a ring with randomized cadence; the engine heartbeat is HMAC-signed. | Killing any thread stalls its slot → neighbor watchdog trips. Killing everything stalls the heartbeat → the gate fails closed. |
-| **Key material outside the process** | Android keys live in the Keystore / TEE (never exported to JVM memory); the session capability is released on lock and re-derived on unlock. | Source code contains no keys and no key derivation that can be replayed without the TEE. |
+| **Key material outside the process** | Android keys live in the Keystore / TEE (never exported to JVM memory); the session capability is released on lock and re-derived on unlock; session keys are wrapped by biometric-authenticated Keystore keys. | Source code contains no keys and no key derivation that can be replayed without the TEE or without an authentication event. |
 | **Honesty** | What cannot be detected at app layer is stated plainly, in-app and here. | No false promise, no false sense of safety. |
 
-The realistic attacker model for a LAN messenger is: a compromised device, a device with
+**Kerckhoffs applied:** the algorithm, the layout, the thresholds — all public. What an
+attacker still must do: (a) modify the running process without being observed
+(hard — dual-channel + watchdog + gate), or (b) extract data without authentication
+(hard — TEE-bound master key + biometric-authenticated session key + fail-closed gate).
+
+The realistic attacker model for a LAN messenger: a compromised device, a device with
 root, an injected process, a repackaged APK, a network MITM, or a physically stolen
-device. The Shield addresses each one as documented below.
+device. The Shield addresses each one — see [Attack scenario walkthroughs](#11-attack-scenario-walkthroughs).
 
 ---
 
@@ -38,16 +65,17 @@ device. The Shield addresses each one as documented below.
 
 **Detectable at app layer (detected by the Shield):**
 
-- Root / Magisk / Xposed / Zygisk / Shamiko / LSPosed
+- Root / Magisk (incl. hidden-mount variants) / Xposed / Zygisk / Shamiko / LSPosed
 - Frida injection (server paths, ports 27042 + 27043, `/proc/self/maps` library maps,
-  thread names, `TracerPid` ptrace)
+  thread names, `TracerPid` ptrace) — via **JVM and native (NDK) channels**
 - Emulator environments (fingerprint, model, brand, test-keys build tags, goldfish /
   ranchu / vbox86 hardware)
 - USB debugging / ADB, attached debuggers
 - Repackaging (APK signature fingerprint) and runtime tampering (dex hash baseline)
+- Version downgrade attempts (versionCode rollback)
 - SELinux non-enforcing mode
 - Clock tampering (wall clock vs. uptime divergence)
-- Missing lock screen (weak lock advisory)
+- Missing lock screen (weak-lock advisory)
 - Credential change (biometrics removed — device possibly re-owned)
 - Device-admin takeover (MDM activation)
 - VPN / proxy change
@@ -69,192 +97,430 @@ device. The Shield addresses each one as documented below.
 - Enterprise MDM with device-owner privileges
 - Root-level kernel monitoring that hooks below the Java runtime
 
-For those scenarios the only app-layer answer is the **self-destruct protocol** and the
-**fail-closed gate**: if the process cannot prove it is healthy, data access stops.
+For those scenarios the only app-layer answers are the **self-destruct protocol**, the
+**data-level key gate** and the **fail-closed gate**: if the process cannot prove it is
+healthy, data access stops; if the device is in hostile hands, data written after the
+last authentication is unreadable.
 
 ---
 
 ## 3. Detection matrix
 
+Scan cadence (Android): **light scan every 3 s (+0–2 s random jitter)** — signature,
+dex integrity, root, frida, emulator, debug, SELinux, mirroring, downgrade, credential,
+foreground app, network fingerprint, clock, weak-lock; **heavy scan every 15 s** (every
+5th tick) — monitoring apps, accessibility, device-admin, CA store, ARP. The jitter
+prevents an attacker from predicting exactly when the next scan happens.
+
 ### 3.1 Static & environment (files, packages, system state)
 
-| Detector | Indicators |
-|---|---|
-| `isRooted` | `su` binaries, Superuser APK, Magisk paths (`/sbin/.magisk`, `/data/adb/*`) & packages, Xposed paths & installer, Zygisk/Shamiko/LSPosed data dirs, LSPosed manager package |
-| `hasFrida` | `/data/local/tmp/frida-server*`, TCP listen on 127.0.0.1:27042/27043 |
-| `isEmulator` | fingerprint/model/brand markers, `test-keys` build tags, goldfish/ranchu/vbox86 hardware |
-| `isDebugMode` | `ADB_ENABLED` setting, `Debug.isDebuggerConnected()` |
-| `isSelinuxPermissive` | `/sys/fs/selinux/enforce` == 0 (advisory) |
-| `checkWeakLock` | Keyguard not secure (advisory) |
-| `hasMonitoringApps` | Known monitoring/remote-control package fragments |
+| Detector | Signals checked | Platform |
+|---|---|---|
+| `isRooted` | `su` binaries (`/system/bin/su`, `/system/xbin/su`, `/sbin/su`), `Superuser.apk`, init.d script; Magisk paths (`/sbin/.magisk`, `/data/adb/magisk`, `/data/adb/.magisk`, magisk logs) & packages (`com.topjohnwu.magisk`, `com.magisk`); Xposed (`/system/framework/xposed.jar`, `libxposed_art.so`, installer package); Zygisk (`/data/adb/zygisk`, `/data/adb/modules/zygisk`); Shamiko (`/data/adb/modules/shamiko`, `/data/adb/shamiko`); LSPosed (`/data/adb/lspd`, `/data/adb/modules/lsposed`, `org.lsposed.manager`); `su` in `$PATH` | Android |
+| `hasFrida` | `/data/local/tmp/frida-server`, `/data/local/tmp/frida`, `/data/local/tmp/re.frida.server`; TCP connect to 127.0.0.1:27042 and 27043 (300 ms timeout each) | Android |
+| `isEmulator` | `Build.FINGERPRINT` containing `generic`; `MODEL` `google_sdk`/`Emulator`/`Android SDK built for`; `BRAND` `generic`; `Build.TAGS` containing `test-keys`; `Build.HARDWARE` `goldfish`/`ranchu`/`vbox86` | Android |
+| `isDebugMode` | `Settings.Global.ADB_ENABLED` == 1; `Debug.isDebuggerConnected()` | Android |
+| `isSelinuxPermissive` | `/sys/fs/selinux/enforce` == "0" (advisory) | Android |
+| `checkWeakLock` | `KeyguardManager.isKeyguardSecure` == false (advisory) | Android |
+| `hasMonitoringApps` | Package fragments: `com.teamviewer`, `com.anydesk`, `air.com.xtremelabs.android`, `com.mobisec`, `com.oxitec`, `com.secugen`, `com.cleverfiles`, `net.mobz`, `com.genymotion` | Android |
+| `hasAbusiveAccessibility` | `ENABLED_ACCESSIBILITY_SERVICES` containing `com.teamviewer` / `com.anydesk` / `screenrecord` | Android |
+| `remoteControlProcesses` | `ps -e -o comm=` (or `tasklist` on Windows) scanned for teamviewer / anydesk / obs / vnc / scrcpy / rustdesk / todesk / sunloginclient / 向日葵 | Desktop |
 
 ### 3.2 Runtime process inspection
 
-| Detector | Indicators |
-|---|---|
-| `detectProcessInjection` | `TracerPid` ≠ 0 in `/proc/self/status` (ptrace), `frida-gadget`/`frida-agent` in `/proc/self/maps`, frida/gum-js-loop thread names in `/proc/self/task/*/comm` |
-| `hasJavaAgent` (desktop) | `-javaagent` / `-agentlib` / `-agentpath` JVM args |
-| `remoteControlProcesses` (desktop) | TeamViewer / AnyDesk / OBS / VNC / scrcpy / RustDesk / ToDesk / SunLogin processes |
+| Detector | Signals checked | Channel |
+|---|---|---|
+| `TracerPid` | `/proc/self/status` `TracerPid:` ≠ 0 — kernel-maintained ptrace flag; catches Frida / gdb / strace / any ptrace attach | **native + JVM dual** |
+| Frida / gum maps | `/proc/self/maps` containing `frida-gadget`, `frida-agent`, `gum-js`, `libgadget` | **native + JVM dual** |
+| Frida thread names | `/proc/self/task/*/comm` containing `frida` / `gum-js` | **native + JVM dual** |
+| `hasJavaAgent` | `ManagementFactory.getRuntimeMXBean().inputArguments` with `-javaagent` / `-agentlib` / `-agentpath` → reported as Frida-class injection | Desktop |
 
 ### 3.3 Integrity (anti-repackaging / anti-tamper)
 
-| Detector | Mechanism |
-|---|---|
-| `verifySignature` | APK signing-certificate SHA-256 compared against the release hash compiled into `BuildConfig` (debug builds skip) |
-| `verifyDexIntegrity` | SHA-256 of all dex files vs. an encrypted baseline stored at first run; normal upgrades re-baseline via `versionCode`; any un-versioned change → CRITICAL `SHIELD_TAMPERED` |
-| `checkDowngradeAttempt` | `versionCode` rollback vs. encrypted baseline → CRITICAL `DOWNGRADE_ATTEMPT` |
-| `ShieldConfigGuard` | Settings file is HMAC-signed; tamper or wipe → force-restore + `SHIELD_TAMPERED` |
+| Detector | Mechanism | Response |
+|---|---|---|
+| `verifySignature` | SHA-256 of the APK signing certificate compared against the release fingerprint compiled into `BuildConfig` (`745317298590e69ddd48c94902c24209918fe1c19e104bb3ce1ca05263c2c4d7`). Debug builds skip. A repackaged/re-signed APK can never match. | CRITICAL `SHIELD_TAMPERED` → honeypot lock |
+| `verifyDexIntegrity` | SHA-256 of every dex (incl. split APKs) combined with `versionCode`, compared against an **encrypted baseline** stored at first run (`syna_dex_base`). Normal upgrades (versionCode changed) re-baseline; any difference at an unchanged versionCode = tampering, even if the signature check is hooked. | CRITICAL `SHIELD_TAMPERED` |
+| `checkDowngradeAttempt` | `versionCode` compared against an encrypted baseline (`syna_version_base`); rollback → CRITICAL `DOWNGRADE_ATTEMPT` (downgrade is a common way to re-enable a patched build). Normal upgrades update the baseline. | CRITICAL `DOWNGRADE_ATTEMPT` |
+| `ShieldConfigGuard` | Settings file carries an HMAC signature; tamper or wipe → force-restore of safe defaults + `SHIELD_TAMPERED` | CRITICAL + forced restore |
 
 ### 3.4 Native anti-debug layer (NDK, since v0.7.2)
 
-`libsyna_shield.so` (C, same GPL-3.0 license, all 4 ABIs) reads the same signals in C:
+`libsyna_shield.so` (C, GPL-3.0, shipped for arm64-v8a / armeabi-v7a / x86_64 / x86)
+reads the same process signals **in C**:
 
-| Signal | Notes |
+| C function | What it reads |
 |---|---|
-| `TracerPid` | kernel-maintained ptrace flag, read via `/proc/self/status` in C |
-| Frida / gum maps | `/proc/self/maps` scanned in C |
-| Frida / gum-js thread names | `/proc/self/task/*/comm` scanned in C |
+| `tracerPid()` | `/proc/self/status` `TracerPid` (kernel-maintained, reliable — unlike self-ptrace probes which false-positive under SELinux) |
+| `fridaMaps()` | `/proc/self/maps` scan for frida / gum / libgadget mappings |
+| `fridaThreads()` | `/proc/self/task/*/comm` scan for frida / gum-js thread names |
 
-JVM-level hooks (Java API hooking, repackaging hooks) cannot cover these call sites —
-only gadget-level native hooks could, a far higher bar. **Every scan runs both the JVM
-and the native channel; either one hitting triggers the lock.** If the library cannot
-load, the JVM implementation takes over (no loss of protection).
+Why it matters: JVM-level hooks (Java API hooking, repackaged dex hooks) **cannot
+cover C call sites**. Bypassing the native channel requires gadget-level native hooking
+(frida-gadget with an explicit native script) — a materially higher bar. Every scan
+runs **both channels**; either one hitting triggers the lock. If the library fails to
+load (unsupported platform), the JVM implementation continues alone — no loss of
+protection.
 
-### 3.5 Meta-detection (the Shield watching the Shield)
+### 3.5 Runtime change detectors (Android)
 
-| Mechanism | Behavior |
-|---|---|
-| `ShieldGate` | Engine writes a timestamp + HMAC fingerprint each scan round (randomized cadence). **Every decrypt path checks freshness**: stale or forged → decrypt refused. Locking releases the session; unlocking re-arms. |
-| `WatchdogRing` | 3 daemon threads, randomized 4–7 s cadence, each monitors the next slot (ring). Stale/fingerprint-broken slot → CRITICAL `WATCHDOG_TRIP` + lock. |
-| State HMAC | In-memory `ShieldState` is HMAC-signed on every transition; any inconsistent read forces a lock (`SHIELD_TAMPERED`). |
+| Detector | Mechanism | Threat |
+|---|---|---|
+| `checkCredentialChange` | API 30+: `BiometricManager.canAuthenticate(BIOMETRIC_STRONG)` transitions from SUCCESS to unavailable → device possibly re-owned. Skipped below API 30 (no crash, no feature loss). | CRITICAL `CREDENTIAL_CHANGED` |
+| `checkDeviceAdminChange` | `DevicePolicyManager.activeAdmins` signature changes → MDM takeover warning | CRITICAL `DEVICE_ADMIN_CHANGE` |
+| `checkAccessibilityChange` | `ENABLED_ACCESSIBILITY_SERVICES` string changes | HIGH `ACCESSIBILITY_ABUSE` |
+| `checkForegroundApp` | Usage-access query of last 60 s: foreground package matches monitoring fragments → immediate lock (stronger than mere installation) | HIGH `MONITORING_APP` |
+| `checkClockChange` | Wall clock delta vs. `SystemClock.elapsedRealtime` delta diverges > 5 min (time-travel forgery of audit/message timestamps) | LOW advisory `CLOCK_CHANGED` |
+| VPN callback | `ConnectivityManager.NetworkCallback` on `TRANSPORT_VPN` toggling | MEDIUM `VPN_CHANGE` |
+| Background switch | `ProcessLifecycleOwner`: ON_STOP → ON_START within 1.5 s (screen-share / monitoring pattern) | HIGH `BACKGROUND_SWITCH` |
 
-### 3.6 Network environment (LAN MITM defense)
+### 3.6 Screen attack surface
 
-| Detector | Indicators |
-|---|---|
-| `checkCaChange` | New certificates in `AndroidCAStore` (sideloaded MITM certs) → `NETWORK_MITM` |
-| `checkArpSpoof` | `/proc/net/arp` default-gateway MAC change → `NETWORK_MITM`; gateway IP change (network switch) re-baselines instead of alarming |
-| `checkNetworkFingerprint` | SSID change → advisory `NETWORK_CHANGED` |
-| VPN callback | `ConnectivityManager` transport VPN change → `VPN_CHANGE` |
-
-### 3.7 Screen attack surface
-
-| Detector | Behavior |
-|---|---|
-| Screen capture/recording (API 34+) | `Activity.ScreenCaptureCallback` system event → immediate `SCREEN_RECORDING` lock (older Android: `FLAG_SECURE` content blackout) |
-| `checkScreenMirroring` | Presentation display appears/disappears → `SCREEN_SHARE_SUSPECT` lock (change-based, no re-lock spam) |
-| Desktop display count | Screen count change → `SCREEN_SHARE_SUSPECT` |
-| `BACKGROUND_SWITCH` | Foreground → background → foreground within 1.5 s → lock (screen-share / monitoring pattern) |
+| Detector | Behavior | Threat |
+|---|---|---|
+| Screen capture/recording (API 34+) | `Activity.ScreenCaptureCallback` system event → lock at the moment of capture; older Android is covered by `FLAG_SECURE` content blackout | HIGH `SCREEN_RECORDING` |
+| `checkScreenMirroring` | Presentation display (`DISPLAY_CATEGORY_PRESENTATION`) appears/disappears — **change-based**, so a permanently-present display cannot re-lock forever | HIGH `SCREEN_SHARE_SUSPECT` |
+| Desktop display count | `GraphicsEnvironment.screenDevices` count changes | HIGH `SCREEN_SHARE_SUSPECT` |
 
 ---
 
-## 4. Response chain
+## 4. Meta-detection: heartbeat gate & watchdog ring
+
+### 4.1 ShieldGate (fail-closed decrypt gate)
+
+The single most important mechanism. The engine heartbeat drives it; every decrypt
+path checks it.
+
+**Heartbeat slot:** a timestamp + HMAC-SHA256 fingerprint (32-byte random key per
+process, never persisted). Updated by the engine at the top of every scan round.
+
+- `arm()` — on Shield start; immediately stamps one fresh heartbeat (so startup
+  decryption works).
+- `beat()` — engine loop, every scan round.
+- `releaseSession()` — **lock event**: zeroes the timestamp and scrambles the
+  fingerprint; the gate now refuses everything, and the in-memory session key is
+  invalidated. This is the "locking releases the keys" primitive.
+- `restoreSession()` — unlock event: gate re-armed and given a fresh heartbeat.
+- `disarm()` — Shield disabled: gate fully bypassed (decrypt always allowed).
+
+**Gate check (`isFresh()`)** — inside `ShieldStorageKey.decrypt` on both platforms:
+
+1. not armed → allow (Shield off)
+2. lockedOut → **deny**
+3. never beat → **deny**
+4. `now - lastBeat > 12 s` → **deny** (detector paused/killed)
+5. HMAC fingerprint mismatch → **deny** (timestamp frozen by a hook)
+
+An attacker who pauses the detector thread gets **no data at all** — the UI lock is
+only the visible half; the invisible half is that decryption refuses. This is the
+property that holds even when the UI itself is bypassed.
+
+### 4.2 WatchdogRing (dead-letter sentinels)
+
+3 daemon threads (`syna-watchdog-0..2`), each with its own randomized cadence
+(4 000–7 000 ms), arranged in a ring:
+
+```
+W0 monitors slot[1]   →   W1 monitors slot[2]   →   W2 monitors slot[0]
+```
+
+Each slot is a timestamp + HMAC fingerprint with its own random key. On each tick a
+watchdog checks its target slot: stale (> 12 s) or fingerprint-broken → `trips++` +
+CRITICAL `WATCHDOG_TRIP` (audit action `WATCHDOG`, then the normal threat pipeline:
+lock + self-destruct if enabled).
+
+Why a ring and not a single watcher: killing **any one** thread leaves its slot
+stalled and its neighbor reports it. Killing **all three** stalls the engine heartbeat
+as well — the gate fails closed. There is no "kill the watcher" win.
+
+### 4.3 In-memory state HMAC
+
+`ShieldState` transitions write an HMAC signature of the state name; `stateIntact()`
+re-verifies on every critical path. If the in-memory state was rewritten (e.g. a hook
+forcing `UNLOCKED`), the signature no longer matches → forced `LOCKED` + `SHIELD_TAMPERED`
+audit. Combined with the gate, patching the state variable in memory does nothing.
+
+---
+
+## 5. Network environment detection (LAN MITM)
+
+Syna is a LAN messenger; the LAN is exactly where ARP spoofing and CA injection live.
+
+| Detector | Mechanism | Response |
+|---|---|---|
+| `checkCaChange` | Enumerate `AndroidCAStore` aliases (system + user certs); the alias set changing means a certificate appeared/disappeared — the classic precondition for intercepting TLS with a planted CA | MEDIUM `NETWORK_MITM` (lock + audit) |
+| `checkArpSpoof` | Read `/proc/net/arp`, resolve the default gateway from `LinkProperties.routes`, compare the gateway MAC across scans. **Gateway IP change (network switch / DHCP renew) re-baselines instead of alarming** — only a MAC change at a stable gateway raises the flag | MEDIUM `NETWORK_MITM` |
+| `checkNetworkFingerprint` | SSID via `WifiInfo` (API 31+ reads `NetworkCapabilities.transportInfo`; the no-permission placeholder `<unknown ssid>` is filtered out) | LOW advisory `NETWORK_CHANGED` |
+
+---
+
+## 6. Screen attack surface
+
+See [3.6](#36-screen-attack-surface). Additional behavior:
+
+- `FLAG_SECURE` is set while Shield is enabled — the OS renders the app as black in
+  screenshots and screen recordings on all API levels.
+- The capture callback (API 34+) fires at the moment of capture — the app locks and
+  the event is audited before anything can be done with the frame.
+- Clipboard: Syna's own clipboard writes are cleared on background/lock; notifications
+  are hidden while locked (burn-after-reading content never leaks through the shade).
+
+---
+
+## 7. Response chain
 
 | Severity | Threats | Response |
 |---|---|---|
-| CRITICAL | Root, debug mode, credential change, device-admin takeover, Frida, tampering, watchdog trip, brute force, downgrade | Lock + self-destruct protocol (if enabled) + re-lock 30 s after unlock while threat persists |
-| HIGH | Emulator, monitoring apps, accessibility abuse, background switch, screen recording, screen share | Lock + audit |
-| MEDIUM | VPN change, network MITM (CA / ARP) | Lock + audit |
-| LOW | Inactivity, clock change, weak lock, network change, SELinux off | Audit only, no forced lock (no false locks) |
+| CRITICAL | ROOT_DETECTED, DEBUG_MODE, CREDENTIAL_CHANGED, DEVICE_ADMIN_CHANGE, SHIELD_TAMPERED, FRIDA_DETECTED, WATCHDOG_TRIP, BRUTE_FORCE, DOWNGRADE_ATTEMPT | Lock + **self-destruct** (if enabled) + re-lock 30 s after any unlock while the threat persists |
+| HIGH | EMULATOR_DETECTED, MONITORING_APP, ACCESSIBILITY_ABUSE, BACKGROUND_SWITCH, SCREEN_RECORDING, SCREEN_SHARE_SUSPECT | Lock + audit |
+| MEDIUM | VPN_CHANGE, NETWORK_MITM (CA / ARP) | Lock + audit |
+| LOW | INACTIVE, CLOCK_CHANGED, WEAK_LOCK, NETWORK_CHANGED, SELINUX_DISABLED | **Audit only** — no forced lock (no false locks) |
 
-### 4.1 The lock screen
+- **Deduplication:** a threat already present is not re-reported per scan (audit stays
+  clean); `clearThreat` removes it when the signal clears.
+- **Lock:** full-screen pure-black page, red ◇, white text, white unlock button; all
+  keys intercepted (including ESC/back via the activity back callback + preview key
+  handler).
+- **Auto re-lock after unlock:** 5-minute unlock TTL (`UNLOCK_TTL_MS`), plus a 30 s
+  re-lock if a CRITICAL threat is still present.
+- **Self-destruct protocol:** on a CRITICAL signal, if enabled: all local chat history
+  and received files are destroyed, clipboard and notifications cleared, audit event
+  `SELF_DESTRUCT` written. Each threat triggers destruction only once.
 
-Pure-black background, red ◇, white text, white unlock button. All keys are intercepted
-(including ESC/back). Unlock requires the system biometric prompt; the session stays open
-for 5 minutes (`UNLOCK_TTL`) then re-locks automatically; critical threats re-lock after
-30 s even after a successful unlock.
+### 7.1 Honeypot fake-lock (injection-class threats)
 
-### 4.1.1 Two-factor unlock (TOTP, since v0.7.0)
+Frida / integrity tampering engage a **honeypot**: the lock screen is identical to a
+real lock, but
 
-Optional **dual verification** (Settings → ◇Mirtazapine Shield → 双重验证): after the
-biometric passes, the lock screen turns into a code-entry view and a **6-digit RFC 6238
-TOTP code** from your authenticator app is required. The seed is generated on-device and
-shown as an `otpauth://` URI to import into Google Authenticator / Microsoft
-Authenticator / Aegis etc. (stored encrypted in the same Keystore/0600 key domain).
+- session keys are **really released** (gate closed, session key invalidated),
+- unlock requires **3 consecutive biometric successes**,
+- every attempt is audited (`HONEYPOT` action).
 
-- Wrong codes feed the existing brute-force pipeline: fail limit → key release →
-  self-destruct; exponential unlock cooldown applies.
-- Security rests on the seed (encrypted at rest) — the algorithm is fully public and
-  that does not weaken it (RFC 6238 is a standard).
+If 2FA is enabled, the second factor (TOTP) is required first — the attacker would
+need the owner's biometrics *and* the second-factor seed, both of which they lack; the
+honeypot doubles as a decoy that maximizes audit trails while the owner's data stays
+locked.
 
-### 4.2 Honeypot fake-lock
+### 7.2 Brute-force protection
 
-Injection-class threats (Frida, integrity tampering) engage a **honeypot lock**: the
-screen is identical, but the session keys are *really released* and unlock requires
-**3 consecutive biometric successes**. An attacker without the owner's biometrics cannot
-escape; every attempt is written to the audit log.
-
-### 4.3 Brute-force protection
-
-- 5 consecutive biometric failures → keys released + self-destruct protocol triggered
-  (if enabled) + CRITICAL `BRUTE_FORCE` audit.
-- The failure counter is **encrypted at rest** — restarting the app cannot reset it.
-- Exponential unlock cooldown: after a failure the prompt is silently suppressed for
-  1 s → 2 s → 4 s … capped at 64 s.
-
-### 4.4 Self-destruct protocol
-
-On CRITICAL compromise signs (root / debug / credential change / device-admin takeover /
-brute force), if enabled: **all local chat history and received files are destroyed**,
-clipboard and notifications are cleared, and the event is audited. Each threat triggers
-destruction only once.
-
-### 4.5 Session-key lifecycle
-
-- Armed & heartbeating → decrypt allowed.
-- Locked (or heartbeat stalled / watchdog tripped / honeypot engaged) → gate fails
-  closed: **decrypt refused, session capability released**.
-- Unlocked → gate re-armed, keys re-derived from Keystore-backed storage.
-
-### 4.6 Data-level key gate (since v0.7.1)
-
-A **session key layer** sits between the data and the Keystore master key:
-
-- Data is encrypted with a random session key; the session key is wrapped in a blob by
-  a **biometric-authenticated Keystore key** (`setUserAuthenticationRequired`, 300 s
-  window).
-- **Without an authentication event, newly written data is unreadable** — a stolen or
-  compromised device cannot decrypt anything written after the last lock, regardless of
-  what detection sees. Locking invalidates the in-memory session key immediately.
-- Historical data (master-key encryption) still decrypts via fallback — smooth upgrade,
-  no data loss; new writes transition to session-key encryption automatically.
-- The biometric prompt carries a `CryptoObject` bound to the authenticated key; a
-  post-auth `captureAuth` guarantees the session key even when the prompt started
-  outside the auth window.
-- Desktop has no system biometric gate — honestly unchanged (master-key path).
+- **Fail counter:** incremented per biometric failure, **encrypted at rest**
+  (`ShieldStorageKey`-wrapped file) — restarting the app cannot reset it. Cleared on
+  success.
+- **Limit:** 5 consecutive failures → CRITICAL `BRUTE_FORCE`: session key released,
+  self-destruct protocol triggered (if enabled), lock.
+- **Exponential unlock cooldown:** after a failure the unlock prompt is silently
+  suppressed for 1 s → 2 s → 4 s → … capped at 64 s. Silent: no dialog, no counter
+  feedback to the attacker.
 
 ---
 
-## 5. Data protection at rest
+## 8. The unlock pipeline
 
-| Data | Protection |
+```
+LOCKED
+  │  user taps unlock
+  ▼
+biometric prompt (CryptoObject bound to the authenticated Keystore key when possible)
+  │  success → captureAuth(): decrypt session blob → session key cached in memory
+  ▼
+2FA enabled? ── yes ──► AWAITING_TOTP: 6-digit RFC 6238 code entry view
+  │ no                     │ correct → proceed        │ wrong → LOCKED + fail counter
+  ▼                         ▼
+honeypot active? ── yes ──► streak++ (needs 3 consecutive successes) → UNLOCKED
+  │ no
+  ▼
+UNLOCKED  (gate restored, heartbeat re-armed, fail counter cleared,
+           TTL 5 min → auto LOCKED; CRITICAL threats re-lock in 30 s)
+```
+
+- **TOTP (v0.7.0):** RFC 6238, HMAC-SHA1, 30 s step, 6 digits, ±1 step drift tolerance.
+  Seed = 20 random bytes, stored **encrypted at rest** in the same Keystore/0600 key
+  domain; exposed as an `otpauth://totp/Syna:<label>?secret=<base32>&issuer=Syna&digits=6&period=30`
+  URI in Settings for import into Google Authenticator / Microsoft Authenticator /
+  Aegis / any TOTP app. Security rests on the seed — the algorithm being public is
+  irrelevant (it is a public standard).
+- **captureAuth (v0.7.1):** after any successful biometric authentication, the session
+  blob is decrypted inside the freshly refreshed auth window and the session key is
+  cached. This guarantees the session key even when the prompt was started outside the
+  auth window.
+- **Wrong TOTP codes** feed the same brute-force pipeline (fail counter, cooldown,
+  self-destruct at the limit).
+
+---
+
+## 9. Data protection: key hierarchy & formats
+
+### 9.1 Key hierarchy (Android)
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Keystore / TEE (never exported to JVM memory)               │
+│   master key  ("syna_storage_key", AES-256-GCM)             │
+│   auth key    ("syna_session_auth", AES-256-GCM,            │
+│                setUserAuthenticationRequired(true),         │
+│                300 s window, NOT invalidated-by-enrollment) │
+└─────────────────────────────────────────────────────────────┘
+        │                              │
+        │ master key encrypts          │ auth key encrypts (only inside
+        ▼                              ▼ an authentication window)
+  [historical data]              [session blob: syna_session_blob]
+  (pre-v0.7.1)                          │
+                                         ▼
+                                 [session key: 32 random bytes,
+                                  cached in memory while unlocked]
+
+  data written while unlocked  ──encrypt with session key──►
+  decrypt path: session key first → master key fallback (history/upgrade)
+```
+
+- **New writes use the session key.** Without an authentication event (device stolen,
+  app locked, auth window expired) the session key is unobtainable → **new data is
+  unreadable** — a data-level guarantee independent of what detection sees.
+- **Locking invalidates the in-memory session key** (via `SessionKeyStore.invalidateSession`
+  in the state transition to LOCKED and on Shield disable).
+- **Historical data** (master-key encryption) decrypts via fallback — upgrade is smooth,
+  nothing is lost; new writes transition to session-key encryption automatically.
+- **Desktop:** no system biometric gate exists; the desktop implementation honestly
+  keeps the master-key path.
+
+### 9.2 Chat storage format
+
+JSONL file; every line:
+
+```
+SYNA1\n + AES-GCM(nonce 12 B ‖ ciphertext ‖ tag 16 B)
+```
+
+Written via `ShieldStorageKey.encrypt` (which applies the session-key-first policy);
+read via the gate-checked decrypt path.
+
+### 9.3 Audit log format
+
+```
+base64(AES-GCM(json)) | prevHash | sha256(prevHash | content)
+GENESIS_HASH = "genesis"
+```
+
+- Content is AES-GCM encrypted (session/master key domain).
+- The chain binds every record to its predecessor — tamper with any record and every
+  subsequent one fails verification on load; loading stops at the break (the broken
+  record is not silently accepted).
+- Cap: 100 events kept in memory; persisted indefinitely.
+- Recorded actions: DETECTED / CLEARED / LOCKED / UNLOCKED / SELF_DESTRUCT / DISABLED /
+  KEY_RELEASED / HONEYPOT / WATCHDOG.
+
+### 9.4 Other encrypted-at-rest artifacts
+
+| Artifact | Purpose |
 |---|---|
-| Chat history | AES-256-GCM, key in Android Keystore (TEE, non-exportable) / 0600-permission key file on desktop; format `SYNA1\n` + nonce + ciphertext |
-| Audit log | AES-GCM encrypted lines + SHA-256 **hash chain** (any tampering breaks the chain and stops loading) |
-| Biometric-fail counter, version baseline, dex baseline | AES-GCM encrypted files |
-| Received files | Same storage key domain |
-
-Memory: decrypted message memory is released while locked, and — since v0.6.8 — also
-wiped after 60 s in the background (restored from encrypted storage on return).
+| `syna_dex_base` | dex integrity baseline |
+| `syna_version_base` | downgrade baseline |
+| `syna_totp_seed` | TOTP seed |
+| `<events>.fails` | biometric fail counter |
 
 ---
 
-## 6. Live status panel
+## 10. State machine reference
 
-Settings → ◇Mirtazapine Shield shows real-time state:
+```
+          ┌────────────────────────────────────────────┐
+          │                                            │
+          v                                            │
+        ARMED ──threat detected────────► LOCKED ──user taps unlock──► (biometric)
+          ▲                              │  ▲                            │
+          │ threat cleared               │  │ wrong TOTP / fail          │ success
+          │                              ▼  │                            ▼
+          └──────────────────────    AWAITING_TOTP ──correct code──► UNLOCKED
+                                     (only when 2FA enabled)              │
+          UNLOCKED ──5 min TTL / CRITICAL re-lock / manual lock──► LOCKED │
+          UNLOCKED ──Shield disabled──► (gate disarmed)                   │
+          LOCKED ──Shield disabled──► (gate disarmed)                     │
+                                                                          │
+          every LOCKED entry: gate releaseSession + session invalidate + │
+          KEY_RELEASED audit ─────────────────────────────────────────────┘
+```
 
-- Gate freshness (fail-closed active or not)
-- Watchdog trips / ring alive
-- Honeypot engagement
-- Biometric failure counter (limit 5)
-- Latest audit events (timestamp, threat, action)
-
-This transparency is deliberate: a user can *see* when a detector is silent, which is
-itself an anomaly signal.
+Transitions are HMAC-signed; any detected inconsistency forces LOCKED.
 
 ---
 
-## 7. Version history
+## 11. Attack scenario walkthroughs
+
+### 11.1 Device is rooted
+Root signals appear (su/magisk/xposed/zygisk/shamiko/lsposed) → CRITICAL
+`ROOT_DETECTED` → lock screen, audit, **self-destruct** (if enabled) → after any unlock
+attempt, 30 s re-lock while root persists. Even if the attacker kills the scanner: the
+heartbeat stalls → gate refuses decryption.
+
+### 11.2 Repackaged / re-signed APK
+Signature fingerprint mismatch → `SHIELD_TAMPERED` → honeypot lock (keys really
+released, 3× biometric required). If the attacker hooks the signature check instead:
+the dex-hash baseline still trips, and if they hook that too, the gate's HMAC heartbeat
+fingerprint check catches a frozen timestamp. Patched dex also breaks `verifyDexIntegrity`
+because the versionCode did not change.
+
+### 11.3 Frida injection
+Four independent signals: native TracerPid (ptrace), native maps scan, native thread
+names, JVM mirror of all three, plus frida-server ports/paths. Hooking the JVM channel
+leaves the native channel live; hooking both requires gadget-level native scripting.
+Meanwhile the gate keeps the heartbeat — any pause in the detector thread (the usual
+first step) → fail-closed.
+
+### 11.4 Device physically stolen
+- The lock screen requires biometrics (TEE-verified, cannot be faked by software).
+- With 2FA on: plus a TOTP code from the owner's authenticator.
+- Brute-forcing the biometric → fail counter → session release + self-destruct.
+- Data-level gate: anything written after the last authentication is unreadable
+  without an auth event; the master key never leaves the TEE.
+
+### 11.5 LAN MITM (ARP spoofing / planted CA)
+Gateway MAC change at a stable gateway → `NETWORK_MITM` lock; a planted user CA →
+`NETWORK_MITM` lock. Combined with E2E encryption (X25519 + AES-256-GCM) the attacker
+gets encrypted blobs at most.
+
+### 11.6 Screen theft (shoulder surfing / screen share / capture)
+Capture event (API 34+) → instant lock; mirroring display appears → lock; rapid
+background switching (1.5 s) → lock; `FLAG_SECURE` blacks out content on older Android;
+clipboard and notifications are cleared/hidden while locked.
+
+---
+
+## 12. Platform comparison (Android vs desktop)
+
+| Capability | Android | Desktop |
+|---|---|---|
+| Root / injection / emulator / debug detection | ✅ full matrix | ⚠️ process-level only (`javaagent`, remote-control processes) |
+| Network MITM / CA / ARP / SSID | ✅ | ❌ (OS-managed) |
+| Screen capture events / mirroring | ✅ (API 34+ events, presentation display) | ✅ display-count change |
+| Biometric unlock | ✅ Keystore-verified | ❌ — confirm button (honest) |
+| TOTP 2FA | ✅ | ✅ (code entry replaces the confirm button) |
+| Session-key data gate | ✅ biometric-authenticated Keystore wrap | ❌ master-key path (no OS biometric gate) |
+| Idle auto-lock | ❌ (background switching detector instead) | ✅ 10 min mouse-idle |
+| Fail-closed gate, watchdog, honeypot, brute-force, self-destruct, audit | ✅ | ✅ (shared core) |
+
+---
+
+## 13. False-positive control & known trade-offs
+
+- **Advisory tier (LOW):** clock change, weak lock, network change, SELinux — audited,
+  never force-lock.
+- **Change-based detectors:** mirroring, ARP, SSID, CA, device-admin, accessibility —
+  report on *change*, not on *state*; a permanently present condition cannot re-lock
+  endlessly.
+- **Re-baselining:** gateway IP change (network switch) resets the ARP baseline; dex
+  and version baselines refresh on legit upgrades; normal CA store evolution is
+  accepted (MEDIUM, user can clear).
+- **Known trade-offs:**
+  - `com.android.shell` was *removed* from LSPosed features in v0.6.8 — it is a system
+    package on every device and would have false-locked everyone (caught in review).
+  - The `<unknown ssid>` placeholder (no location permission, API 31+) is filtered so
+    it cannot trigger network-change alerts.
+  - App-layer detection cannot see device-owner-level monitoring — stated in-app and
+    here; the fail-closed gate and data-level gate are the compensating controls.
+
+---
+
+## 14. Version history
 
 | Version | What was added |
 |---|---|
@@ -276,23 +542,40 @@ itself an anomaly signal.
 
 ---
 
-## 8. Verification
+## 15. Verification & testing
 
-- 68 automated tests, including: gate fail-closed behavior, watchdog trip, honeypot
-  repeated-verification, brute-force self-destruct, hash-chain round-trip & tamper
-  detection, unlock cooldown, background memory wipe/restore, and the **official
-  RFC 6238 TOTP vectors** plus the full 2FA state-machine flow.
-- Release artifacts are signed; each release ships a SHA-256 manifest in the GitHub
-  release.
+68 automated desktop tests, including:
+
+- gate fail-closed behavior (stall → decrypt refused; lock → refused; unlock → restored)
+- watchdog trip → forced CRITICAL lock
+- honeypot: repeated-verification requirement, key-release on engage
+- brute-force: 5-fail limit → lock + self-destruct; cooldown backoff (silent ignore
+  during cooldown)
+- hash-chain round-trip & tamper detection (broken chain stops loading)
+- audit-log unreadable while locked
+- background memory wipe / restore (shortened delay injected)
+- **official RFC 6238 test vectors** (all 6, 8-digit) + 6-digit default + ±1-window
+  drift tolerance + base32 round-trip + `otpauth://` URI format + full 2FA state-machine
+  flow (enable → lock → biometric → wrong code → cooldown → correct code → unlock →
+  disable)
+
+Plus a security review pass after every release (the v0.6.8 `com.android.shell`
+false-lock and the v0.6.9 picker crash were both caught in review / on real devices and
+fixed with dedicated tests).
+
+Release artifacts are signed; each GitHub release ships a SHA-256 manifest.
 
 ---
 
-## 9. Honest boundary (again, plainly)
+## 16. Honest boundary (again, plainly)
 
 The Shield is an **app-layer** defense. A device-owner-level attacker (pre-installed
 system spyware, enterprise MDM, kernel rootkits that hook below the runtime) is outside
-what any app can detect. What the Shield guarantees even then: **the fail-closed gate and
-self-destruct protocol ensure that a process which cannot prove its health cannot read
-your data.**
+what any app can detect. What the Shield guarantees even then:
+
+- **The fail-closed gate** — a process that cannot prove its health cannot read data.
+- **The data-level key gate** — data written after the last authentication is
+  unreadable without one.
+- **Self-destruct** — critical compromise erases local data rather than surrendering it.
 
 Trust your network. Trust your device. The Shield makes betrayal expensive.
