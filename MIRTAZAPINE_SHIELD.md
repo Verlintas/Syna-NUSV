@@ -587,13 +587,27 @@ Release artifacts are signed; each GitHub release ships a SHA-256 manifest.
 
 ## 16. Honest boundary (again, plainly)
 
-The Shield is an **app-layer** defense. A device-owner-level attacker (pre-installed
-system spyware, enterprise MDM, kernel rootkits that hook below the runtime) is outside
-what any app can detect. What the Shield guarantees even then:
+The Shield is an **app-layer** defense, layered like an onion: static detection →
+runtime inspection → integrity → meta-detection (gate/watchdog) → native anti-hook →
+data-level gates → self-destruct. Every layer can *individually* be defeated by a
+sufficiently skilled attacker; the design goal is that **silently defeating all of
+them at once** requires capabilities outside the app layer. What is honestly outside
+this scope:
+
+| Boundary | Why | Compensating control |
+|---|---|---|
+| **Device-owner level**: pre-installed system spyware, enterprise MDM | App cannot see device-owner privileges (v0.5.0, stated in-app since) | fail-closed gate, data-level key gate, self-destruct |
+| **Kernel level**: rootkits that hook below the runtime and **forge /proc** (fake TracerPid, fake maps) | Every detector (JVM and native) ultimately reads kernel-provided data | data-level key gate (no auth → no session key); self-destruct on CRITICAL signals still observed |
+| **Native hooking the verifier itself** (v0.7.3): inline-hooking `integrity()` *and* suppressing its execution chain | The theoretical limit of any in-process defense | doing so requires an injection that the JVM channel, watchdog ring, and heartbeat gate are watching for; a paused detector stalls the heartbeat → fail-closed |
+| **Perfect memory dump** (root + immediate dump) inside the 300 s auth window | The session key legitimately lives in memory while unlocked | lock releases it instantly; outside the window the authenticated Keystore key refuses to unwrap the blob |
+
+What the Shield **guarantees even then**:
 
 - **The fail-closed gate** — a process that cannot prove its health cannot read data.
 - **The data-level key gate** — data written after the last authentication is
   unreadable without one.
+- **Native anti-hook** — GOT/PLT/LD_PRELOAD and naive inline hooks are detected, not
+  just survived.
 - **Self-destruct** — critical compromise erases local data rather than surrendering it.
 
 Trust your network. Trust your device. The Shield makes betrayal expensive.

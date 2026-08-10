@@ -91,7 +91,7 @@ A real-time security monitor and app lock built into the client. Full design & d
 - **Self-destruct protocol (optional)**: a critical compromise signal wipes local chats & received files immediately and clears clipboard & notifications.
 - **Self-protection**: APK signature verification (anti-repackaging), dex hash self-verification, downgrade defense, HMAC-signed settings, in-memory state HMAC, **fail-closed heartbeat gate** (stalled detector → decrypt refused), **watchdog ring** (3 threads monitor each other), **native anti-hook layer** (NDK: syscall-direct I/O defeats GOT/PLT/LD_PRELOAD hooks; own-code-segment memory-vs-disk hashing + export-entry self-verification defeat inline hooks; libc entry verification — JVM + native dual-channel), screen-capture protection & capture-event detection, clipboard/notification protection, hash-chained + AES-GCM audit log, brute-force protection (fail limit + exponential cooldown), 60s background memory wipe.
 - **Live status panel**: gate freshness, watchdog trips, honeypot state, biometric fail counter, latest audit events.
-- **Honest boundary**: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be detected by an app — the Shield provides the strongest app-layer protection, and it stays effective under full disclosure (GPL-3.0).
+- **Honest boundary**: device-owner-level monitoring (pre-installed spyware / MDM) and kernel-level rootkits (forged /proc) cannot be detected by an app; the fail-closed gate, data-level key gate, native anti-hook and self-destruct are the compensating controls — see [MIRTAZAPINE_SHIELD.md §16](MIRTAZAPINE_SHIELD.md#16-honest-boundary-again-plainly). Protection stays effective under full disclosure (GPL-3.0).
 
 ## 3. Private Server
 

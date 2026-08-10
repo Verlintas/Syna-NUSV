@@ -103,7 +103,7 @@ adb install composeApp/build/outputs/apk/debug/composeApp-debug.apk
 - **自毁协议（可选）**：设置中开启后，严重级破解信号（Root/调试/凭据/设备管理/暴力尝试）会立即销毁本地聊天记录与接收文件，并清除剪贴板与通知。
 - **自保护**：APK 签名指纹校验（重打包触发锁定）；dex 哈希自校验；版本降级防护；设置 HMAC 签名（篡改/清除即强制恢复）；内存状态 HMAC；**心跳门禁（fail-closed：检测线程停滞 → 拒绝解密）**；**看门狗环形哨兵**（3 线程互盯）；**native 反 hook 层（NDK）**：检测 I/O 全部 syscall 直通（GOT/PLT/LD_PRELOAD hook 失效）、自身代码段内存-磁盘哈希比对 + 导出函数入口自校验（inline hook 检测函数本身也命中）、libc 关键函数入口校验（JVM+native 双通道）；防截屏与截屏事件检测；剪贴板/通知保护；哈希链 + AES-GCM 加密审计日志；暴力防护（失败上限+指数冷却）；后台 60 秒自动擦除内存明文。
 - **实时状态面板**：设置页展示门禁新鲜度、看门狗状态、假锁模式、生物识别失败计数与最近审计事件。
-- **能力边界**：系统级预装监控/企业 MDM 属设备所有者权限，普通应用无法检测与阻止——◇Mirtazapine Shield 提供应用层可实现的最强防护（全开源（GPL-3.0）下依然有效）。
+- **能力边界**：设备所有者级监控（系统预装/企业 MDM）与内核级 rootkit（伪造 /proc 数据）无法被应用层检测；补偿控制为 fail-closed 门禁、数据级密钥门禁、native 反 hook 与自毁协议——详见 [MIRTAZAPINE_SHIELD.md §16](MIRTAZAPINE_SHIELD.md#16-honest-boundary-again-plainly)。全开源（GPL-3.0）下防护依然有效。
 
 ### English
 

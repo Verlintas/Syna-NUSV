@@ -28,7 +28,7 @@
   - **Data protection**: chat history **AES-GCM encrypted at rest** (Keystore TEE / 0600 key) · **data-level key gate** (session key wrapped by biometric-authenticated Keystore key — no auth → new data unreadable) · memory cleared while locked & after 60s background · screen-capture protection & **capture-event detection (API 34+)** · clipboard protection · notifications hidden while locked
   - **Audit**: **hash-chained + AES-GCM encrypted** event timeline persisted across restarts
   - **Live status panel**: gate freshness · watchdog trips · honeypot state · biometric fail counter · latest audit events
-  - Honest boundary: system-level pre-installed monitoring / MDM (device-owner privileges) cannot be seen by an app-layer solution — stated in-app
+  - Honest boundary: device-owner-level monitoring (pre-installed spyware / MDM) and kernel-level rootkits (forged /proc) cannot be seen by an app-layer solution; the fail-closed gate, data-level key gate, native anti-hook and self-destruct are the compensating controls — stated in-app and in [MIRTAZAPINE_SHIELD.md §16](MIRTAZAPINE_SHIELD.md#16-honest-boundary-again-plainly)
 - ✅ **Chat history persistence**: LAN chats survive restarts — encrypted at rest (AES-GCM, Keystore/0600 key); full state restored (recalls, files, quotes, mentions)
 - ✅ **Clear local history**: Settings → Storage shows usage and wipes chats & received files
 - ✅ **Message forwarding**: long-press → forward to any conversation/group
