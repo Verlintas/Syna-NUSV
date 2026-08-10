@@ -356,12 +356,15 @@ UNLOCKED  (gate restored, heartbeat re-armed, fail counter cleared,
   URI in Settings for import into Google Authenticator / Microsoft Authenticator /
   Aegis / any TOTP app. Security rests on the seed — the algorithm being public is
   irrelevant (it is a public standard).
-- **captureAuth (v0.7.1):** after any successful biometric authentication, the session
-  blob is decrypted inside the freshly refreshed auth window and the session key is
-  cached. This guarantees the session key even when the prompt was started outside the
-  auth window.
+- **captureAuth (v0.7.1, timing corrected in v0.7.5):** the session blob is decrypted
+  inside the freshly refreshed auth window and the session key is cached — but only
+  when the unlock actually completes: with 2FA enabled the capture happens **after**
+  the TOTP code verifies, so a single biometric success alone cannot decrypt data.
 - **Wrong TOTP codes** feed the same brute-force pipeline (fail counter, cooldown,
   self-destruct at the limit).
+- **Disabling the Shield is equally protected (v0.7.4)**: turning it off requires
+  biometrics + TOTP — an attacker without both cannot disable an enabled shield, even
+  from the lock screen.
 
 ---
 
@@ -557,6 +560,8 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.7.1 | **Data-level key gate**: session-key layer wrapped by biometric-authenticated Keystore key; no auth → new data unreadable; lock invalidates session; master-key fallback for history |
 | v0.7.2 | **Native anti-debug (NDK)**: TracerPid/maps/threads read in C (4 ABIs), JVM + native dual-channel verification, graceful fallback |
 | v0.7.3 | **Native anti-hook**: syscall-direct I/O (GOT/PLT/LD_PRELOAD dead), own-code-segment memory-vs-disk hashing (inline-hook detection), export-entry self-verification, libc entry verification — bitmask wired into SHIELD_TAMPERED / FRIDA_DETECTED |
+| v0.7.4 | **Rotation & unkillable shield**: session-key rotation on every unlock (forward secrecy: old memory dumps die), dual-factor disable (biometrics + TOTP — an attacker cannot turn an enabled shield off, even from the lock screen), anonymous rwx segment detection (bit2), AWAITING_TOTP lock-screen rendering fix |
+| v0.7.5 | **Full review fix release**: 2FA bypass closed (no unlock while awaiting code; clearThreat cannot skip it), session-key capture moved after TOTP verification, biometric fail double-count fixed, server relay `from` forgery closed, BURN_ACK/RECALL sender validation, FILE_CHUNK bounds + pipeline isolation, TOTP-enable failure guard, DEBUG_MODE downgraded to HIGH, honeypot streak no longer reset by re-reports, watchdog one-shot trip + restart reset |
 
 ---
 
