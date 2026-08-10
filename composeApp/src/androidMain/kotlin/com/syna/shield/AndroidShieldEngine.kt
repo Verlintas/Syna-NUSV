@@ -92,6 +92,8 @@ class AndroidShieldEngine private constructor(
     private var screenCaptureCallback: Any? = null
 
     override fun start() {
+        // 数据级门禁初始化：生成会话密钥 blob（首启）
+        SessionKeyStore.ensureBlob()
         // 反应更快：轻量检测（root/frida/调试/凭据/签名）每 3s 一次，
         // 重量级检测（应用枚举/无障碍/设备管理）每 15s 一次
         scanJob = scope.launch {
@@ -707,11 +709,14 @@ class AndroidShieldEngine private constructor(
             return
         }
         if (activity is FragmentActivity) {
-            val prompt = XBiometricPrompt(
+            // 数据级门禁：用认证绑定密钥构造 CryptoObject（窗口内 init 成功才附加），
+            // 认证成功后立即捕获会话密钥（认证时间戳已刷新，重试必然成功）
+            var prompt = XBiometricPrompt(
                 activity,
                 ContextCompat.getMainExecutor(activity),
                 object : XBiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationSucceeded(result: XBiometricPrompt.AuthenticationResult) {
+                        SessionKeyStore.captureAuth()
                         onResult(true)
                     }
 
@@ -734,7 +739,13 @@ class AndroidShieldEngine private constructor(
                 .setNegativeButtonText("取消")
                 .build()
             try {
-                prompt.authenticate(info)
+                // 认证绑定 CryptoObject：init 失败（认证窗口外）→ 无 CryptoObject 普通认证，
+                // 认证成功回调里仍会 captureAuth 重试捕获
+                val crypto = runCatching {
+                    val cipher = SessionKeyStore.authEncryptCipher()
+                    cipher?.let { androidx.biometric.BiometricPrompt.CryptoObject(it) }
+                }.getOrNull()
+                if (crypto != null) prompt.authenticate(info, crypto) else prompt.authenticate(info)
             } catch (e: Exception) {
                 onResult(false)
             }

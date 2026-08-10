@@ -41,7 +41,15 @@ actual object ShieldStorageKey {
     }
 
     actual fun encrypt(data: ByteArray): ByteArray? {
+        // 数据级门禁：优先用会话密钥（认证获得）加密——无认证时新数据不可解
+        SessionKeyStore.obtainSessionKey()?.let { session ->
+            return aesGcmEncrypt(javax.crypto.spec.SecretKeySpec(session, "AES"), data)
+        }
         val key = keystoreKey() ?: return null
+        return aesGcmEncrypt(key, data)
+    }
+
+    private fun aesGcmEncrypt(key: javax.crypto.SecretKey, data: ByteArray): ByteArray? {
         return try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             val nonce = ByteArray(NONCE_LEN).also { SecureRandom().nextBytes(it) }
@@ -56,8 +64,16 @@ actual object ShieldStorageKey {
     actual fun decrypt(payload: ByteArray): ByteArray? {
         // Shield 门禁（fail-closed）：心跳停滞（检测线程被暂停/杀死）→ 拒绝解密
         if (!ShieldGate.isFresh()) return null
-        val key = keystoreKey() ?: return null
         if (payload.size <= NONCE_LEN) return null
+        // 先试会话密钥（数据级门禁），失败回退主密钥（历史数据/未启用场景）
+        SessionKeyStore.obtainSessionKey()?.let { session ->
+            aesGcmDecrypt(javax.crypto.spec.SecretKeySpec(session, "AES"), payload)?.let { return it }
+        }
+        val key = keystoreKey() ?: return null
+        return aesGcmDecrypt(key, payload)
+    }
+
+    private fun aesGcmDecrypt(key: javax.crypto.SecretKey, payload: ByteArray): ByteArray? {
         return try {
             val nonce = payload.copyOfRange(0, NONCE_LEN)
             val ct = payload.copyOfRange(NONCE_LEN, payload.size)

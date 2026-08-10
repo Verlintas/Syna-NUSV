@@ -473,6 +473,7 @@ class ShieldController(
         // 锁定即释放会话密钥；解除锁定恢复门禁（等待引擎心跳）
         if (newState == ShieldState.LOCKED && prev != ShieldState.LOCKED) {
             ShieldGate.releaseSession()
+            SessionKeyStore.invalidateSession()
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.KEY_RELEASED)
         } else if (newState != ShieldState.LOCKED && prev == ShieldState.LOCKED) {
             ShieldGate.restoreSession()
@@ -578,6 +579,7 @@ class ShieldController(
             engine.stop()
             watchdog.stop()
             ShieldGate.disarm()
+            SessionKeyStore.invalidateSession()
             setState(ShieldState.UNLOCKED)
             if (current === this) current = null
         }
