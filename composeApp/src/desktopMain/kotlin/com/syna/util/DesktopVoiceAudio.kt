@@ -115,6 +115,11 @@ actual object VoiceRecorder {
 
 actual fun playVoiceAudio(path: String) {
     try {
+        // AMR 是 Android 专有格式，Java Sound 无法播放——明确提示而非静默失败
+        if (path.endsWith(".amr")) {
+            System.err.println("[Syna:Voice] 桌面端无法播放 AMR 语音（请用 Android 端收听）")
+            return
+        }
         val file = File(path)
         val stream = AudioSystem.getAudioInputStream(file)
         val format = stream.format

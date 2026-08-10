@@ -116,6 +116,11 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
     }
 
     /** 立即全量重写持久化文件（会话密钥轮换迁移用；用当前密钥重新加密全部数据） */
+    /** 内存中是否有真实消息（假锁诱饵写入的安全判断） */
+    fun hasMessagesInMemory(): Boolean = messagesM.value.values.any { list ->
+        list.any { !it.id.startsWith("decoy-") }
+    }
+
     fun rewriteNow() {
         persistence?.rewrite(messagesM.value)
     }
@@ -192,17 +197,17 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         messagesM.value.values.flatten().firstOrNull { it.id == msgId }
 
     fun removeMessageById(msgId: String) {
-        val map = messagesM.value
         var removedFrom: String? = null
-        val newMap = map.mapValues { (conversationId, list) ->
-            if (list.any { it.id == msgId }) {
-                removedFrom = conversationId
-                list.filterNot { it.id == msgId }
-            } else list
+        messagesM.updateMap { map ->
+            map.mapValues { (conversationId, list) ->
+                if (list.any { it.id == msgId }) {
+                    removedFrom = conversationId
+                    list.filterNot { it.id == msgId }
+                } else list
+            }
         }
-        messagesM.value = newMap
         val conversationId = removedFrom ?: return
-        val remaining = newMap[conversationId]
+        val remaining = messagesM.value[conversationId]
         if (remaining.isNullOrEmpty()) {
             conversationsM.updateList { it.filterNot { c -> c.peerId == conversationId } }
         } else {
@@ -235,6 +240,8 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
                 map + (conversationId to updated)
             }
         }
+        // 焚毁/删除路径：内存变更同步落盘（防重启后已销毁消息复活）
+        scheduleRewrite()
         // 若移除的是最后一条，刷新会话预览
         val remaining = messagesM.value[conversationId]
         conversationsM.updateList { list ->
@@ -256,6 +263,8 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
 
     /** 锁定期间释放内存中的消息（防 root 进程 dump 读取），会话元数据保留 */
     fun releaseMemory() {
+        // 取消未执行的防抖重写（否则 500ms 窗口内的重写会用空内存覆盖磁盘全部历史）
+        rewriteJob?.cancel()
         messagesM.value = emptyMap()
         // 会话元数据中的消息明文预览一并清除（锁定期间防 root dump 泄露）
         conversationsM.value = conversationsM.value.map { c ->
@@ -292,6 +301,7 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         conversationsM.value.filter { now - it.lastTs > ttlMs }.forEach { conv ->
             removeConversation(conv.peerId)
         }
+            scheduleRewrite()
     }
 
     fun markAllRead(peerId: String) {

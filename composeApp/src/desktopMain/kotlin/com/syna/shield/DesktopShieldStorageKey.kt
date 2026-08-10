@@ -75,6 +75,35 @@ actual object ShieldStorageKey {
         }
     }
 
+    /** 主密钥直用加密（元数据：种子/固定/审计/失败计数——锁定态也必须可解） */
+    actual fun encryptWithMaster(data: ByteArray): ByteArray? {
+        val key = keyBytes() ?: return null
+        return try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val nonce = ByteArray(NONCE_LEN).also { SecureRandom().nextBytes(it) }
+            cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+            val ct = cipher.doFinal(data)
+            nonce + ct
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 主密钥直用解密 */
+    actual fun decryptWithMaster(payload: ByteArray): ByteArray? {
+        if (payload.size <= NONCE_LEN) return null
+        val key = keyBytes() ?: return null
+        return try {
+            val nonce = payload.copyOfRange(0, NONCE_LEN)
+            val ct = payload.copyOfRange(NONCE_LEN, payload.size)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(GCM_TAG_BITS, nonce))
+            cipher.doFinal(ct)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** 销毁存储密钥：覆写删除密钥文件（自毁后旧密文不可解） */
     actual fun wipe() {
         com.syna.util.SecureWipe.wipeFile(keyFile().toString())

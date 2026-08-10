@@ -19,7 +19,7 @@ actual object TotpSeedStore {
         return try {
             val f = seedFile(path)
             if (!f.exists()) return null
-            ShieldStorageKey.decrypt(f.readBytes())
+            ShieldStorageKey.decryptWithMaster(f.readBytes())
         } catch (e: Exception) {
             null
         }
@@ -27,7 +27,7 @@ actual object TotpSeedStore {
 
     actual fun save(seed: ByteArray, path: String?) {
         try {
-            val enc = ShieldStorageKey.encrypt(seed) ?: return
+            val enc = ShieldStorageKey.encryptWithMaster(seed) ?: return
             seedFile(path).writeBytes(enc)
         } catch (e: Exception) {
         }

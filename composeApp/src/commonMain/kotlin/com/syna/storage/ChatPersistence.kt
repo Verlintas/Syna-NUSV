@@ -124,7 +124,7 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
             if (!Files.exists(file)) return emptyList()
             val raw = Files.readAllBytes(file)
             // 加密格式（SYNA1 + nonce + 密文）；旧版本明文文件直接按明文解析
-            val text = if (raw.size > MAGIC.length && String(raw.copyOfRange(0, MAGIC.length)) == MAGIC) {
+            val text = if (raw.size >= MAGIC.length && String(raw.copyOfRange(0, MAGIC.length)) == MAGIC) {
                 ShieldStorageKey.decrypt(raw.copyOfRange(MAGIC.length, raw.size))
                     ?.decodeToString()
                     ?: run {
@@ -147,7 +147,10 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
         }
     }
 
+    private val writeLock = Object()
+
     fun rewrite(messages: Map<String, List<ChatMessage>>) {
+        synchronized(writeLock) {
         try {
             val all = messages.values.flatten().sortedBy { it.ts }.takeLast(MAX_MESSAGES)
             val lines = all.joinToString("\n") { msg ->
@@ -157,8 +160,8 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
             Files.createDirectories(file.parent)
             val plain = if (lines.isEmpty()) ByteArray(0) else "$lines\n".toByteArray()
             val payload = ShieldStorageKey.encrypt(plain)
-            // 原子写：先写临时文件再 rename，防进程被杀/断电产生截断主文件
-            val tmp = Path.of(path + ".tmp")
+            // 原子写：先写临时文件再 rename（随机后缀防并发撕裂），防进程被杀/断电产生截断主文件
+            val tmp = Path.of(path + ".tmp" + System.nanoTime())
             java.io.FileOutputStream(tmp.toFile()).use { out ->
                 if (payload != null) {
                     out.write(MAGIC.toByteArray())
@@ -167,6 +170,8 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
                     // 加密密钥不可用（异常环境）：降级明文存储并提示
                     out.write(plain)
                 }
+                // 内容落盘后再 rename（断电不产生截断）
+                out.fd.sync()
             }
             try {
                 Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE)
@@ -177,16 +182,19 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
         } catch (e: Exception) {
             println("[Syna:Persist] 写入失败: ${e.message}")
         }
+        }
     }
 
     /** 清除本地聊天记录文件 */
     fun clear() {
+        synchronized(writeLock) {
         try {
             // 安全覆写删除（防取证恢复）：主文件 + 原子写残留的 tmp
             com.syna.util.SecureWipe.wipeFile(path)
             com.syna.util.SecureWipe.wipeFile(path + ".tmp")
         } catch (e: Exception) {
             println("[Syna:Persist] 清除失败: ${e.message}")
+        }
         }
     }
 

@@ -109,6 +109,7 @@ class TcpServerChannel internal constructor(
     // replay 缓冲：避免读循环早于订阅者启动时丢帧（如 AUTH_OK 后紧随的公告/历史帧）
     private val incomingM = MutableSharedFlow<TransportFrame>(extraBufferCapacity = 512, replay = 64)
     override val incoming = incomingM.asSharedFlow()
+        @Volatile
     private var open = true
 
     fun setChannelKey(key: com.syna.crypto.SessionKey) {

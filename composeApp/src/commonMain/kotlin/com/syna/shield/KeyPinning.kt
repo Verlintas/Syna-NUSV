@@ -33,7 +33,7 @@ object KeyPinning {
         return try {
             val f = pinFile()
             if (!f.exists()) return emptyMap()
-            val bytes = ShieldStorageKey.decrypt(f.readBytes()) ?: return emptyMap()
+            val bytes = ShieldStorageKey.decryptWithMaster(f.readBytes()) ?: return emptyMap()
             com.syna.net.synaJson.decodeFromString(PinStore.serializer(), bytes.decodeToString()).pins
         } catch (e: Exception) {
             emptyMap()
@@ -43,7 +43,7 @@ object KeyPinning {
     private fun save() {
         try {
             val bytes = com.syna.net.synaJson.encodeToString(PinStore.serializer(), PinStore(pins)).toByteArray()
-            val enc = ShieldStorageKey.encrypt(bytes) ?: return
+            val enc = ShieldStorageKey.encryptWithMaster(bytes) ?: return
             pinFile().parentFile?.mkdirs()
             pinFile().writeBytes(enc)
         } catch (e: Exception) {

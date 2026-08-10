@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.9.0",
+    private val version: String = "0.9.1",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -143,7 +143,7 @@ class SynaEngine(
         var lastUpdate: Long = System.currentTimeMillis()
     }
 
-    private val fileAssemblers = mutableMapOf<String, FileAssembler>()
+    private val fileAssemblers = java.util.concurrent.ConcurrentHashMap<String, FileAssembler>()
 
     private var serverSession: ServerSession? = null
 
@@ -270,11 +270,11 @@ class SynaEngine(
         }
     }
 
-    private suspend fun decryptEvent(event: IncomingEvent): IncomingEvent? {
+    private suspend fun decryptEvent(event: IncomingEvent, skipReplay: Boolean = false): IncomingEvent? {
         if (event !is IncomingEvent.PeerFrame) return event
         val frame = event.frame
-        // 重放防护：超时窗口的实时帧直接丢弃
-        if (isReplay(frame)) return null
+        // 重放防护：超时窗口的实时帧直接丢弃（历史回放跳过）
+        if (!skipReplay && isReplay(frame)) return null
         when (frame.type) {
             FrameType.HELLO -> frame.body?.let { key -> pinPeerKey(frame.from, key) }
             FrameType.KEY -> {
@@ -375,6 +375,8 @@ class SynaEngine(
                 )
                 if (frame.burn) {
                     pendingBurnsM.updateList { it + Triple(frame.from, frame.msgId, frame.from) }
+                    // 记录入队时间：sweep 据此判断 TTL 兜底烧毁（此前从未写入，兜底逻辑是死代码）
+                    burnSweepMarks[frame.msgId] = System.currentTimeMillis()
                     trySchedulePendingBurns(frame.from)
                 }
                 if (chatStore.activeConversationId.value == frame.from) {
@@ -415,6 +417,7 @@ class SynaEngine(
                     )
                     if (frame.burn) {
                         pendingBurnsM.updateList { it + Triple(groupId, frame.msgId, frame.from) }
+                        burnSweepMarks[frame.msgId] = System.currentTimeMillis()
                         trySchedulePendingBurns(groupId)
                     }
                     if (chatStore.activeConversationId.value == groupId) {
@@ -446,10 +449,14 @@ class SynaEngine(
                     return
                 }
                 val group = groupsM.value.firstOrNull { it.id == event.groupId }
-                // 权限校验：仅创建者/管理员的管理帧被接受
+                // 权限校验：踢人/禁言需创建者或管理员；设/撤管理员仅创建者；创建者不可被踢/撤
                 if (group != null) {
                     val fromIsAdmin = group.creatorId == frame.from || group.admins.contains(frame.from)
-                    if (fromIsAdmin) {
+                    val requiresCreator = event.action == GroupAdminAction.SET_ADMIN || event.action == GroupAdminAction.REMOVE_ADMIN
+                    val permitted = if (requiresCreator) group.creatorId == frame.from else fromIsAdmin
+                    val targetProtected = event.targetId == group.creatorId &&
+                        (event.action == GroupAdminAction.KICK || event.action == GroupAdminAction.REMOVE_ADMIN)
+                    if (permitted && !targetProtected) {
                         applyGroupAdminAction(event)
                     }
                 }
@@ -622,9 +629,15 @@ class SynaEngine(
         return group.creatorId == memberId || group.admins.contains(memberId)
     }
 
-    /** 广播群管理事件（仅创建者/管理员可发起；mesh 下接收方校验 from 权限） */
+    /** 广播群管理事件（踢人/禁言：创建者或管理员；设/撤管理员：仅创建者；接收方同样校验） */
     private suspend fun sendGroupAdminAction(groupId: String, targetId: String, action: GroupAdminAction, durationMs: Long = 0L) {
-        if (!isGroupAdmin(groupId)) return
+        val requiresCreator = action == GroupAdminAction.SET_ADMIN || action == GroupAdminAction.REMOVE_ADMIN
+        val permitted = if (requiresCreator) {
+            groupsM.value.firstOrNull { it.id == groupId }?.creatorId == userId
+        } else {
+            isGroupAdmin(groupId)
+        }
+        if (!permitted) return
         val event = GroupAdminEvent(groupId, targetId, action, durationMs)
         val frame = TransportFrame(
             type = when (action) {
@@ -1065,7 +1078,7 @@ class SynaEngine(
             // 把自己的公钥发给服务器（中继给全体成员）
             sendServerKeyFrame()
             // 回放历史（成员密钥帧与群消息，逐条进入解密/聊天管线）
-            result.history.forEach { frame -> routeServerFrame(frame) }
+            result.history.forEach { frame -> routeServerFrame(frame, fromHistory = true) }
             // 启动持续读取
             scope.launch {
                 result.channel.incoming.collect { frame -> routeServerFrame(frame) }
@@ -1116,10 +1129,11 @@ class SynaEngine(
         serverStateM.value = ServerState.DISCONNECTED
     }
 
-    private suspend fun routeServerFrame(frame: TransportFrame) {
+    private suspend fun routeServerFrame(frame: TransportFrame, fromHistory: Boolean = false) {
         if (frame.from == userId) return
         rawIncomingM.emitRaw(IncomingEvent.PeerFrame(frame.from, frame))
-        decryptEvent(IncomingEvent.PeerFrame(frame.from, frame))?.let { incomingM.emit(it) }
+        // 历史回放跳过重放防护（历史帧时间戳必然过期，内容已由服务器持久化验证）
+        decryptEvent(IncomingEvent.PeerFrame(frame.from, frame), skipReplay = fromHistory)?.let { incomingM.emit(it) }
     }
 
     private suspend fun sendServerKeyFrame() {
@@ -1178,7 +1192,9 @@ class SynaEngine(
             synaLog("File") { "拒绝发送超大文件 ${fileName} (${bytes.size}B > 200MB)" }
             return
         }
-        val chunkSize = 64 * 1024
+        // UDP 模式载荷上限约 65KB（Base64 膨胀后）：分块降至 40KB 保证 UDP 可发送；TCP 保持 64KB
+        val udpMode = settings.connectionMode == ConnectionMode.UDP
+        val chunkSize = if (udpMode) 40 * 1024 else 64 * 1024
         val totalChunks = ((bytes.size + chunkSize - 1) / chunkSize).coerceAtLeast(1)
         val fileId = newMsgId()
         val kind = if (mimeType.startsWith("image/")) MessageKind.IMAGE else MessageKind.FILE
@@ -1431,6 +1447,13 @@ class SynaEngine(
     }
 
     private fun sweep() {
+        // 群禁言过期清理
+        groupMutesM.updateMap { map ->
+            val now = System.currentTimeMillis()
+            map.mapValues { (_, inner) ->
+                inner.filterValues { it > now }
+            }.filterValues { it.isNotEmpty() }
+        }
         // ACK 待确认超时清理：超 60s 未确认且不再重传的条目移除
         val ackNow = System.currentTimeMillis()
         pendingAcksM.updateMap { map ->
@@ -1536,7 +1559,8 @@ class SynaEngine(
                 d.announcements.collect { (a, ip) ->
                     if (a.id != userId && !isBlocked(a.id)) {
                         updatePeer(a, ip, System.currentTimeMillis(), online = true)
-                        sendKeyFrame(a.id, PeerAddr(normalizePeerIp(ip), a.tcpPort))
+                        // 密钥帧携带公告的真实 UDP 端口（缺省端口无人监听，UDP 模式下密钥交换会失效）
+                        sendKeyFrame(a.id, PeerAddr(normalizePeerIp(ip), a.tcpPort, udpPort = a.udpPort))
                         flushOutbox(peerFrom(a, ip))
                     }
                 }
@@ -1593,6 +1617,10 @@ class SynaEngine(
         try {
             send(peer, frame)
             chatStore.updateStatus(msgId, MessageStatus.SENT)
+            // 消息级 ACK/重传（P2P 1:1 非群）：无 ACK 自动重传，多次失败入离线队列
+            if (groupsM.value.none { it.id == peerId } && serverSession?.groupId != peerId) {
+                scheduleAckRetry(msgId, peer, frame)
+            }
             synaLog("Send") { "text to=${peerId.take(6)} len=${text.length} enc=$encrypted burn=$burn" }
         } catch (e: Exception) {
             chatStore.updateStatus(msgId, MessageStatus.FAILED)

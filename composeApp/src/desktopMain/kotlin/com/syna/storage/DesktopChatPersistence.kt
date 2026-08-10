@@ -32,6 +32,14 @@ actual fun destructPlatformArtifacts() {
         dir.listFiles()?.forEach { f ->
             if (f.isFile) com.syna.util.SecureWipe.wipeFile(f.absolutePath)
         }
+        // 桌面录音临时文件（syna-voice-*）覆写清理
+        try {
+            val tmp = java.io.File(System.getProperty("java.io.tmpdir"))
+            tmp.listFiles()?.filter { it.name.startsWith("syna-voice-") }?.forEach { f ->
+                com.syna.util.SecureWipe.wipeFile(f.absolutePath)
+            }
+        } catch (e: Exception) {
+        }
     } catch (e: Exception) {
     }
 }

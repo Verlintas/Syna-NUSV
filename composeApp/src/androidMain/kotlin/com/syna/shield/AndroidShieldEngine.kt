@@ -66,8 +66,9 @@ class AndroidShieldEngine private constructor(
         }
 
         fun detach() {
-            instance?.activeActivity = null
+            // 先注销截屏回调（需要 activity 引用），再清宿主——顺序反了注销恒为 no-op
             instance?.unregisterScreenCapture()
+            instance?.activeActivity = null
         }
 
         /** 当前宿主 Activity（供权限请求等使用；无宿主返回 null） */
@@ -867,8 +868,13 @@ class AndroidShieldEngine private constructor(
                     }
 
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        // 失败计数统一由控制器 onBiometricFailed 处理（防双计数）
-                        if (errorCode != XBiometricPrompt.ERROR_USER_CANCELED) {
+                        // 失败计数统一由控制器 onBiometricFailed 处理（防双计数）；
+                        // 硬件不可用/未录入（设备无生物识别）不计入暴力失败——否则每次点击都累积自毁倒计时
+                        if (errorCode != XBiometricPrompt.ERROR_USER_CANCELED &&
+                            errorCode != XBiometricPrompt.ERROR_NO_BIOMETRICS &&
+                            errorCode != XBiometricPrompt.ERROR_HW_UNAVAILABLE &&
+                            errorCode != XBiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL
+                        ) {
                             onResult(false)
                         }
                     }

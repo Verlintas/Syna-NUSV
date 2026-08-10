@@ -89,6 +89,7 @@ fun App() {
         )
         // 假锁主动污染：注入类威胁触发假锁时写入诱饵消息——
         // 攻击者最终解锁后面对的是被污染的数据流，无法区分真实记录与诱饵
+        // 安全约束：内存为空（锁定已释放）时只写内存不重写磁盘，防覆盖真实历史
         shield.setHoneypotCallback {
             val decoyText = listOf(
                 "[系统日志] 检测到异常访问，记录已归档",
@@ -112,7 +113,11 @@ fun App() {
                         kind = com.syna.chat.MessageKind.TEXT,
                     ),
                 )
-                engine.chatStore.rewriteNow()
+                // 仅当内存还有真实消息时才重写磁盘（追加诱饵）；
+                // 内存已被清空时跳过——防"仅诱饵"的全量重写覆盖真实历史
+                if (engine.chatStore.hasMessagesInMemory()) {
+                    engine.chatStore.rewriteNow()
+                }
             } catch (e: Exception) {
             }
         }
@@ -284,6 +289,8 @@ private fun fullDestruct(
         com.syna.shield.ShieldStorageKey.wipe()
         // 释放内存中的会话密钥
         com.syna.shield.SessionKeyStore.invalidateSession()
+        // 停用护盾：防止自毁后审计事件/新密钥"复活"（wipe 后 Keystore 会静默重建新密钥）
+        shield.setEnabled(false)
         notifyMessage("◇Mirtazapine Shield", "Detected possible compromise; local chats, keys and audit records were destroyed")
     } catch (e: Exception) {
     }

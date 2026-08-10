@@ -310,12 +310,14 @@ object ShieldGate {
         lastFingerprint = ""
     }
 
-    /** 检测引擎节拍：每轮扫描调用一次 */
+    /** 检测引擎节拍：每轮扫描调用一次（时间戳与指纹同步写入，防读侧撕裂） */
     fun beat() {
         if (!armed || lockedOut) return
-        val t = System.currentTimeMillis()
-        lastBeat = t
-        lastFingerprint = hmacOf(t)
+        synchronized(this) {
+            val t = System.currentTimeMillis()
+            lastBeat = t
+            lastFingerprint = hmacOf(t)
+        }
     }
 
     /** 锁定即释放：时间戳清零 + 指纹置乱，门禁立即失效（会话密钥能力释放） */
@@ -451,6 +453,9 @@ internal class WatchdogRing(
                     } catch (e: Exception) {
                     }
                 }
+                // 即使被盯槽位停滞也更新自己的槽位（防级联误 trip：
+                // 健康线程若停跳自己的槽位，12s 后自身也被判 stale 二次报警）
+                slots[idx].beat()
             } else {
                 slots[target].tripped = false
                 slots[idx].beat()
@@ -520,6 +525,10 @@ class ShieldController(
         if (newState == ShieldState.LOCKED && prev != ShieldState.LOCKED) {
             ShieldGate.releaseSession()
             SessionKeyStore.invalidateSession()
+            // 新威胁打断关闭流程：清除关闭待定状态（防解锁时误关护盾）
+            disablePending = false
+            disableCallback = null
+            disablingM.value = false
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.KEY_RELEASED)
         } else if (newState != ShieldState.LOCKED && prev == ShieldState.LOCKED) {
             ShieldGate.restoreSession()
@@ -755,6 +764,17 @@ class ShieldController(
             engine.start()
         } catch (e: Exception) {
         }
+        // 自愈完成后自动清除看门狗威胁（心跳已恢复 = 停滞解除），
+        // 防止 WATCHDOG_TRIP 永久残留导致解锁后 30s 无限再锁循环
+        try {
+            val recovered = scope.launch {
+                delay(3_000)
+                if (ShieldGate.isFresh() && threatsM.value.contains(ShieldThreat.WATCHDOG_TRIP)) {
+                    clearThreat(ShieldThreat.WATCHDOG_TRIP)
+                }
+            }
+        } catch (e: Exception) {
+        }
     }
 
     fun clearThreat(threat: ShieldThreat) {
@@ -832,7 +852,11 @@ class ShieldController(
             onResult(true)
             return
         }
-        engine.requestBiometricUnlock(onResult)
+        try {
+            engine.requestBiometricUnlock(onResult)
+        } catch (e: Exception) {
+            onResult(false)
+        }
     }
 
     /** 当前状态是否为 TOTP 等待（供 UI 判断） */
@@ -948,7 +972,7 @@ class ShieldController(
 
     private fun persistBiometricFails(count: Int) {
         try {
-            val enc = ShieldStorageKey.encrypt(count.toString().toByteArray())
+            val enc = ShieldStorageKey.encryptWithMaster(count.toString().toByteArray())
             val file = java.io.File(biometricFailsFile())
             if (enc != null) {
                 file.writeBytes(enc)
@@ -963,7 +987,7 @@ class ShieldController(
         return try {
             val file = java.io.File(biometricFailsFile())
             if (!file.exists()) return 0
-            ShieldStorageKey.decrypt(file.readBytes())?.decodeToString()?.toIntOrNull() ?: 0
+            ShieldStorageKey.decryptWithMaster(file.readBytes())?.decodeToString()?.toIntOrNull() ?: 0
         } catch (e: Exception) {
             0
         }
@@ -1106,7 +1130,7 @@ class ShieldController(
                 }
                 val plain = com.syna.net.synaJson.encodeToString(ShieldEvent.serializer(), event)
                 // 审计内容加密存储（密钥同聊天记录密钥），哈希链基于密文
-                val content = ShieldStorageKey.encrypt(plain.toByteArray())
+                val content = ShieldStorageKey.encryptWithMaster(plain.toByteArray())
                     ?.let { java.util.Base64.getEncoder().encodeToString(it) }
                     ?: plain
                 val hash = sha256("$prevHash|$content")
@@ -1148,7 +1172,7 @@ class ShieldController(
                     if (recomputed != hash) return@forEach
                     val plainText = try {
                         val bytes = java.util.Base64.getDecoder().decode(content)
-                        ShieldStorageKey.decrypt(bytes)?.decodeToString()
+                        ShieldStorageKey.decryptWithMaster(bytes)?.decodeToString()
                     } catch (e: Exception) {
                         null
                     } ?: content

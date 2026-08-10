@@ -14,6 +14,16 @@ expect object ShieldStorageKey {
     fun decrypt(payload: ByteArray): ByteArray?
 
     /**
+     * 主密钥直用加密（元数据专用：TOTP 种子/密钥固定/审计/失败计数）。
+     * 数据文件（聊天记录）用会话密钥（数据级门禁），但元数据必须在锁定态
+     * （无会话密钥）也能解密——否则 2FA 验证/TOFU 校验/审计加载会永久失败。
+     */
+    fun encryptWithMaster(data: ByteArray): ByteArray?
+
+    /** 主密钥直用解密（见 [encryptWithMaster]） */
+    fun decryptWithMaster(payload: ByteArray): ByteArray?
+
+    /**
      * 销毁存储密钥（自毁协议最强手段）：
      * Android 删除 Keystore 中的主密钥与会话认证密钥（TEE 内销毁）——
      * 即使加密文件被取证恢复，没有密钥也永久不可解；

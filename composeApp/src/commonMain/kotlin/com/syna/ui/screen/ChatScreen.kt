@@ -463,6 +463,15 @@ fun ChatScreen(
             var recording by remember { mutableStateOf(false) }
             var recordingSecs by remember { mutableStateOf(0) }
             val recorder = com.syna.util.VoiceRecorder
+            // 录音兜底清理：离开页面/组合销毁时停止并释放麦克风（防录音线程/MediaRecorder 泄漏）
+            androidx.compose.runtime.DisposableEffect(Unit) {
+                onDispose {
+                    if (recording) {
+                        recording = false
+                        recorder.cancel()
+                    }
+                }
+            }
             var voiceDuration by remember { mutableStateOf(0L) }
             var voiceFile by remember { mutableStateOf<String?>(null) }
             LaunchedEffect(recording) {
@@ -502,7 +511,15 @@ fun ChatScreen(
                             if (f != null) {
                                 voiceFile = null
                                 scope.launch {
-                                    engine.sendFile(peerId, "语音消息.amr", java.io.File(f).readBytes(), "audio/amr")
+                                    val file = java.io.File(f)
+                                    val isWav = f.endsWith(".wav")
+                                    engine.sendFile(
+                                        peerId,
+                                        if (isWav) "语音消息.wav" else "语音消息.amr",
+                                        file.readBytes(),
+                                        if (isWav) "audio/wav" else "audio/amr",
+                                    )
+                                    file.delete()
                                 }
                             } else if (!com.syna.util.canRecordVoice()) {
                                 com.syna.util.requestRecordAudioPermission()
@@ -511,8 +528,12 @@ fun ChatScreen(
                         onLongClick = {
                             if (com.syna.util.canRecordVoice()) {
                                 voiceFile = null
-                                recording = true
-                                recorder.start()
+                                // start 失败（麦克风占用等）不进入假录音状态
+                                if (recorder.start()) {
+                                    recording = true
+                                } else {
+                                    com.syna.util.notifyMessage("Syna", "无法开始录音（麦克风不可用）")
+                                }
                             } else {
                                 com.syna.util.requestRecordAudioPermission()
                             }
@@ -544,9 +565,9 @@ fun ChatScreen(
                                 }
                             }
                         }
-                        if (burn) {
-                            // 敏感操作二次认证：发送阅后即焚消息前需生物识别确认
-                            com.syna.shield.ShieldController.current?.verifyIdentity { granted ->
+                        if (burn && com.syna.shield.ShieldController.current != null) {
+                            // 敏感操作二次认证：发送阅后即焚消息前需生物识别确认（护盾启用时）
+                            com.syna.shield.ShieldController.current!!.verifyIdentity { granted ->
                                 if (granted) {
                                     doSend()
                                 } else {
@@ -554,6 +575,7 @@ fun ChatScreen(
                                 }
                             }
                         } else {
+                            // 护盾未启用：无二次认证要求
                             doSend()
                         }
                         input = ""
@@ -894,7 +916,9 @@ private fun MessageBubble(
                             MessageKind.FILE -> {
                                 val isVoice = message.fileName?.contains("语音消息") == true ||
                                     message.fileName?.endsWith(".amr") == true ||
-                                    message.fileName?.endsWith(".wav") == true
+                                    message.fileName?.endsWith(".wav") == true ||
+                                    message.localPath?.endsWith(".amr") == true ||
+                                    message.localPath?.endsWith(".wav") == true
                                 if (isVoice && message.localPath != null) {
                                     // 语音气泡：播放按钮 + 时长
                                     Row(

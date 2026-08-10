@@ -115,6 +115,7 @@ class SynaServer(
         Files.createDirectories(dataDir)
         loadBans()
         loadHistory()
+        sweepBurnExpired()
         val ss = try {
             ServerSocket(port)
         } catch (e: Exception) {
@@ -190,7 +191,7 @@ class SynaServer(
                     ts = System.currentTimeMillis(),
                     body = synaJson.encodeToString(
                         ServerHello.serializer(),
-                        ServerHello(serverId, salt, "0.9.0", groupName),
+                        ServerHello(serverId, salt, "0.9.1", groupName),
                     ),
                 ),
             )
@@ -252,7 +253,7 @@ class SynaServer(
                             groupId = groupId,
                             groupName = groupName,
                             members = synchronized(memberMap) { memberMap.values.toList() },
-                            history = messages.toList(),
+                            history = synchronized(messages) { messages.toList() },
                         ),
                     ),
                 ),
@@ -273,7 +274,8 @@ class SynaServer(
                 )
             }
 
-            // 5. 持续读取与中继
+            // 5. 持续读取与中继（读超时：网络黑洞/进程被杀不留僵尸会话）
+            socket.soTimeout = 180_000
             while (true) {
                 val frame = session.receiveFrame() ?: break
                 handleRelayFrame(session, frame)
@@ -311,9 +313,9 @@ class SynaServer(
     }
 
     private suspend fun handleRelayFrame(session: ClientSession, frame: TransportFrame) {
-        // 防身份伪造：所有中继帧的 from 必须等于认证身份（服务端自帧除外）。
-        // 否则已认证成员可伪造他人 id 广播 KEY 帧毒化公钥、冒名发言、撤回他人消息。
-        if (frame.from.isNotEmpty() && frame.from != groupId && frame.from != session.userId) return
+        // 防身份伪造：所有中继帧的 from 必须等于认证身份；from == groupId（服务器身份）一律拒绝，
+        // 否则已认证成员可伪造服务器身份广播公告/管理帧。
+        if (frame.from.isNotEmpty() && frame.from != session.userId) return
         when (frame.type) {
             FrameType.PING -> {
                 // 保活：响应 PONG，不做中继
@@ -329,10 +331,18 @@ class SynaServer(
             }
             FrameType.SRV_LEAVE -> throw IOException("client leave")
             FrameType.BURN_ACK -> {
-                frame.body?.let { msgId -> purgeMessage(msgId) }
-                broadcast(frame, except = session)
+                // 鉴权：仅当目标消息是阅后即焚且请求者为原发送者时清除（防任意成员删他人消息）
+                val msgId = frame.body ?: ""
+                val target = synchronized(messages) { messages.firstOrNull { it.msgId == msgId } }
+                if (target != null && target.burn && target.from == session.userId) {
+                    purgeMessage(msgId)
+                    broadcast(frame, except = session)
+                }
             }
             FrameType.RECALL -> {
+                // 归属校验：仅消息原发送者可撤回（防任意成员撤回他人消息）
+                val target = synchronized(messages) { messages.firstOrNull { it.msgId == frame.msgId } }
+                if (target != null && target.from != session.userId) return
                 // 撤回帧也持久化，保证后加入者回放历史时能看到撤回标记
                 synchronized(messages) {
                     if (messages.none { it.msgId == frame.msgId }) {
@@ -451,7 +461,7 @@ class SynaServer(
 
     private fun printBanner() {
         println("================================================")
-        println("  Syna 私人聊天服务器 v0.9.0")
+        println("  Syna 私人聊天服务器 v0.9.1")
         println("  群名称: $groupName")
         println("  端口:   ${boundPort}")
         println("  数据目录: ${dataDir.toAbsolutePath()}")
@@ -500,8 +510,8 @@ class SynaServer(
         synchronized(banned) { banned.add(userId) }
         saveBans()
         publishBans()
-        // 发送踢出通知并断开连接
-        val session = synchronized(sessions) { sessions.firstOrNull { it.userId == userId } }
+        // 发送踢出通知并断开该用户全部连接（多会话用户不能留后门）
+        val sessionsToKick = synchronized(sessions) { sessions.filter { it.userId == userId } }
         val member = synchronized(memberMap) { memberMap[userId] }
         val kickFrame = TransportFrame(
             type = FrameType.GROUP_KICK,
@@ -516,17 +526,17 @@ class SynaServer(
             ),
         )
         scope.launch {
-            session?.let {
+            sessionsToKick.forEach { s ->
                 try {
-                    it.sendRaw(kickFrame)
+                    s.sendRaw(kickFrame)
                 } catch (e: Exception) {
                 }
-                // 延迟关闭：给接收端 readLoop 处理踢人帧的时间，
-                // 防止"帧在 TCP 缓冲中未读 + 立即 close"竞争导致踢人通知丢失
-                kotlinx.coroutines.delay(500)
-                it.close()
             }
-            broadcast(kickFrame, except = session)
+            // 延迟关闭：给接收端 readLoop 处理踢人帧的时间，
+            // 防止"帧在 TCP 缓冲中未读 + 立即 close"竞争导致踢人通知丢失
+            kotlinx.coroutines.delay(500)
+            sessionsToKick.forEach { it.close() }
+            broadcast(kickFrame, except = null)
         }
         log("[SynaServer] 已踢出并封禁: ${member?.name ?: userId} (${userId.take(6)})")
     }

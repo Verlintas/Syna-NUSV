@@ -55,7 +55,7 @@ private fun hasDisplay(): Boolean {
 /** CLI 无头模式 */
 private fun serverCliMain(args: Array<String>) {
     val config = parseArgs(args)
-    println("Syna 私人聊天服务器 v0.9.0 启动中…（带界面模式: 加 --ui 参数，或直接双击运行进入启动器）")
+    println("Syna 私人聊天服务器 v0.9.1 启动中…（带界面模式: 加 --ui 参数，或直接双击运行进入启动器）")
     val server = SynaServer(
         port = config.port,
         password = config.password,

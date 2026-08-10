@@ -22,8 +22,13 @@ actual fun copyTextToClipboard(text: String) {
 actual fun destructPlatformArtifacts() {
     try {
         val dir = com.syna.SynaApp.context.filesDir
-        listOf("syna_totp_seed", "syna_session_blob", "syna_dex_base", "syna_version_base", "crash.log")
+        listOf("syna_totp_seed", "syna_session_blob", "syna_dex_base", "syna_version_base", "syna_key_pins", "crash.log")
             .forEach { name -> com.syna.util.SecureWipe.wipeFile(java.io.File(dir, name).absolutePath) }
+        // 录音缓存（cacheDir/voice）覆写清理
+        try {
+            com.syna.util.SecureWipe.wipeDir(java.io.File(com.syna.SynaApp.context.cacheDir, "voice"))
+        } catch (e: Exception) {
+        }
     } catch (e: Exception) {
     }
 }

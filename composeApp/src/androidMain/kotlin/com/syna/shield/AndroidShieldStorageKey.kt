@@ -107,6 +107,19 @@ actual object ShieldStorageKey {
         }
     }
 
+    /** 主密钥直用加密（元数据：种子/固定/审计/失败计数——锁定态也必须可解） */
+    actual fun encryptWithMaster(data: ByteArray): ByteArray? {
+        val key = keystoreKey() ?: return null
+        return aesGcmEncrypt(key, data)
+    }
+
+    /** 主密钥直用解密 */
+    actual fun decryptWithMaster(payload: ByteArray): ByteArray? {
+        if (payload.size <= NONCE_LEN) return null
+        val key = keystoreKey() ?: return null
+        return aesGcmDecrypt(key, payload)
+    }
+
     /**
      * 销毁存储密钥：删除 Keystore 条目（TEE 内销毁，不可恢复）——
      * 自毁后即使文件被取证恢复也永久不可解（数据恢复的最强防线）。
