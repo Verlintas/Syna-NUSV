@@ -1,154 +1,286 @@
 # Changelog
 
-All notable changes to **Syna** — LAN instant messenger (GPL-3.0).
+All notable changes to **Syna** — LAN instant messenger (Kotlin Multiplatform + Compose
+Multiplatform, GPL-3.0). Android · Windows · macOS, fully peer-to-peer, no internet
+required.
 
-Format: version — date — summary. Releases: [GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases).
+Format: `version — date — summary`. Releases:
+[GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases)
 
 ---
 
 ## [0.9.1] — 2026-08-10 — Stabilization (full audit pass)
 
-### Fixes (from full code audit — see SECURITY_AUDIT_REPORT.md)
-- **2FA lockout eliminated** — metadata (TOTP seed / key pins / audit / fail-counter) now uses the master Keystore key; previously session-key encryption made them undecryptable while locked
-- Honeypot decoy no longer overwrites real history; burn-message 60 s TTL fallback actually works; server-history replay no longer dropped
-- Mesh group file transfer fixed; ACK retransmission fixed (counter reset bug → infinite retransmission; TEXT now ACK/retried)
-- UDP: key exchange uses real UDP port; 40 KB chunks in UDP mode
-- History-wipe race (debounced rewrite vs memory release) closed; burn-purge persists
-- No-biometrics devices no longer count taps as brute-force; interrupted disable flow can't turn Shield off
-- WATCHDOG_TRIP auto-clears on heartbeat recovery; self-destruct order fixed; screen-capture unregister fixed
+### Fixes (full code audit — see SECURITY_AUDIT_REPORT.md)
+- **2FA lockout eliminated** — TOTP seed / key pins / audit / fail-counter now use the
+  master Keystore key (previously session-key encryption made them undecryptable while
+  locked → permanent lockout)
+- Honeypot decoy no longer overwrites real history; burn 60 s TTL fallback actually
+  works (marker was never written); server-history replay no longer dropped
+- Mesh group file transfer fixed (misdetected as server-group disconnect); ACK
+  retransmission fixed (counter reset → infinite retransmission; TEXT now ACK/retried)
+- UDP: key exchange uses the real UDP port; 40 KB chunks in UDP mode
+- History-wipe race closed (debounced rewrite vs memory release); burn-purge persists
+- No-biometrics devices no longer count taps as brute-force; interrupted disable flow
+  can't turn the Shield off; WATCHDOG_TRIP auto-clears on heartbeat recovery
+- Self-destruct order fixed (audit wiped after event, Shield disabled, key pins & voice
+  cache wiped); screen-capture unregister fixed
 - Group-admin privilege escalation closed (creator protected)
-- Server: zombie-session timeout, kick-all-sessions, spoofed-identity rejection, BURN_ACK/RECALL ownership, locked history snapshot, immediate burn sweep
+- Server: zombie-session timeout, kick-all-sessions, server-identity spoofing rejected,
+  BURN_ACK/RECALL ownership checks, locked history snapshot, immediate burn sweep
 - Burn-send verification failure keeps input; Shield-disabled devices send normally
 
 ### Added
-- New project logo (Android launcher all densities + desktop tray)
+- New project logo `Syna_logo_2.png` (Android launcher all densities + desktop tray)
 - `SECURITY_AUDIT_REPORT.md` (code review + license audit)
-
-### License audit
-- CLEAN: 100% Apache-2.0 deps (GPL-3.0 compatible); no copyleft deps; all in-tree code original; SPDX headers complete
+- License audit: CLEAN — 100% Apache-2.0 deps, no copyleft, all in-tree code original
 
 ## [0.9.0] — 2026-08-10 — Encrypted file transfer, voice messages, re-auth
 
 ### Added
 - **File transfer E2E encryption** (1:1 FILE_CHUNK payloads encrypted; group files documented)
-- **Voice messages**: long-press 🎤 record (30 s), encrypted file channel, ▶️ playback; Android AMR-NB / desktop WAV; one-time recording permission
+- **Voice messages**: long-press 🎤 record (30 s max), encrypted file channel, ▶️ playback; Android AMR-NB / desktop WAV; one-time recording permission
 - **Sensitive-operation re-auth**: burn-after-reading sends require biometric confirmation
 - **Clipboard short TTL**: copy action with 30 s auto-clear
 - **Server**: slow-client isolation (bounded per-session send queue), burn-history 1 h TTL
-
-### Fixed
-- (see 0.9.1 audit for the deep pass)
 
 ## [0.8.2] — 2026-08-10 — ACK/retransmission, group administration, no-export policy
 
 ### Added
 - **Message-level ACK & retransmission** (P2P 1:1; 3 s retry ×3 → offline queue)
-- **Group administration**: kick / mute (1 h) / set-admin; receiver-side permission checks
+- **Group administration**: kick / mute (1 h, toggleable) / set-admin; receiver-side
+  permission checks (forged frames ignored); 👑 ⭐ 🔇 badges
 - **No-export policy**: `android:allowBackup=false`; no backup/export features by design
 - Server kick identity fixed (serverId vs groupId — kick notifications were dropped)
 
 ## [0.8.1] — 2026-08-10 — Key pinning (TOFU), encrypt-only mode, replay defense
 
 ### Added
-- **TOFU key pinning**: public keys pinned on first use; fingerprint badge + full fingerprint; key changes rejected → `KEY_CHANGED` lock; re-trust button
+- **TOFU key pinning**: public keys pinned on first use (encrypted at rest); fingerprint
+  badge in chat header + full fingerprint for out-of-band verification; key changes
+  rejected → `KEY_CHANGED` lock; "信任此密钥" re-pin
 - **Encrypt-only session mode** (refuse plaintext fallback)
 - **Replay defense**: 10-minute window on real-time frames
 
 ## [0.8.0] — 2026-08-10 — Deep self-destruct (anti-forensics)
 
 ### Added
-- `SecureWipe`: 2-pass random overwrite + fsync on all sensitive files (chat history, received files, audit, TOTP seed, session blob, baselines, crash log)
-- **Keystore/TEE storage-key destruction** — recovered ciphertext permanently undecryptable
-- Audit self-wipe order; desktop key-file overwrite
+- `SecureWipe`: 2-pass random overwrite + fsync on all sensitive files (chat history
+  incl. `.tmp`, received files, audit log, TOTP seed, session blob, baselines, crash log)
+- **Keystore/TEE storage-key destruction** — recovered ciphertext permanently
+  undecryptable; desktop key file overwritten
+- Audit self-wipe order (event written, then audit file wiped)
 
 ## [0.7.9] — 2026-08-10 — Active crash defense & permission self-check
 
 ### Added
-- Native `SIGABRT` on high-confidence signals (ptrace attach / code or libc hooked) — no stable debugging window
-- Usage-access grant targets Syna (`EXTRA_APP_PACKAGE`); full permission self-check on every launch
+- Native `SIGABRT` on high-confidence signals (ptrace attach / code or libc hooked) —
+  no stable debugging window; audit written best-effort before crash
+- Usage-access grant targets Syna (`EXTRA_APP_PACKAGE`); full permission self-check on
+  every launch
 
 ## [0.7.8] — 2026-08-10 — Expanded detection & active countermeasures
 
 ### Added
-- Riru/EdXposed/TaiChi + SELinux domain in root detection; IME / USB / suspicious-module advisories
-- Decrypt-path integrity probing; watchdog self-healing; honeypot data pollution (decoy messages)
+- Riru / EdXposed / TaiChi + SELinux process-domain in root detection
+- IME change / USB attach-detach / suspicious executable module advisories (all LOW)
+- **Decrypt-path integrity probing** (every ~8th decrypt); **watchdog self-healing**
+  (scanner restart); **honeypot data pollution** (decoy messages)
 
 ## [0.7.7] — 2026-08-10 — All client bugs fixed
 
 ### Fixed
-- TCP failure → offline queue; bidirectional heartbeat (PONG); burn TTL fallback; server-group disconnect awareness; discovery resilience; UI fixes (quote bar, image decode, EDT dialogs); CA user-cert-only; mirroring both directions; exact process matching
+- TCP failure → offline queue (no silent UDP fallback loss); bidirectional heartbeat
+  (PONG reply + 3-cycle timeout); burn-message TTL fallback with BURN_ACK
+- Server-group disconnect awareness (FAILED status + notification); READ receipts via
+  server channel; discovery resilience; announcement buffering
+- Quote-bar rendering; image decode off main thread; EDT file dialogs; username-change
+  discovery restart; duplicate-name file suffixes; CA user-cert-only; mirroring both
+  directions; exact process matching; watchdog alive semantics; AWT listener cleanup
 
 ## [0.7.6] — 2026-08-10 — Review second pass
 
 ### Fixed
-- Shield lifecycle on dispose; desktop key quarantine; captureAuth TOCTOU; native maps buffers; outbox mutex; receipt/key-frame guards; inbound TCP read timeout
+- Shield lifecycle on dispose; desktop key quarantine (`.corrupt`); captureAuth TOCTOU;
+  native maps buffers 64K/128K; outbox flush mutex; receipt/key-frame send guards;
+  inbound TCP read timeout (90 s); sendText empty guard
 
 ## [0.7.5] — 2026-08-10 — Full security review fix release
 
 ### Fixed
-- 2FA bypass closed; session-key capture after TOTP; biometric fail double-count; server relay forgery; BURN_ACK/RECALL sender validation; FILE_CHUNK bounds + pipeline isolation; TOTP-enable failure guard; DEBUG_MODE downgraded; honeypot streak; watchdog one-shot trip
-- **Chat persistence wired** (never was); atomic writes; CAS StateFlow updates; UDP buffer 64 KB; server hardening; macOS close-to-tray; tray icon; TOTP code screen visible; version alignment
+- 2FA bypass closed (no unlock while awaiting code; clearThreat can't skip it);
+  session-key capture moved after TOTP verification; biometric fail double-count;
+  server relay `from` forgery; BURN_ACK/RECALL sender validation; FILE_CHUNK bounds +
+  pipeline isolation; TOTP-enable failure guard; DEBUG_MODE downgraded to HIGH;
+  honeypot streak no longer reset; watchdog one-shot trip + restart reset
+- **Chat persistence wired** (was never injected — chats never survived restarts);
+  unlock-time rotation order fixed; atomic writes (tmp+rename); CAS StateFlow updates;
+  UDP receive buffer 64 KB; server hardening; macOS close-to-tray fix; tray icon;
+  AWAITING_TOTP code screen visible; version alignment
 
 ## [0.7.4] — 2026-08-10 — Rotation, unkillable shield, injection traces
 
 ### Added
-- Session-key rotation per unlock (forward secrecy); dual-factor disable (biometrics + TOTP); anonymous rwx segment detection (bit2)
+- Session-key rotation per unlock (forward secrecy); dual-factor disable (biometrics +
+  TOTP — attacker can't turn the shield off); anonymous rwx segment detection (bit2);
+  AWAITING_TOTP lock-screen rendering fix
 
 ## [0.7.3] — 2026-08-10 — Native anti-hook
 
 ### Added
-- syscall-direct I/O (GOT/PLT/LD_PRELOAD dead); own-code-segment memory-vs-disk hashing; export-entry self-verification; libc entry verification; integrity bitmask
+- syscall-direct I/O (GOT/PLT/LD_PRELOAD dead); own-code-segment memory-vs-disk hashing
+  (inline-hook detection); export-entry self-verification; libc entry verification;
+  integrity bitmask → SHIELD_TAMPERED / FRIDA_DETECTED
 
 ## [0.7.2] — 2026-08-10 — Native anti-debug (NDK)
 
 ### Added
-- TracerPid/maps/threads read in C (4 ABIs); JVM + native dual-channel; graceful fallback
+- `libsyna_shield.so` (C, GPL-3.0, 4 ABIs): TracerPid/maps/threads read in C;
+  JVM + native dual-channel verification; graceful fallback
 
 ## [0.7.1] — 2026-08-10 — Data-level key gate
 
 ### Added
-- Session-key layer wrapped by biometric-authenticated Keystore key; no auth → new data unreadable; lock invalidates session; master-key fallback for history
+- Session-key layer wrapped by a biometric-authenticated Keystore key (300 s window) —
+  no auth event → newly written data unreadable; lock invalidates session; master-key
+  fallback for history (smooth upgrade)
 
 ## [0.7.0] — 2026-08-10 — TOTP two-factor unlock
 
 ### Added
-- RFC 6238 dual verification (biometric + 6-digit code); `otpauth://` seed import; wrong codes feed brute-force pipeline
+- RFC 6238 dual verification (biometric + 6-digit code); `otpauth://` seed import;
+  wrong codes feed the brute-force pipeline (cooldown + self-destruct)
 
 ## [0.6.9] — 2026-08-10 — Picker crash fix
 
 ### Fixed
-- Gallery/file picker crash on all real devices (androidx.activity requestCode ≥ 65536 vs platform 16-bit limit) — fixed requestCode `startActivityForResult`
+- Gallery/file picker crash on all real devices (androidx.activity requestCode ≥ 65536
+  vs platform 16-bit limit) — fixed requestCode `startActivityForResult` path
 
 ## [0.6.8] — 2026-08-10 — Network & screen attack surface
 
 ### Added
-- Capture/recording events (API 34); mirroring change detection; CA-cert & ARP-spoof detection; SSID fingerprint; Zygisk/Shamiko/LSPosed; SELinux; scan jitter; background memory wipe; unlock cooldown; downgrade defense
+- Screen capture/recording events (API 34); mirroring change detection; CA-cert & ARP
+  spoofing detection; SSID fingerprint; Zygisk/Shamiko/LSPosed; SELinux; scan jitter;
+  background memory wipe (60 s); unlock cooldown backoff; downgrade defense
 
 ## [0.6.7] — 2026-08-10 — Open-source-proof hardening
 
 ### Added
-- Heartbeat gate (fail-closed); watchdog ring; honeypot fake-lock; brute-force protection; dex self-verification; key release on lock; live status panel
+- Heartbeat gate (fail-closed decrypt); watchdog ring (3 threads); honeypot fake-lock;
+  brute-force protection; dex self-verification; key release on lock; live status panel
 
 ## [0.6.6] — 2026-08-10 — Shield upgrade
 
 ### Added
-- Clock-tamper & weak-lock advisories; Frida port 27043; emulator test-keys; audit encryption
+- Single master switch (one tap enables everything); clock-tamper & weak-lock
+  advisories; Frida port 27043; emulator test-keys; audit encryption at rest
 
-## [0.6.5] — 2026-08-10 — Single-switch Shield
+## [0.6.5] — 2026-08-10 — Shield single-switch & chat polish
 
-### Added
-- One master switch (everything on); usage-access guidance; foreground-app sensing; split scan cadence
+### Added / Fixed
+- Quote-preview rework (visible on phone, no overlap on desktop); phone gallery sending
+  (permission-free); Shield single switch + ◇ title; usage-access guidance
+  (foreground-app sensing); scan cadence split (light 3 s / heavy 15 s)
 
 ## [0.6.4] — 2026-08-10 — Lock screen redesign
 
-## [0.6.3] — 2026-08-10 — Audit encryption at rest
+### Fixed
+- File-picker click crash defense; crash log dual-write (Download/Syna); lock screen
+  redesign (pure black / red ◇ / white)
 
-## [0.6.2] — 2026-08-10 — Hash-chained audit persistence
+## [0.6.3] — 2026-08-10 — Debug-build compatibility
 
-## [0.6.1] — 2026-08-10 — In-memory state HMAC
+### Fixed
+- Debug builds skip signature verification; global crash log for startup debugging
 
-## [0.6.0] — 2026-08-10 — Desktop engine
+## [0.6.2] — 2026-08-10 — Compatibility fix
 
-## [0.5.0] — 2026-08-10 — Detection expansion
+### Fixed
+- Android API 30 credential-detector guard (crash prevention on older devices), no
+  feature loss
 
-## [0.4.0] — 2026-08-10 — ◇Mirtazapine Shield first release
+## [0.6.1] — 2026-08-10 — Shield hardening (P0/P1)
+
+### Fixed
+- REQ_KEY response no longer throttled (UDP key self-heal restored); audit hash-chain
+  parse fix; decrypt-failure frames no longer stored; disable cancels auto-relock;
+  file-assembler sweep (10 min); Android biometric unlock fixed (FragmentActivity);
+  audit persistence synchronized — 6 bugs, 4 regression tests
+
+## [0.6.0] — 2026-08-10 — Version unification
+
+## [0.5.0] — 2026-08-10 — Shield first release & version unification
+
+### Added (since 0.4.0)
+- **◇Mirtazapine Shield** (first release): ARMED/LOCKED/UNLOCKED state machine,
+  biometric unlock; Android engine — Root / emulator / USB-debug / VPN change /
+  background switch / accessibility abuse / monitoring apps; screen-capture protection
+  (FLAG_SECURE); desktop engine — idle auto-lock (10 min); full-screen lock page;
+  capability-boundary statement
+- Shield hardening: HMAC-signed settings (tamper → force-restore); disable requires
+  biometrics; 5-min unlock expiry; back-key blocking; threat severity grading;
+  self-destruct protocol; chat-storage AES-GCM encryption (Keystore TEE / 0600 key);
+  memory wipe while locked; Frida detection; audit persistence; clipboard protection
+- Server group E2E (per-member X25519 ciphertext, server sees only ciphertext)
+- Message search + forward + date dividers + unread badge + tray resident
+  *(search removed in 0.4.0)*
+
+## [0.4.0] — 2026-08-10 — Search removed, version unification
+
+### Changed
+- Message search removed (as requested); version strings unified to 0.4.0
+
+## [0.3.1] — 2026-08-10 — Server launcher app
+
+### Added
+- Standalone launcher app via jpackage (macOS .app / Windows / Linux app-image),
+  Gradle task `launcherAppImage`
+
+## [0.3.0] — 2026-08-10 — Version unification & tutorials
+
+### Added
+- Tutorial split into pure-English (TUTORIAL_EN.md) and pure-Chinese (TUTORIAL_ZH.md)
+  versions with entry page; server version unified; server dual-mode (CLI headless +
+  `--ui` GUI with live status / members / history / logs)
+
+## [0.2.0] — 2026-08-10 — Private server
+
+### Added
+- **Syna Server** headless server (Win/macOS/Linux fat jar): TCP listening, password
+  auth, group relay, history persistence (`history.jsonl`), burn-after-reading server
+  purge, member online/offline broadcast
+- Client join (IP:port + password, group-key encryption, history replay, disconnect
+  detection)
+- NAT traversal via frp / ngrok / Tailscale port mapping
+- Fixed serverId init-order NPE (identity lost on restart)
+
+## [0.1.0] — 2026-08-10 — Initial release
+
+### Added
+- Kotlin Multiplatform + Compose Multiplatform project (Android / Windows / macOS)
+- **LAN peer discovery**: UDP broadcast + multicast dual-channel, 3 s heartbeat,
+  15 s offline timeout, manual refresh
+- **E2E encryption**: X25519 key exchange + HKDF-SHA256 + AES-256-GCM; per-peer
+  session keys; REQ_KEY self-heal
+- **1:1 chat**: conversation list (unread badges / timestamps / previews), bubbles,
+  ✓✓ read receipts, connection status
+- **P2P mesh group chat**: create → invite → membership sync (JOIN/LEAVE), owner
+  dissolve, member leave
+- **Burn after reading**: 8 s display, destroyed on both sides (BURN_ACK + 60 s
+  fallback)
+- **Temporary chat**: auto-purge after TTL (1 h / 24 h / 7 d)
+- Connection modes: Auto / TCP / UDP / Host Hotspot; custom username; offline message
+  queue; typing indicator; message recall (2 min); quote reply & @mentions; image/file
+  transfer (64 KB chunks, progress, ≤4 MB image preview); system notifications;
+  dark/light theme; contact management (block / unblock); chat history persistence
+  (JSONL, encrypted later); clear local history; proxy-TUN loopback normalization;
+  Windows/macOS/Linux support
+
+---
+
+## License
+
+Syna is licensed under **GPL-3.0-only**. All dependencies are Apache-2.0 (compatible);
+no copyleft dependencies; all in-tree code is original. See `LICENSE` and
+`SECURITY_AUDIT_REPORT.md`.
