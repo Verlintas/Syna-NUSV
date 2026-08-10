@@ -157,50 +157,50 @@ Format: `version — date — summary`. Releases:
 - Gallery/file picker crash on all real devices (androidx.activity requestCode ≥ 65536
   vs platform 16-bit limit) — fixed requestCode `startActivityForResult` path
 
-## [0.6.8] — 2026-08-10 — Network & screen attack surface
+## [0.6.8] — 2026-08-09 — Network & screen attack surface
 
 ### Added
 - Screen capture/recording events (API 34); mirroring change detection; CA-cert & ARP
   spoofing detection; SSID fingerprint; Zygisk/Shamiko/LSPosed; SELinux; scan jitter;
   background memory wipe (60 s); unlock cooldown backoff; downgrade defense
 
-## [0.6.7] — 2026-08-10 — Open-source-proof hardening
+## [0.6.7] — 2026-08-09 — Open-source-proof hardening
 
 ### Added
 - Heartbeat gate (fail-closed decrypt); watchdog ring (3 threads); honeypot fake-lock;
   brute-force protection; dex self-verification; key release on lock; live status panel
 
-## [0.6.6] — 2026-08-10 — Shield upgrade
+## [0.6.6] — 2026-08-09 — Shield upgrade
 
 ### Added
 - Single master switch (one tap enables everything); clock-tamper & weak-lock
   advisories; Frida port 27043; emulator test-keys; audit encryption at rest
 
-## [0.6.5] — 2026-08-10 — Shield single-switch & chat polish
+## [0.6.5] — 2026-08-08 — Shield single-switch & chat polish
 
 ### Added / Fixed
 - Quote-preview rework (visible on phone, no overlap on desktop); phone gallery sending
   (permission-free); Shield single switch + ◇ title; usage-access guidance
   (foreground-app sensing); scan cadence split (light 3 s / heavy 15 s)
 
-## [0.6.4] — 2026-08-10 — Lock screen redesign
+## [0.6.4] — 2026-08-08 — Lock screen redesign
 
 ### Fixed
 - File-picker click crash defense; crash log dual-write (Download/Syna); lock screen
   redesign (pure black / red ◇ / white)
 
-## [0.6.3] — 2026-08-10 — Debug-build compatibility
+## [0.6.3] — 2026-08-08 — Debug-build compatibility
 
 ### Fixed
 - Debug builds skip signature verification; global crash log for startup debugging
 
-## [0.6.2] — 2026-08-10 — Compatibility fix
+## [0.6.2] — 2026-08-08 — Compatibility fix
 
 ### Fixed
 - Android API 30 credential-detector guard (crash prevention on older devices), no
   feature loss
 
-## [0.6.1] — 2026-08-10 — Shield hardening (P0/P1)
+## [0.6.1] — 2026-08-08 — Shield hardening (P0/P1)
 
 ### Fixed
 - REQ_KEY response no longer throttled (UDP key self-heal restored); audit hash-chain
@@ -208,9 +208,9 @@ Format: `version — date — summary`. Releases:
   file-assembler sweep (10 min); Android biometric unlock fixed (FragmentActivity);
   audit persistence synchronized — 6 bugs, 4 regression tests
 
-## [0.6.0] — 2026-08-10 — Version unification
+## [0.6.0] — 2026-08-08 — Version unification
 
-## [0.5.0] — 2026-08-10 — Shield first release & version unification
+## [0.5.0] — 2026-08-08 — Shield first release & version unification
 
 ### Added (since 0.4.0)
 - **◇Mirtazapine Shield** (first release): ARMED/LOCKED/UNLOCKED state machine,
@@ -226,25 +226,25 @@ Format: `version — date — summary`. Releases:
 - Message search + forward + date dividers + unread badge + tray resident
   *(search removed in 0.4.0)*
 
-## [0.4.0] — 2026-08-10 — Search removed, version unification
+## [0.4.0] — 2026-08-08 — Search removed, version unification
 
 ### Changed
 - Message search removed (as requested); version strings unified to 0.4.0
 
-## [0.3.1] — 2026-08-10 — Server launcher app
+## [0.3.1] — 2026-08-08 — Server launcher app
 
 ### Added
 - Standalone launcher app via jpackage (macOS .app / Windows / Linux app-image),
   Gradle task `launcherAppImage`
 
-## [0.3.0] — 2026-08-10 — Version unification & tutorials
+## [0.3.0] — 2026-08-07 — Version unification & tutorials
 
 ### Added
 - Tutorial split into pure-English (TUTORIAL_EN.md) and pure-Chinese (TUTORIAL_ZH.md)
   versions with entry page; server version unified; server dual-mode (CLI headless +
   `--ui` GUI with live status / members / history / logs)
 
-## [0.2.0] — 2026-08-10 — Private server
+## [0.2.0] — 2026-08-06 — Private server
 
 ### Added
 - **Syna Server** headless server (Win/macOS/Linux fat jar): TCP listening, password
@@ -255,7 +255,7 @@ Format: `version — date — summary`. Releases:
 - NAT traversal via frp / ngrok / Tailscale port mapping
 - Fixed serverId init-order NPE (identity lost on restart)
 
-## [0.1.0] — 2026-08-10 — Initial release
+## [0.1.0] — 2026-08-06 — Initial release
 
 ### Added
 - Kotlin Multiplatform + Compose Multiplatform project (Android / Windows / macOS)
