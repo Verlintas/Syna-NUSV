@@ -115,6 +115,11 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
+        jniLibs {
+            // so 解压为真实文件（否则 dli_fname 指向 APK 内 zip 路径，
+            // native 代码段完整性校验无法读取磁盘文件比对）
+            useLegacyPackaging = true
+        }
     }
     signingConfigs {
         create("release") {
@@ -165,7 +170,7 @@ val serverFatJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     manifest {
         attributes["Main-Class"] = "com.syna.server.ServerMainKt"
-        attributes["Implementation-Version"] = "0.7.2"
+        attributes["Implementation-Version"] = "0.7.3"
     }
     from(kotlin.targets.getByName("desktop").compilations.getByName("main").output.allOutputs)
     from(configurations.getByName("desktopRuntimeClasspath").map { file ->

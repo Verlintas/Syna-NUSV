@@ -131,6 +131,15 @@ class AndroidShieldEngine private constructor(
         }
         if (isRooted()) onThreat(ShieldThreat.ROOT_DETECTED)
         if (hasFrida() || detectProcessInjection()) onThreat(ShieldThreat.FRIDA_DETECTED)
+        // native 代码完整性（对抗 inline/GOT hook）：自身被改 → 篡改；libc 被改 → 注入
+        if (NativeShield.loaded) {
+            try {
+                val integrity = NativeShield.integrity()
+                if (integrity and 1 != 0) onThreat(ShieldThreat.SHIELD_TAMPERED)
+                if (integrity and 2 != 0) onThreat(ShieldThreat.FRIDA_DETECTED)
+            } catch (e: Throwable) {
+            }
+        }
         if (isEmulator()) onThreat(ShieldThreat.EMULATOR_DETECTED)
         if (isDebugMode()) onThreat(ShieldThreat.DEBUG_MODE)
         if (isSelinuxPermissive()) onThreat(ShieldThreat.SELINUX_DISABLED)

@@ -36,4 +36,11 @@ object NativeShield {
 
     /** task 目录 comm 中 frida/gum-js 线程名 */
     external fun fridaThreads(): Int
+
+    /**
+     * 代码完整性位掩码（native 对抗层）：
+     * bit0 = 自身代码段被修改（含全部 JNI 导出函数入口被 inline hook）
+     * bit1 = libc 关键函数入口被修改（inline hook libc）
+     */
+    external fun integrity(): Int
 }
