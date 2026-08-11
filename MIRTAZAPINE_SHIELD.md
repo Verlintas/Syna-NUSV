@@ -610,6 +610,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.9.2 | **Group-file per-member encryption** (last plaintext path closed), **stealth mode**, **suspicious-module partition whitelist + concrete module reporting**, group member fingerprints |
 | v0.9.3 | **Lock-bypass fix** (threat-cleared-while-locked no longer unlocks), 2FA enable robustness, no-biometrics device notice, **system HTTP proxy detection** (PROXY_SET, LOW advisory) |
 | v0.9.5 | **Device identity detection** (DEVICE_CHANGED: ANDROID_ID vs encrypted baseline), **audit-integrity check** (deleted audit → SHIELD_TAMPERED), decrypt-path probe every 6th decrypt, dex hashing moved to the heavy scan |
+| v0.9.6 | **Self-protection hardening**: native heartbeat slot (JVM-hook immune, dual-gate decrypt check), scanner exception self-healing, audit-write-failure detection (SHIELD_TAMPERED), reinstall guard (identity change prompts Shield re-enable) |
 
 ---
 

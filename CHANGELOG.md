@@ -9,6 +9,20 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [0.9.6] — 2026-08-10 — Shield self-protection hardening
+
+### Added
+- **Native heartbeat slot** (JVM-hook immune): decrypt path verifies both the JVM and
+  native heartbeat; hooking JVM `beat()` can't fake freshness
+- **Scanner self-healing**: a scan-round exception no longer kills the detection loop
+- **Audit-write failure detection**: 5 consecutive failed audit writes →
+  SHIELD_TAMPERED (storage made read-only/filled)
+- **Reinstall guard**: device-identity change checked independently of Shield state;
+  reinstall with Shield off → notify to re-enable
+
+### Tests
+- 83
+
 ## [0.9.5] — 2026-08-10 — Image preview, message resend, power-saving discovery, Shield additions
 
 ### UX
