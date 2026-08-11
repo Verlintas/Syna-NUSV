@@ -32,13 +32,19 @@ class ModuleWhitelistTest {
             val perms = parts[1]
             val path = parts[5]
             if (!perms.contains("x")) continue
-            if (!path.startsWith("/")) continue
-            if (trustedPrefixes.any { path.startsWith(it) }) continue
-            if (path.contains("libsyna_shield") || path.contains("linker") ||
-                path.contains("libc.so") || path.contains("libart") ||
-                path.contains("libjavacore") || path.contains("libopenjdk") ||
-                path.contains("libandroid_runtime") || path.contains("libnativeloader")
-            ) continue
+            if (path.startsWith("/")) {
+                if (trustedPrefixes.any { path.startsWith(it) }) continue
+                if (path.contains("libsyna_shield") || path.contains("linker") ||
+                    path.contains("libc.so") || path.contains("libart") ||
+                    path.contains("libjavacore") || path.contains("libopenjdk") ||
+                    path.contains("libandroid_runtime") || path.contains("libnativeloader")
+                ) continue
+            } else if (path.startsWith("memfd:")) {
+                // ART JIT 正常产物放行；其他 memfd 可执行 = 注入特征
+                if (path.contains("jit")) continue
+            } else {
+                continue
+            }
             found.add(path)
             if (found.size >= 5) break
         }
@@ -72,6 +78,21 @@ class ModuleWhitelistTest {
         val found = suspiciousIn(maps)
         assertEquals(2, found.size, "注入路径应全部报出")
         assertTrue(found.any { it.contains("frida") }, "应包含 frida gadget 路径")
+    }
+
+
+    @Test
+    fun artJitMemfdIsTrustedButOtherMemfdIsSuspicious() {
+        // ART JIT 正常产物必须放行（v0.9.8 误报修复）
+        val jitMaps = "7f000000-7f001000 r-xp 00000000 00:00 0 memfd:jit-cache (deleted)\n" +
+            "7f001000-7f002000 r-xp 00000000 00:00 0 memfd:jit-zygote-cache (deleted)"
+        assertTrue(suspiciousIn(jitMaps).isEmpty(), "ART JIT 缓存不应误报: " + suspiciousIn(jitMaps))
+        // 非 jit 的 memfd 可执行映射 = 注入特征（不依赖名字）
+        val injectedMaps = "7f000000-7f001000 r-xp 00000000 00:00 0 memfd:whatever (deleted)\n" +
+            "7f001000-7f002000 r-xp 00000000 00:00 0 memfd:gum-js-loop"
+        val found = suspiciousIn(injectedMaps)
+        assertEquals(2, found.size, "非 jit memfd 可执行应判可疑")
+        assertTrue(found.any { it.contains("memfd") })
     }
 
     @Test

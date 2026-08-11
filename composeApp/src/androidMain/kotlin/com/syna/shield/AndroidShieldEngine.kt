@@ -35,6 +35,13 @@ private val KNOWN_MONITORING_FRAGMENTS = listOf(
     "com.teamviewer", "com.anydesk", "air.com.xtremelabs.android", // 远程控制
     "com.mobisec", "com.oxitec", "com.secugen", "com.cleverfiles", // 监控/录屏类
     "net.mobz", "com.genymotion", // 模拟器
+    "screenrecorder", "screenrec", "screenrecord", // 录屏工具家族
+    "azrecorder", "az.screen", "du.recorder", "mobizen", // 常见录屏
+    "apowersoft", "apowermirror", "recorder.record", "kine.master",
+    "obscam", "screen.stream", "screenflow", "screenlabs",
+    "lomob", "ipcam", "tinycam", // 监控摄像头查看
+    "familylink", "family.link", "kidsplace", // 家长监控
+    "mspy", "flexispy", "spyzie", "phonemoni", // 监控软件
 )
 
 class AndroidShieldEngine private constructor(
@@ -449,14 +456,29 @@ class AndroidShieldEngine private constructor(
                 val perms = parts[1]
                 val path = parts[5]
                 if (!perms.contains("x")) continue
-                if (!path.startsWith("/")) continue
-                if (trustedPrefixes.any { path.startsWith(it) }) continue
-                // 自身与运行时核心库（linker/libc/ART 等可能以非分区路径出现）
-                if (path.contains("libsyna_shield") || path.contains("linker") ||
-                    path.contains("libc.so") || path.contains("libart") ||
-                    path.contains("libjavacore") || path.contains("libopenjdk") ||
-                    path.contains("libandroid_runtime") || path.contains("libnativeloader")
-                ) continue
+                // 多维判定：
+                // a) 常规文件路径 → 仅系统/应用分区白名单外才可疑
+                // b) memfd 匿名映射 → 仅放行 ART JIT 缓存（memfd:jit-*），
+                //    其余 memfd 可执行（Frida 等注入常用）判可疑——攻击者改名 jit 之外任意名也命中
+                if (path.startsWith("/")) {
+                    if (trustedPrefixes.any { path.startsWith(it) }) continue
+                    // 自身与运行时核心库（linker/libc/ART 等可能以非分区路径出现）
+                    if (path.contains("libsyna_shield") || path.contains("linker") ||
+                        path.contains("libc.so") || path.contains("libart") ||
+                        path.contains("libjavacore") || path.contains("libopenjdk") ||
+                        path.contains("libandroid_runtime") || path.contains("libnativeloader")
+                    ) continue
+                } else if (path.startsWith("memfd:")) {
+                    // ART JIT 正常产物（jit-cache / jit-zygote-cache 等）放行；
+                    // 其他 memfd 可执行 = 注入特征（不依赖名字，memfd 类型本身即信号）
+                    if (path.contains("jit")) continue
+                } else if (path.isBlank() || path.startsWith("[anon:")) {
+                    // 匿名可执行映射（无名字）：若 rwxp（可写可执行）为注入中转特征，
+                    // 已有 native rwx 通道覆盖；此处跳过避免重复
+                    continue
+                } else {
+                    // 其他 memfd 无路径形式的可执行映射
+                }
                 found.add(path)
                 if (found.size >= 5) break // 最多报告 5 个，防刷屏
             }
@@ -759,10 +781,42 @@ class AndroidShieldEngine private constructor(
 
     internal fun hasMonitoringApps(): Boolean {
         val pm = context.packageManager
-        return pm.getInstalledApplications(PackageManager.GET_META_DATA).any { app ->
+        val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+        // 第一维：包名片段（大小写不敏感——攻击者大小写变体也命中）
+        val nameHit = apps.any { app ->
             KNOWN_MONITORING_FRAGMENTS.any { fragment ->
-                app.packageName.contains(fragment, ignoreCase = true)
+                app.packageName.lowercase().contains(fragment.lowercase())
             }
+        }
+        // 第二维：签名学习黑名单——首次按包名命中时记录其签名哈希，
+        // 此后任何包名携带该签名（改名/换包）都命中，绕过改名无效
+        if (nameHit) {
+            apps.filter { app ->
+                KNOWN_MONITORING_FRAGMENTS.any { f -> app.packageName.lowercase().contains(f.lowercase()) }
+            }.forEach { app ->
+                val sig = appSignatureHash(app.packageName)
+                if (sig != null) {
+                    monitorSignatures.add(sig)
+                }
+            }
+            return true
+        }
+        return apps.any { app ->
+            val sig = appSignatureHash(app.packageName)
+            sig != null && sig in monitorSignatures
+        }
+    }
+
+    private val monitorSignatures = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun appSignatureHash(packageName: String): String? {
+        return try {
+            val info = context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNATURES)
+            val sig = info.signatures?.firstOrNull() ?: return null
+            java.security.MessageDigest.getInstance("SHA-256").digest(sig.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -975,11 +1029,18 @@ class AndroidShieldEngine private constructor(
                     }
                 },
             )
-            val info = XBiometricPrompt.PromptInfo.Builder()
+            val infoBuilder = XBiometricPrompt.PromptInfo.Builder()
                 .setTitle("Mirtazapine Shield 验证")
                 .setSubtitle("使用生物识别确认是你本人在操作")
                 .setNegativeButtonText("取消")
-                .build()
+            // 解锁加强：仅强生物识别（指纹/面容），禁止"设备凭据"认证窗口
+            // （否则用户刚解锁过手机时 BiometricPrompt 可免验证直接通过）
+            if (Build.VERSION.SDK_INT >= 30) {
+                infoBuilder.setAllowedAuthenticators(
+                    android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_STRONG,
+                )
+            }
+            val info = infoBuilder.build()
             try {
                 // 认证绑定 CryptoObject：init 失败（认证窗口外）→ 无 CryptoObject 普通认证，
                 // 认证成功回调里仍会 captureAuth 重试捕获
