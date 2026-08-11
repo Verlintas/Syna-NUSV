@@ -16,7 +16,7 @@
 - ✅ **LAN peer discovery**: UDP broadcast + multicast dual-channel, 3s heartbeat, 15s offline timeout, **manual refresh button** for troubleshooting
 - ✅ **Custom username**: change it anytime in Settings, broadcast to LAN peers instantly
 - ✅ **WeChat-style chat**: conversation list (unread badges / timestamps / previews), chat bubbles, ✓✓ read receipts, connection status display
-- ✅ **Images & files**: chunked 64KB transfer with progress bar, image preview in bubbles, system file picker (Android / desktop)
+- ✅ **Images & files**: chunked encrypted transfer (64KB over TCP / 40KB over UDP) with progress bar, image preview in bubbles, system file picker (Android / desktop)
 - ✅ **Typing indicator**: live "正在输入…" status in 1:1, LAN groups and server groups
 - ✅ **Message recall**: long-press your message → recall within 2 minutes, both sides marked
 - ✅ **Quote reply & @mentions**: long-press → reply with quoted preview; @ member picker in groups
@@ -37,7 +37,10 @@
 - ✅ **Desktop tray resident**: close-to-tray keeps receiving messages in the background
 - ✅ **System notifications**: Android notification bar / desktop tray popup for new messages
 - ✅ **Connection mode switching**: Auto / TCP (reliable) / UDP (fast) / Host Hotspot
-- ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), **group owner can dissolve the group**, members can leave
+- ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), **group owner can dissolve the group**, members can leave; **group administration** — kick / mute (1 h, toggleable) / set-admin by creator or admins (permission-checked)
+- ✅ **Voice messages**: long-press 🎤 record (30 s max) → encrypted transfer → ▶️ playback (Android AMR / desktop WAV)
+- ✅ **Message delivery ACK**: P2P 1:1 messages are ACKed and retransmitted (3 s ×3) before falling back to the offline queue
+- ✅ **Message copy with 30 s clipboard auto-clear**; burn-after-reading sends require biometric confirmation
 - ✅ **Enhanced protection**:
   - **End-to-end encryption**: X25519 key exchange + HKDF-SHA256 + AES-256-GCM; private keys stay on your device only; **key fingerprinting + TOFU pinning** (P2P MITM defense, key changes rejected) · **encrypt-only mode** (no silent plaintext fallback) · replay defense
   - **Burn after reading**: message shows for 8 seconds, then is destroyed on both sides with BURN_ACK confirmation + 60s fallback
@@ -72,10 +75,10 @@ composeApp/
 └── src/desktopMain/         # Desktop entry, key directory
 ```
 
-**Wire protocol** (ports: 45877 discovery / 45878 UDP data / ephemeral TCP; server default 45880):
+**Wire protocol** (ports: 45877 discovery / per-instance dynamic UDP data port (carried in announcements) / ephemeral TCP; server default 45880):
 
-- Frame: `{type, from, to, msgId, ts, body, enc, burn}` JSON via kotlinx.serialization
-- Frame types: HELLO / KEY / TEXT / GROUP_MESSAGE / GROUP_INVITE / GROUP_JOIN / GROUP_LEAVE / READ / BURN_ACK / PING / PONG / SRV_HELLO / SRV_AUTH / SRV_AUTH_OK / SRV_LEAVE
+- Frame: `{type, from, to, msgId, ts, body, enc, burn, replyTo, mentions}` JSON via kotlinx.serialization
+- Frame types: DISCOVERY / HELLO / KEY / REQ_KEY / TEXT / IMAGE / FILE_CHUNK / TYPING / READ / ACK / RECALL / PING / PONG / GROUP_INVITE / GROUP_JOIN / GROUP_LEAVE / GROUP_DISSOLVE / GROUP_KICK / GROUP_MUTE / GROUP_ADMIN / GROUP_MESSAGE / EPHEMERAL_SESSION / ANNOUNCEMENT / BURN_ACK / SRV_HELLO / SRV_AUTH / SRV_AUTH_OK / SRV_LEAVE
 - LAN E2E encryption: public key is carried in the HELLO frame on TCP connect; peers reply with their own KEY. Session keys are derived from `sorted(peerIds)` so both sides always agree.
 - Server security model: the server sends a salt in `SRV_HELLO`; both sides derive an **AES-GCM channel key** from the server password (HKDF-SHA256) — all traffic is authenticated and encrypted, so a **passive relay (frp/ngrok tunnel operator) sees only ciphertext and cannot read anything**.
 - **Group messages are end-to-end encrypted between members** (X25519 session keys): the server relays one ciphertext copy per member and never possesses the decryption keys — **the server operator cannot read live messages**. The server only persists encrypted frames, so history is readable only by members online at send time (late joiners see the backlog from the moment they join). The password-derived group key remains only as a compatibility fallback for old clients.
@@ -151,7 +154,7 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 # Android release APK (requires signing config in local.properties)
 ./gradlew :composeApp:assembleRelease
 
-# Tests (68: crypto / protocol / loopback chat / group mesh / burn-after-reading / temp chat / offline outbox / server join+chat+history+burn / shield gate·watchdog·honeypot·brute-force·TOTP vectors)
+# Tests (76: crypto / protocol / loopback chat / group mesh / burn-after-reading / temp chat / offline outbox / server join+chat+history+burn / ACK retransmission / group admin / file transfer / shield gate·watchdog·honeypot·brute-force·TOTP vectors·TOFU)
 ./gradlew :composeApp:desktopTest
 ```
 
@@ -169,7 +172,7 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 - **Proxy tools (Clash / FlClash / etc.) with TUN mode**: they can hijack traffic to your own LAN IP (`connect` succeeds but data never arrives). Syna now auto-routes same-machine traffic through loopback (`127.0.0.1`); if cross-device traffic is also broken, add your LAN subnet to the proxy's bypass list or turn off TUN mode. / 代理工具（Clash/FlClash 等）开启 TUN 模式时会劫持发往本机局域网 IP 的流量（连接成功但数据不到）。Syna 已自动将本机互连流量走回环地址；若跨设备也不通，请把局域网网段加入代理白名单或关闭 TUN 模式。
 - **Android 14+**: local network access is restricted; some routers block UDP broadcast (the multicast channel is the fallback)
 - **Group chat (LAN mesh)**: there is no central node — members who are offline miss group messages; the **private server** fixes this with persistence
-- **Message persistence**: LAN chats live in memory; the private server persists history to disk
+- **Message persistence**: LAN chats are persisted locally (encrypted JSONL, survives restarts); the private server additionally persists server-group history to disk
 - **Multiple instances on one machine**: desktop settings are stored in user-level Java preferences (`Preferences.userRoot`), so multiple instances under the same OS account share one identity
 - **Debug logging**: `[Syna:Engine/Discovery/Send/Outbox/Crypto]` prefix on stdout / logcat; server logs `[SynaServer]`
 
@@ -178,7 +181,6 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 - [ ] LAN message history persistence (SQLDelight)
 - [ ] Server TLS certificate support (instead of password-derived channel)
 - [ ] Multiple groups per server
-- [ ] Voice messages
 
 ## License / 许可证
 
@@ -196,4 +198,4 @@ This project is licensed under the **GNU General Public License v3.0** — see [
 
 **AI generation / AI 生成声明**: see the notice at the top of this README (the AI-generated-code statement and audit notes live in the docs, **not** in the LICENSE file).
 
-**Assets / 资源**: `Syna_logo.png` is provided by the project owner. Other assets (icons, documentation) are generated by this project.
+**Assets / 资源**: `Syna_logo.png` / `Syna_logo_2.png` are provided by the project owner (current app icon is `Syna_logo_2.png`, applied to Android launcher & desktop tray). Other assets (icons, documentation) are generated by this project.

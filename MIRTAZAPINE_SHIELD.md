@@ -107,10 +107,12 @@ last authentication is unreadable.
 ## 3. Detection matrix
 
 Scan cadence (Android): **light scan every 3 s (+0–2 s random jitter)** — signature,
-dex integrity, root, frida, emulator, debug, SELinux, mirroring, downgrade, credential,
-foreground app, network fingerprint, clock, weak-lock; **heavy scan every 15 s** (every
-5th tick) — monitoring apps, accessibility, device-admin, CA store, ARP. The jitter
-prevents an attacker from predicting exactly when the next scan happens.
+root, frida, emulator, debug, SELinux, mirroring, downgrade, credential, foreground
+app, network fingerprint, clock, weak-lock, IME, USB, suspicious modules; **heavy scan
+every 15 s** (every 5th tick) — monitoring apps, accessibility, device-admin, CA store,
+ARP, **dex integrity** (full APK hashing moved off the light loop to keep the heartbeat
+budget). The jitter prevents an attacker from predicting exactly when the next scan
+happens.
 
 ### 3.1 Static & environment (files, packages, system state)
 
@@ -125,6 +127,9 @@ prevents an attacker from predicting exactly when the next scan happens.
 | `hasMonitoringApps` | Package fragments: `com.teamviewer`, `com.anydesk`, `air.com.xtremelabs.android`, `com.mobisec`, `com.oxitec`, `com.secugen`, `com.cleverfiles`, `net.mobz`, `com.genymotion` | Android |
 | `hasAbusiveAccessibility` | `ENABLED_ACCESSIBILITY_SERVICES` containing `com.teamviewer` / `com.anydesk` / `screenrecord` | Android |
 | `remoteControlProcesses` | `ps -e -o comm=` (or `tasklist` on Windows) scanned for teamviewer / anydesk / obs / vnc / scrcpy / rustdesk / todesk / sunloginclient / 向日葵 | Desktop |
+| `checkImeChange` | `Settings.Secure.DEFAULT_INPUT_METHOD` changes (keylogging-IME swap) | Android, LOW advisory |
+| `checkUsbChange` | `UsbManager.deviceList` attach/detach (debug/data-extraction window) | Android, LOW advisory |
+| `hasSuspiciousModules` | executable mappings outside the system/app whitelist in `/proc/self/maps` (injection footprint) | Android, LOW advisory |
 
 ### 3.2 Runtime process inspection
 
@@ -261,7 +266,7 @@ Beyond passive detection, the Shield actively fights back:
 | **Watchdog self-healing** | A watchdog trip immediately restarts the detection loop — a paused scanner is revived, a killed one reborn; the heartbeat resumes instead of staying dead |
 | **Honeypot data pollution** | Engaging the fake-lock writes decoy messages into the local store (audited). An attacker who eventually unlocks faces polluted data and cannot tell real records from decoys |
 
-### 4.5 In-memory state HMAC
+### 4.4 In-memory state HMAC
 
 `ShieldState` transitions write an HMAC signature of the state name; `stateIntact()`
 re-verifies on every critical path. If the in-memory state was rewritten (e.g. a hook
@@ -299,10 +304,10 @@ See [3.6](#36-screen-attack-surface). Additional behavior:
 
 | Severity | Threats | Response |
 |---|---|---|
-| CRITICAL | ROOT_DETECTED, DEBUG_MODE, CREDENTIAL_CHANGED, DEVICE_ADMIN_CHANGE, SHIELD_TAMPERED, FRIDA_DETECTED, WATCHDOG_TRIP, BRUTE_FORCE, DOWNGRADE_ATTEMPT | Lock + **self-destruct** (if enabled) + re-lock 30 s after any unlock while the threat persists |
-| HIGH | EMULATOR_DETECTED, MONITORING_APP, ACCESSIBILITY_ABUSE, BACKGROUND_SWITCH, SCREEN_RECORDING, SCREEN_SHARE_SUSPECT, KEY_CHANGED | Lock + audit |
+| CRITICAL | ROOT_DETECTED, CREDENTIAL_CHANGED, DEVICE_ADMIN_CHANGE, SHIELD_TAMPERED, FRIDA_DETECTED, WATCHDOG_TRIP, BRUTE_FORCE, DOWNGRADE_ATTEMPT | Lock + **self-destruct** (if enabled) + re-lock 30 s after any unlock while the threat persists |
+| HIGH | EMULATOR_DETECTED, DEBUG_MODE, MONITORING_APP, ACCESSIBILITY_ABUSE, BACKGROUND_SWITCH, SCREEN_RECORDING, SCREEN_SHARE_SUSPECT, KEY_CHANGED | Lock + audit |
 | MEDIUM | VPN_CHANGE, NETWORK_MITM (CA / ARP) | Lock + audit |
-| LOW | INACTIVE, CLOCK_CHANGED, WEAK_LOCK, NETWORK_CHANGED, SELINUX_DISABLED | **Audit only** — no forced lock (no false locks) |
+| LOW | INACTIVE, CLOCK_CHANGED, WEAK_LOCK, NETWORK_CHANGED, SELINUX_DISABLED, IME_CHANGED, USB_CHANGED, SUSPICIOUS_MODULE | **Audit only** — no forced lock (no false locks) |
 
 - **Deduplication:** a threat already present is not re-reported per scan (audit stays
   clean); `clearThreat` removes it when the signal clears.
@@ -441,11 +446,14 @@ base64(AES-GCM(json)) | prevHash | sha256(prevHash | content)
 GENESIS_HASH = "genesis"
 ```
 
-- Content is AES-GCM encrypted (session/master key domain).
+- Content is AES-GCM encrypted with the **master key** (Keystore — decryptable even
+  while locked, so the audit survives lock-outs; metadata always uses the master key,
+  only chat-data files use the session key).
 - The chain binds every record to its predecessor — tamper with any record and every
   subsequent one fails verification on load; loading stops at the break (the broken
   record is not silently accepted).
-- Cap: 100 events kept in memory; persisted indefinitely.
+- Cap: 100 events kept in memory; persisted file capped at 2 000 lines (oldest
+  trimmed), chain re-sealed after trimming.
 - Recorded actions: DETECTED / CLEARED / LOCKED / UNLOCKED / SELF_DESTRUCT / DISABLED /
   KEY_RELEASED / HONEYPOT / WATCHDOG.
 
@@ -455,8 +463,9 @@ GENESIS_HASH = "genesis"
 |---|---|
 | `syna_dex_base` | dex integrity baseline |
 | `syna_version_base` | downgrade baseline |
-| `syna_totp_seed` | TOTP seed |
-| `<events>.fails` | biometric fail counter |
+| `syna_totp_seed` | TOTP seed (master key) |
+| `syna_key_pins` | TOFU key pins (master key) |
+| `<events>.fails` | biometric fail counter (master key) |
 
 ---
 
@@ -504,7 +513,10 @@ Four independent signals: native TracerPid (ptrace), native maps scan, native th
 names, JVM mirror of all three, plus frida-server ports/paths. Hooking the JVM channel
 leaves the native channel live; hooking both requires gadget-level native scripting.
 Meanwhile the gate keeps the heartbeat — any pause in the detector thread (the usual
-first step) → fail-closed.
+first step) → fail-closed. Since v0.7.9 the highest-confidence signals escalate
+further: `TracerPid ≠ 0` and code-integrity hits trigger an immediate native
+`SIGABRT` — the process dies on every attach attempt, leaving no window for
+step-by-step debugging.
 
 ### 11.4 Device physically stolen
 - The lock screen requires biometrics (TEE-verified, cannot be faked by software).
@@ -557,6 +569,10 @@ clipboard and notifications are cleared/hidden while locked.
     it cannot trigger network-change alerts.
   - App-layer detection cannot see device-owner-level monitoring — stated in-app and
     here; the fail-closed gate and data-level gate are the compensating controls.
+  - P2P key changes are rejected by TOFU (KEY_CHANGED lock); re-pin after verifying
+    out-of-band (reinstall case).
+  - File transfers are E2E-encrypted for 1:1; group-file transfer is plaintext
+    (per-member ciphertext fan-out not yet implemented) — documented honestly.
 
 ---
 
@@ -589,12 +605,14 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.8.0 | **Deep self-destruct (anti-forensics)**: `SecureWipe` 2-pass random overwrite + fsync on every sensitive file, **Keystore/TEE storage-key destruction** (recovered ciphertext permanently undecryptable), audit log self-wiped after the event, TOTP seed / session blob / baselines / crash log all wiped |
 | v0.8.1 | **Key pinning (TOFU) & P2P MITM closure**: public keys pinned on first use (encrypted at rest), fingerprint badge in chat header (full fingerprint for out-of-band verification), key changes rejected + `KEY_CHANGED` lock (no more HELLO/KEY forgery poisoning); **encrypt-only session mode** (refuse plaintext fallback); **replay defense** (10-min window on real-time frames) |
 | v0.8.2 | **Message ACK/retransmission** (P2P reliability root fix), **group administration** (kick/mute/admins, receiver-side permission checks), **no-export policy** (`allowBackup=false`; no backup/export features by design) |
+| v0.9.0 | **Encrypted file transfer** (1:1 FILE_CHUNK payloads E2E-encrypted; group files documented), **voice messages** (long-press record, encrypted channel, AMR/WAV), **burn-send biometric re-auth**, **clipboard 30 s TTL**, server slow-client isolation & burn-history TTL |
+| v0.9.1 | **Full audit stabilization**: 2FA lockout eliminated (metadata moved to master key), honeypot decoy no longer overwrites history, burn-TTL dead code fixed, server-history replay unblocked, mesh group files fixed, ACK infinite-retransmission fixed, UDP key-port & chunk-size fixes, no-biometrics tap-counting fixed, server ownership checks — 60 issues fixed, `SECURITY_AUDIT_REPORT.md` published |
 
 ---
 
 ## 15. Verification & testing
 
-68 automated desktop tests, including:
+76 automated desktop tests, including:
 
 - gate fail-closed behavior (stall → decrypt refused; lock → refused; unlock → restored)
 - watchdog trip → forced CRITICAL lock
