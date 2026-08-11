@@ -124,12 +124,12 @@ happens.
 | `isDebugMode` | `Settings.Global.ADB_ENABLED` == 1; `Debug.isDebuggerConnected()` | Android |
 | `isSelinuxPermissive` | `/sys/fs/selinux/enforce` == "0" (advisory) | Android |
 | `checkWeakLock` | `KeyguardManager.isKeyguardSecure` == false (advisory) | Android |
-| `hasMonitoringApps` | Package fragments: `com.teamviewer`, `com.anydesk`, `air.com.xtremelabs.android`, `com.mobisec`, `com.oxitec`, `com.secugen`, `com.cleverfiles`, `net.mobz`, `com.genymotion` | Android |
+| `hasMonitoringApps` | Case-insensitive package fragments (incl. screen-recorder families, spyware, family-lock tools) **+ signature-learning blacklist**: first seen monitoring app's cert hash is recorded; any later package carrying that signature (renamed / repackaged) is detected (v0.9.8) | Android |
 | `hasAbusiveAccessibility` | `ENABLED_ACCESSIBILITY_SERVICES` containing `com.teamviewer` / `com.anydesk` / `screenrecord` | Android |
 | `remoteControlProcesses` | `ps -e -o comm=` (or `tasklist` on Windows) scanned for teamviewer / anydesk / obs / vnc / scrcpy / rustdesk / todesk / sunloginclient / 向日葵 | Desktop |
 | `checkImeChange` | `Settings.Secure.DEFAULT_INPUT_METHOD` changes (keylogging-IME swap) | Android, LOW advisory |
 | `checkUsbChange` | `UsbManager.deviceList` attach/detach (debug/data-extraction window) | Android, LOW advisory |
-| `suspiciousModules` | executable mappings outside the trusted **partition prefixes** (`/system` `/apex` `/vendor` `/product` `/system_ext` `/odm` `/data/app` `/data/user`) in `/proc/self/maps` (injection footprint); **reports actual module paths** on the lock screen/audit (v0.9.2) | Android, LOW advisory |
+| `suspiciousModules` | Multi-dimensional executable-mapping check in `/proc/self/maps`: regular file paths outside the trusted **partition prefixes** (`/system` `/apex` `/vendor` `/product` `/system_ext` `/odm` `/data/app` `/data/user`); **non-JIT `memfd:` mappings** (Frida-style injection, name-independent — ART JIT `memfd:jit-*` is whitelisted since v0.9.8); reports actual module paths on the lock screen/audit | Android, LOW advisory |
 
 ### 3.2 Runtime process inspection
 
@@ -362,7 +362,7 @@ locked.
 LOCKED
   │  user taps unlock
   ▼
-biometric prompt (CryptoObject bound to the authenticated Keystore key when possible)
+biometric prompt (**BIOMETRIC_STRONG only since v0.9.8** — device-credential auth windows cannot auto-pass; CryptoObject bound to the authenticated Keystore key when possible)
   │  success → captureAuth(): decrypt session blob → session key cached in memory
   ▼
 2FA enabled? ── yes ──► AWAITING_TOTP: 6-digit RFC 6238 code entry view
@@ -611,12 +611,14 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.9.3 | **Lock-bypass fix** (threat-cleared-while-locked no longer unlocks), 2FA enable robustness, no-biometrics device notice, **system HTTP proxy detection** (PROXY_SET, LOW advisory) |
 | v0.9.5 | **Device identity detection** (DEVICE_CHANGED: ANDROID_ID vs encrypted baseline), **audit-integrity check** (deleted audit → SHIELD_TAMPERED), decrypt-path probe every 6th decrypt, dex hashing moved to the heavy scan |
 | v0.9.6 | **Self-protection hardening**: native heartbeat slot (JVM-hook immune, dual-gate decrypt check), scanner exception self-healing, audit-write-failure detection (SHIELD_TAMPERED), reinstall guard (identity change prompts Shield re-enable) |
+| v0.9.7 | **3rd full review**: shield-off lockout fixed, audit recursion fixed, TCP-heartbeat new-connection kill fixed, locked-state disk-wipe prevented, group-file O(N²)/REQ_KEY storm fixed, resend dead-code fixed, dex hashing finally removed from light scan, server membership/BURN_ACK auth |
+| v0.9.8 | **ART JIT `memfd:jit-*` whitelist** (no lock-on-enable), name-independent non-JIT memfd injection detection, **BIOMETRIC_STRONG-only unlock**, **signature-learning monitoring blacklist** (renames no longer bypass) |
 
 ---
 
 ## 15. Verification & testing
 
-76 automated desktop tests, including:
+84 automated desktop tests, including:
 
 - gate fail-closed behavior (stall → decrypt refused; lock → refused; unlock → restored)
 - watchdog trip → forced CRITICAL lock
