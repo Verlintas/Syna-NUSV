@@ -9,6 +9,34 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [0.9.5] — 2026-08-10 — Image preview, message resend, power-saving discovery, Shield additions
+
+### UX
+- Full-screen image preview (tap bubble → fullscreen → tap to close)
+- Resend failed messages (long-press → 重发; burn re-send requires biometric)
+- Voice playback state on the bubble (播放中 / tap to stop)
+
+### Power saving
+- Discovery broadcast adapts: 10 fast announcements → 3× slower; incoming/manual refresh resets
+
+### Shield
+- DEVICE_CHANGED (LOW): ANDROID_ID vs encrypted baseline (reinstall / backup-restore)
+- Audit-integrity check: audit log deleted/emptied → SHIELD_TAMPERED (审计日志被清除)
+- Decrypt-path probe every 6th decrypt; dex hashing finally moved to the heavy scan
+
+### Tests
+- 83
+
+## [0.9.4] — 2026-08-10 — Material Icons, Voice Duration, UI Polish
+
+### Changed
+- Material icons for send / refresh / play / lock markers (semantic badges stay text: 焚/群主/管理员/禁言/指纹/录音/图片/文件)
+- Voice duration transmitted (FileChunk.durationMs) and shown on the bubble (语音 12秒); filename carries seconds for cross-version display
+- Fixed duplicate "刷新 刷新" label
+
+### Tests
+- 82
+
 ## [0.9.3] — 2026-08-10 — Lock-bypass fix, 2FA enable fix, no-emoji UI, proxy detection
 
 ### Security fixes
