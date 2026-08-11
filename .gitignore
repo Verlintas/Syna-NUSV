@@ -14,3 +14,5 @@ captures/
 *.msi
 *.deb
 syna-release.keystore
+dist/Syna-v0.9.9-server.jar
+dist/
