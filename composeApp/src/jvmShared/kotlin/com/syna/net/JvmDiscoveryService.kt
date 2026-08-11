@@ -53,6 +53,10 @@ class JvmDiscoveryService(
     /** 隐身模式：不发送发现广播（但仍监听入站公告，手动刷新可用） */
     @Volatile
     private var stealth = false
+
+    /** 省电：快频广播计数（前 [FAST_ANNOUNCE_COUNT] 次按 intervalMs，之后按 3 倍间隔） */
+    private var fastAnnounceCount = 0
+    private val FAST_ANNOUNCE_COUNT = 10
     private var jobs = mutableListOf<kotlinx.coroutines.Job>()
 
     override val localAddress: String
@@ -108,6 +112,8 @@ class JvmDiscoveryService(
                 null
             } ?: continue
             if (ann.id != announcement.id) {
+                // 收到他人公告：说明网络活跃，重置快频（省电与响应平衡）
+                fastAnnounceCount = 0
                 announcementsM.emit(ann to (packet.address.hostAddress ?: "127.0.0.1"))
             }
         }
@@ -121,8 +127,11 @@ class JvmDiscoveryService(
         val payload = announcement.encode()
         val groupAddr = InetAddress.getByName(DISCOVERY_MULTICAST_GROUP)
         while (true) {
-            kotlinx.coroutines.delay(intervalMs)
+            // 省电：在线稳定后（快频 10 次）降为 3 倍间隔；入站公告/手动刷新重置为快频
+            val delayMs = if (fastAnnounceCount < FAST_ANNOUNCE_COUNT) intervalMs else intervalMs * 3
+            kotlinx.coroutines.delay(delayMs)
             if (stealth) continue // 隐身：不广播自身
+            fastAnnounceCount++
             try {
                 sender?.let { out ->
                     out.send(DatagramPacket(payload, payload.size, groupAddr, DISCOVERY_PORT))
@@ -145,6 +154,8 @@ class JvmDiscoveryService(
             }
         } catch (_: Exception) {
         }
+        // 手动刷新：重置为快频（下轮立即广播）
+        fastAnnounceCount = 0
     }
 
     override fun stop() {

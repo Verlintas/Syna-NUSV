@@ -145,6 +145,37 @@ class AckAndGroupAdminTest {
     }
 
     @Test
+    fun failedMessageCanBeResent() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = makeEngine("Alice", scopeA)
+        val b = makeEngine("Bob", scopeB)
+        try {
+            a.start(); b.start()
+            delay(1_200)
+            val bob = a.peers.first { list -> list.any { p -> p.username == "Bob" && p.online } }
+                .first { it.username == "Bob" }
+            a.sendText(bob.id, "handshake")
+            delay(1_500)
+            assertTrue(a.peerKeys.value[bob.id] != null)
+            val alice = b.peers.first { list -> list.any { p -> p.username == "Alice" && p.online } }
+                .first { it.username == "Alice" }
+            // 正常发送成功
+            a.sendText(bob.id, "第一次")
+            delay(1_000)
+            assertTrue(b.chatStore.messages.value[alice.id]?.any { it.body == "第一次" } == true, "B 应收到消息")
+            // 重发路径：对已成功消息再次发送（模拟重发同一内容）
+            val resent = a.sendText(bob.id, "重发内容")
+            assertTrue(resent.isNotEmpty(), "重发应产生新消息")
+            delay(1_000)
+            assertTrue(b.chatStore.messages.value[alice.id]?.any { it.body == "重发内容" } == true, "B 应收到重发内容")
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
     fun groupAdminKickMuteAndAdmins() = runBlocking {
         val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)

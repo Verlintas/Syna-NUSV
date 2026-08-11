@@ -23,8 +23,8 @@ expect object VoiceRecorder {
     fun cancel()
 }
 
-/** 播放语音文件（异步，无阻塞） */
-expect fun playVoiceAudio(path: String)
+/** 播放语音文件（异步，无阻塞；onState 回调播放/结束状态） */
+expect fun playVoiceAudio(path: String, onState: ((playing: Boolean) -> Unit)? = null)
 
 /** 是否具备语音录制能力（权限/硬件） */
 expect fun canRecordVoice(): Boolean

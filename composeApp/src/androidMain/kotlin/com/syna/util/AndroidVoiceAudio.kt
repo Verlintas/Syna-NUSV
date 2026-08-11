@@ -93,18 +93,24 @@ actual object VoiceRecorder {
     }
 }
 
-actual fun playVoiceAudio(path: String) {
+actual fun playVoiceAudio(path: String, onState: ((Boolean) -> Unit)?) {
     try {
         val player = MediaPlayer()
         player.setDataSource(path)
-        player.setOnCompletionListener { it.release() }
+        onState?.invoke(true)
+        player.setOnCompletionListener {
+            it.release()
+            onState?.invoke(false)
+        }
         player.setOnErrorListener { mp, _, _ ->
             mp.release()
+            onState?.invoke(false)
             true
         }
         player.prepare()
         player.start()
     } catch (e: Exception) {
+        onState?.invoke(false)
     }
 }
 

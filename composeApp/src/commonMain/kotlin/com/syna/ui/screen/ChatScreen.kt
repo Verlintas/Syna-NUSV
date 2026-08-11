@@ -105,6 +105,8 @@ fun ChatScreen(
     var fingerprintDialog by remember { mutableStateOf<String?>(null) }
     // 群管理对话框
     var showAdminDialog by remember { mutableStateOf(false) }
+    // 图片全屏预览
+    var fullImagePreview by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
     val peer = peers.firstOrNull { it.id == peerId }
     val group = groups.firstOrNull { it.id == peerId }
     // 群权限（顶部计算，供管理对话框使用）
@@ -315,6 +317,7 @@ fun ChatScreen(
                     onLongClick = { recallTarget = message.id },
                     allMessages = chatMessages,
                     maxBubbleWidth = bubbleMaxWidth,
+                    onImageClick = { fullImagePreview = it },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -330,6 +333,9 @@ fun ChatScreen(
                 System.currentTimeMillis() - target.ts <= 2 * 60_000L
             val canReply = target != null && !target.recalled
             val canForward = target != null && !target.recalled
+            val canResend = target != null &&
+                target.senderId == engine.userId &&
+                target.status == com.syna.chat.MessageStatus.FAILED
             androidx.compose.material3.AlertDialog(
                 onDismissRequest = { recallTarget = null },
                 title = { Text("消息操作") },
@@ -371,6 +377,17 @@ fun ChatScreen(
                                     recallTarget = null
                                 },
                             ) { Text("转发") }
+                        }
+                        if (canResend) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    val t = target
+                                    recallTarget = null
+                                    if (t != null) {
+                                        resendFailedMessage(engine, peerId, t)
+                                    }
+                                },
+                            ) { Text("重发") }
                         }
                         if (target != null && target.body.isNotBlank()) {
                             androidx.compose.material3.TextButton(
@@ -679,6 +696,23 @@ fun ChatScreen(
     }
     } // BoxWithConstraints
 
+        // 图片全屏预览：点击任意处关闭
+        fullImagePreview?.let { bmp ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { fullImagePreview = null },
+                confirmButton = {},
+                text = {
+                    Image(
+                        bitmap = bmp,
+                        contentDescription = "图片预览",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { fullImagePreview = null },
+                        contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    )
+                },
+            )
+        }
         // 群管理：成员列表 + 踢出/禁言/设管理员（仅创建者/管理员）
         if (showAdminDialog && group != null) {
             androidx.compose.material3.AlertDialog(
@@ -778,7 +812,53 @@ fun ChatScreen(
         }
 }
 
-@Composable
+/**
+ * 重发失败消息：文本直接重发；图片/文件/语音从本地文件重发（burn 消息走二次认证）。
+ */
+private fun resendFailedMessage(
+    engine: com.syna.net.SynaEngine,
+    peerId: String,
+    msg: com.syna.chat.ChatMessage,
+) {
+    when (msg.kind) {
+        com.syna.chat.MessageKind.TEXT -> {
+            if (msg.burnAfterReading) {
+                // 阅后即焚重发需生物识别确认
+                com.syna.shield.ShieldController.current?.verifyIdentity { granted ->
+                    if (granted) {
+                        kotlinx.coroutines.GlobalScope.launch {
+                            engine.sendText(peerId, msg.body, burn = true, replyTo = msg.replyToId, mentions = msg.mentions)
+                        }
+                    }
+                }
+            } else {
+                kotlinx.coroutines.GlobalScope.launch {
+                    engine.sendText(peerId, msg.body, burn = false, replyTo = msg.replyToId, mentions = msg.mentions)
+                }
+            }
+        }
+        else -> {
+            val path = msg.localPath
+            if (path != null) {
+                try {
+                    val f = java.io.File(path)
+                    if (f.exists()) {
+                        kotlinx.coroutines.GlobalScope.launch {
+                            engine.sendFile(
+                                peerId,
+                                msg.fileName ?: f.name,
+                                f.readBytes(),
+                                msg.fileName?.substringAfterLast('.', "")?.let { "application/octet-stream" } ?: "application/octet-stream",
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                }
+            }
+        }
+    }
+}
+
 private fun typingSubtitle(
     engine: SynaEngine,
     conversationId: String,
@@ -820,6 +900,7 @@ private fun MessageBubble(
     onLongClick: () -> Unit = {},
     allMessages: List<ChatMessage> = emptyList(),
     maxBubbleWidth: Dp = 280.dp,
+    onImageClick: (androidx.compose.ui.graphics.ImageBitmap) -> Unit = {},
 ) {
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
@@ -929,7 +1010,9 @@ private fun MessageBubble(
                                             contentDescription = message.fileName,
                                             modifier = Modifier
                                                 .widthIn(max = maxBubbleWidth * 0.8f)
-                                                .clip(RoundedCornerShape(8.dp)),
+                                                .clip(RoundedCornerShape(8.dp))
+                                                // 点击全屏预览
+                                                .clickable { onImageClick(bmp) },
                                         )
                                     } else {
                                         Text("图片 ${message.fileName ?: "图片"}", style = MaterialTheme.typography.bodyMedium, color = textColor)
@@ -950,11 +1033,18 @@ private fun MessageBubble(
                                     message.localPath?.endsWith(".wav") == true
                                 if (isVoice && message.localPath != null) {
                                     // 语音气泡：播放按钮 + 时长（时长编码在文件名：语音消息-12s）
+                                    var voicePlaying by remember { mutableStateOf(false) }
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
                                             .clickable {
-                                                com.syna.util.playVoiceAudio(message.localPath!!)
+                                                if (voicePlaying) {
+                                                    voicePlaying = false
+                                                } else {
+                                                    com.syna.util.playVoiceAudio(message.localPath!!) { playing ->
+                                                        voicePlaying = playing
+                                                    }
+                                                }
                                             }
                                             .padding(vertical = 2.dp),
                                     ) {
@@ -969,7 +1059,8 @@ private fun MessageBubble(
                                             ?.let { Regex("-(\\d+)s\\.").find(it)?.groupValues?.get(1) }
                                             ?.let { "${it}秒" }
                                         Text(
-                                            durationLabel ?: "语音 ${message.fileSize?.let { "${it / 1024}KB" } ?: ""}",
+                                            if (voicePlaying) "播放中 ${durationLabel ?: ""}"
+                                            else durationLabel ?: "语音 ${message.fileSize?.let { "${it / 1024}KB" } ?: ""}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = textColor,
                                         )

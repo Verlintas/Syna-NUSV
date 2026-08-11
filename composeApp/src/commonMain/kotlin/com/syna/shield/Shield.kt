@@ -120,6 +120,11 @@ enum class ShieldThreat(
         "检测到系统代理配置",
         "系统设置了全局 HTTP 代理，网络流量可能经第三方中转",
     ),
+    DEVICE_CHANGED(
+        "device",
+        "检测到设备身份变化",
+        "设备标识与上次运行不一致，可能是重新安装或恢复了备份",
+    ),
     SHIELD_TAMPERED(
         "tampered",
         "检测到安全设置被篡改",
@@ -226,6 +231,7 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.USB_CHANGED,
     ShieldThreat.SUSPICIOUS_MODULE,
     ShieldThreat.PROXY_SET,
+    ShieldThreat.DEVICE_CHANGED,
     -> ThreatSeverity.LOW
 }
 

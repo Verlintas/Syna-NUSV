@@ -308,6 +308,9 @@ class ShieldHardeningTest {
         assertEquals(ThreatSeverity.LOW, ShieldThreat.IME_CHANGED.severity())
         assertEquals(ThreatSeverity.LOW, ShieldThreat.USB_CHANGED.severity())
         assertEquals(ThreatSeverity.LOW, ShieldThreat.SUSPICIOUS_MODULE.severity())
+        // v0.9.3/0.9.5 新增
+        assertEquals(ThreatSeverity.LOW, ShieldThreat.PROXY_SET.severity())
+        assertEquals(ThreatSeverity.LOW, ShieldThreat.DEVICE_CHANGED.severity())
         // DEBUG_MODE 已降级（不触发自毁误杀）
         assertEquals(ThreatSeverity.HIGH, ShieldThreat.DEBUG_MODE.severity())
     }

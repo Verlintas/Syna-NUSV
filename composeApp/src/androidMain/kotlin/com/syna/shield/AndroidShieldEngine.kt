@@ -183,6 +183,7 @@ class AndroidShieldEngine private constructor(
         checkImeChange()
         checkUsbChange()
         checkSystemProxy()
+        checkDeviceIdentity()
         val suspicious = suspiciousModules()
         if (suspicious.isNotEmpty()) {
             onThreat(ShieldThreat.SUSPICIOUS_MODULE)
@@ -195,7 +196,7 @@ class AndroidShieldEngine private constructor(
         // VPN 变更由回调单独触发
     }
 
-    /** 重量级低频检测（15s）：应用枚举类 */
+    /** 重量级低频检测（15s）：应用枚举类 + 完整性命中 */
     private fun runHeavyChecks() {
         if (hasMonitoringApps()) onThreat(ShieldThreat.MONITORING_APP)
         if (hasAbusiveAccessibility()) onThreat(ShieldThreat.ACCESSIBILITY_ABUSE)
@@ -203,6 +204,12 @@ class AndroidShieldEngine private constructor(
         checkAccessibilityChange()
         checkCaChange()
         checkArpSpoof()
+        // 运行时自校验（dex 哈希，全量读 APK，放重量级档）
+        if (!verifyDexIntegrity()) {
+            onThreat(ShieldThreat.SHIELD_TAMPERED)
+        }
+        // 审计完整性（文件 IO）：审计日志被外部清除 → 篡改
+        checkAuditIntegrity()
     }
 
     /** 时钟跳变检测：墙钟与系统运行计时偏差 > 5 分钟 → 低危提示（审计与消息时效受影响） */
@@ -322,6 +329,46 @@ class AndroidShieldEngine private constructor(
             System.getenv("PATH")?.split(":")?.any { dir ->
                 File(dir, "su").exists()
             } == true
+    }
+
+    /** 设备身份检测：ANDROID_ID 与基准比对（重装/恢复备份 → 提示；主密钥加密基准） */
+    private fun checkDeviceIdentity() {
+        try {
+            val androidId = android.provider.Settings.Secure.getString(
+                context.contentResolver,
+                android.provider.Settings.Secure.ANDROID_ID,
+            ) ?: return
+            val baseFile = java.io.File(context.filesDir, "syna_device_base")
+            if (!baseFile.exists()) {
+                baseFile.writeBytes(ShieldStorageKey.encryptWithMaster(androidId.toByteArray()) ?: return)
+                return
+            }
+            val base = ShieldStorageKey.decryptWithMaster(baseFile.readBytes())?.decodeToString()
+            if (base != null && base != androidId) {
+                onThreat(ShieldThreat.DEVICE_CHANGED)
+            }
+        } catch (e: Exception) {
+        }
+    }
+
+    /**
+     * 审计缺失检测：Shield 运行过（有审计基准）但审计文件被外部删除/清空
+     * （攻击者抹除痕迹）→ 上报篡改。自毁流程会先停用 Shield，不冲突。
+     */
+    private fun checkAuditIntegrity() {
+        try {
+            val events = java.io.File(shieldEventsPath())
+            val seen = java.io.File(context.filesDir, "syna_audit_seen")
+            if (events.exists() && events.length() > 0L) {
+                if (!seen.exists()) {
+                    seen.writeBytes(ShieldStorageKey.encryptWithMaster("1".toByteArray()) ?: return)
+                }
+            } else if (seen.exists()) {
+                ShieldController.current?.reportThreat(ShieldThreat.SHIELD_TAMPERED)
+                ShieldController.current?.setThreatDetail(ShieldThreat.SHIELD_TAMPERED, "审计日志被清除")
+            }
+        } catch (e: Exception) {
+        }
     }
 
     /** 输入法变更检测：系统输入法切换（防被替换为键盘记录型 IME，advisory） */
