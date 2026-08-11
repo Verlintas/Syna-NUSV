@@ -9,6 +9,32 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [0.9.7] — 2026-08-10 — Full review fix release (3rd audit pass)
+
+### Critical
+- Shield-off data lockout fixed (native heartbeat check only when armed)
+- Audit-write failure recursion → deferred one-shot escalation
+- TCP heartbeat no longer kills new connections (PONG baseline)
+- Locked-state disk wipe prevented (memory-wiped flag blocks all writes; purge
+  conditional; rewrite re-verifies)
+- Group-file O(N²) fan-out + REQ_KEY storm fixed (per-member direct send; no REQ_KEY
+  on foreign ciphertext)
+- Failed-message resend works (send-copy persisted, localPath stored, mime derived)
+- dex hashing **actually** removed from the light scan (3rd attempt; previous two
+  silently failed)
+
+### Medium
+- serverGroupId stored (disconnect FAILED works); audit truncation re-seals chain;
+  stealth survives username refresh; BRUTE_FORCE cleared on unlock; self-destruct wipes
+  audit-seen/device baselines; native heartbeat /dev/urandom + monotonic clock;
+  UDP file over TCP; server membership-event & BURN_ACK( receiver) auth; empty-from
+  only for PING; client server-channel read timeout; load synchronized; tmp cleanup;
+  preview rebuild on reload; residual emoji removed; group frames in replay guard;
+  audit never falls back to plaintext
+
+### Tests
+- 83
+
 ## [0.9.6] — 2026-08-10 — Shield self-protection hardening
 
 ### Added
