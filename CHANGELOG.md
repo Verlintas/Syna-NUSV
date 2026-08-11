@@ -9,6 +9,21 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [0.9.8] — 2026-08-10 — JIT false-positive fix, strong-only unlock, signature-learning detection
+
+### Fixed
+- **ART JIT memfd whitelist** (`memfd:jit-cache`, `memfd:jit-zygote-cache`) — no more
+  lock-on-enable for stock devices; non-JIT executable memfd mappings still flagged
+  (multi-dimensional, name-independent)
+- **Unlock hardening**: biometric prompt requires BIOMETRIC_STRONG only (device-credential
+  window can no longer auto-pass)
+- **Monitor detection**: package-fragment list expanded; **signature-learning blacklist**
+  — renamed/repackaged monitoring apps are caught by certificate hash; case-insensitive
+  name matching
+
+### Tests
+- 84
+
 ## [0.9.7] — 2026-08-10 — Full review fix release (3rd audit pass)
 
 ### Critical
