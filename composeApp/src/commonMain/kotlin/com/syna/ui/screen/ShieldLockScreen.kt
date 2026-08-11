@@ -43,6 +43,7 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
     val state by controller.state.collectAsState()
     val threats by controller.threats.collectAsState()
     val disabling by controller.disabling.collectAsState()
+    val threatDetails by controller.threatDetails.collectAsState()
 
     Column(
         modifier = modifier
@@ -93,7 +94,7 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             threats.forEach { threat ->
-                ThreatRow(threat)
+                ThreatRow(threat, detail = threatDetails[threat])
             }
         }
         Spacer(Modifier.height(32.dp))
@@ -197,7 +198,7 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun ThreatRow(threat: ShieldThreat) {
+private fun ThreatRow(threat: ShieldThreat, detail: String? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -225,6 +226,14 @@ private fun ThreatRow(threat: ShieldThreat) {
                 fontSize = 12.sp,
                 color = ShieldWhiteDim,
             )
+            if (!detail.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = detail,
+                    fontSize = 11.sp,
+                    color = ShieldRed.copy(alpha = 0.9f),
+                )
+            }
         }
     }
 }

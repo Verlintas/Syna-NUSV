@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.9.1",
+    private val version: String = "0.9.2",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -177,6 +177,8 @@ class SynaEngine(
         this.tcp = tcp
         this.udp = udp
         this.discovery = discovery
+        // 隐身模式在启动时应用（不广播自身）
+        discovery.setStealth(settings.stealthMode)
 
         synaLog("Engine") {
             "started userId=$userId username=$username device=$device tcpPort=${tcp.localTcpPort} e2e=${settings.e2eEnabled}"
@@ -1220,12 +1222,15 @@ class SynaEngine(
             ),
         )
 
-        // 文件传输加密（1:1 且有会话密钥时）：整个 FileChunk JSON 加密——
-        // 接收端经 decryptEvent 通用解密管线还原，局域网嗅探无法截获文件内容。
-        // 群文件暂保持明文（群 TEXT 的 per-member 密文机制文件未复制，如实记录）。
+        // 文件传输加密：整个 FileChunk JSON 加密，接收端经 decryptEvent 通用解密管线还原——
+        // 局域网嗅探无法截获文件内容。
+        // 1:1：用与对方的会话密钥加密；群聊：每成员一份密文副本（对齐群 TEXT 模式，
+        // 接收方解密成功才处理，其余密文副本自然丢弃）。
         val isOneToOne = group == null && serverSession?.groupId != conversationId
-        val filePeerKey = if (isOneToOne) peerKeysM.value[conversationId] else null
-        val fileEncrypted = settings.e2eEnabled && filePeerKey != null
+        // 群成员列表（mesh 群取 memberIds；服务器群同样取本地 GroupInfo）
+        val groupMembers = group?.memberIds?.filter { it != userId } ?: emptyList()
+        val isGroupChat = !isOneToOne
+        val fileEncrypted = settings.e2eEnabled
 
         var failed = false
         for (i in 0 until totalChunks) {
@@ -1243,28 +1248,52 @@ class SynaEngine(
                 kotlin.io.encoding.Base64.Default.encode(chunk),
             )
             val fileChunkJson = synaJson.encodeToString(FileChunk.serializer(), fileChunk)
-            val frame = TransportFrame(
-                type = FrameType.FILE_CHUNK,
-                from = userId,
-                to = conversationId,
-                msgId = fileId,
-                ts = System.currentTimeMillis(),
-                body = if (fileEncrypted) {
-                    SynaCrypto.encrypt(
-                        SynaCrypto.deriveSessionKey(identity.privateBytes, filePeerKey, sessionId(conversationId)),
-                        fileChunkJson,
+            // 构建待发送帧列表：1:1 单帧；群聊每成员一份密文（无密钥成员回退明文）
+            val framesToSend: List<TransportFrame> = if (isGroupChat && groupMembers.isNotEmpty()) {
+                groupMembers.map { memberId ->
+                    val memberKey = peerKeysM.value[memberId]
+                    TransportFrame(
+                        type = FrameType.FILE_CHUNK,
+                        from = userId,
+                        to = conversationId,
+                        msgId = fileId,
+                        ts = System.currentTimeMillis(),
+                        body = if (fileEncrypted && memberKey != null) {
+                            SynaCrypto.encrypt(
+                                SynaCrypto.deriveSessionKey(identity.privateBytes, memberKey, sessionId(memberId)),
+                                fileChunkJson,
+                            )
+                        } else fileChunkJson,
+                        enc = fileEncrypted && memberKey != null,
                     )
-                } else fileChunkJson,
-                enc = fileEncrypted,
-            )
+                }
+            } else {
+                val filePeerKey = if (isOneToOne) peerKeysM.value[conversationId] else null
+                listOf(
+                    TransportFrame(
+                        type = FrameType.FILE_CHUNK,
+                        from = userId,
+                        to = conversationId,
+                        msgId = fileId,
+                        ts = System.currentTimeMillis(),
+                        body = if (fileEncrypted && filePeerKey != null) {
+                            SynaCrypto.encrypt(
+                                SynaCrypto.deriveSessionKey(identity.privateBytes, filePeerKey, sessionId(conversationId)),
+                                fileChunkJson,
+                            )
+                        } else fileChunkJson,
+                        enc = fileEncrypted && filePeerKey != null,
+                    ),
+                )
+            }
             try {
-                sendToConversation(conversationId, frame)
+                framesToSend.forEach { frame -> sendToConversation(conversationId, frame) }
                 chatStore.updateProgress(fileId, ((i + 1) * 100) / totalChunks)
                 // 最后一帧：调度文件级 ACK 重传（P2P 1:1）
-                if (i == totalChunks - 1 && groupsM.value.none { it.id == conversationId } && serverSession?.groupId != conversationId) {
+                if (i == totalChunks - 1 && isOneToOne) {
                     val peer = peersM.value.firstOrNull { it.id == conversationId }
                     if (peer != null) {
-                        scheduleAckRetry(fileId, peer, frame)
+                        scheduleAckRetry(fileId, peer, framesToSend.first())
                     }
                 }
             } catch (e: Exception) {
@@ -1290,8 +1319,9 @@ class SynaEngine(
             serverSession.channel.send(frame)
             return
         }
-        // 服务器群已断线：标记失败（UI 显示红色），不静默丢弃
-        if (groupsM.value.any { it.id == conversationId } && serverSession == null) {
+        // 服务器群已断线：标记失败（UI 显示红色），不静默丢弃。
+        // 仅当该群是服务器群（serverGroupId 判断）——mesh 群不受影响
+        if (serverGroupId == conversationId && serverSession == null) {
             if (frame.msgId.isNotEmpty()) {
                 chatStore.updateStatus(frame.msgId, MessageStatus.FAILED)
             }
@@ -1313,6 +1343,7 @@ class SynaEngine(
         val fc = try {
             synaJson.decodeFromString(FileChunk.serializer(), frame.body ?: return)
         } catch (e: Exception) {
+            synaLog("File") { "chunk decode FAILED: ${e.message} bodyLen=${frame.body?.length} enc=${frame.enc}" }
             return
         }
         // 恶意/损坏元数据防护：尺寸上限、分片索引/总数范围校验（防 OOM/越界）
@@ -1540,6 +1571,11 @@ class SynaEngine(
                 }
             }
         }
+    }
+
+    /** 隐身模式：停止广播自身（设置变更时调用；保持监听与手动刷新） */
+    fun setStealthMode(on: Boolean) {
+        discovery?.setStealth(on)
     }
 
     fun refreshUsername() {

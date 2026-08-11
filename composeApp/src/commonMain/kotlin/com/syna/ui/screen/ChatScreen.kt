@@ -678,17 +678,29 @@ fun ChatScreen(
                             val mName = group.memberNames[memberId] ?: memberId
                             val isAdminMember = group.admins.contains(memberId)
                             val muted = engine.isMuted(peerId, memberId)
+                            // 成员密钥指纹（TOFU 安全号码，供核对防群内冒名）
+                            val memberFp = engine.peerKeys.value[memberId]?.let {
+                                com.syna.shield.KeyPinning.fingerprint(it)
+                            }
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
-                                    text = "$mName${if (memberId == group.creatorId) " 👑" else if (isAdminMember) " ⭐" else ""}${if (muted) " 🔇" else ""}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.weight(1f),
-                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "$mName${if (memberId == group.creatorId) " 👑" else if (isAdminMember) " ⭐" else ""}${if (muted) " 🔇" else ""}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (memberFp != null) {
+                                        Text(
+                                            text = "🔑 $memberFp",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
                                 if (memberId != group.creatorId) {
                                     TextButton(onClick = {
                                         kotlinx.coroutines.GlobalScope.launch { engine.kickFromGroup(peerId, memberId) }

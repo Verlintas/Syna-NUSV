@@ -71,6 +71,8 @@ fun SettingsScreen(
     onBurnAfterReadingChange: (Boolean) -> Unit,
     onE2eEnabledChange: (Boolean) -> Unit,
     onE2eOnlyEnabledChange: (Boolean) -> Unit,
+    stealthMode: Boolean,
+    onStealthModeChange: (Boolean) -> Unit,
     onTempChatEnabledChange: (Boolean) -> Unit,
     onTempChatTtlChange: (Int) -> Unit,
     e2eEnabled: Boolean,
@@ -130,6 +132,21 @@ fun SettingsScreen(
         )
         Spacer(Modifier.height(24.dp))
 
+        // 隐身模式：不广播自身（仍可发现他人）
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onStealthModeChange(!stealthMode) }
+                .padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("隐身模式", style = MaterialTheme.typography.bodyLarge)
+                Text("不广播自己的存在（仍可发现他人、可手动刷新被发现）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Switch(checked = stealthMode, onCheckedChange = onStealthModeChange)
+        }
+        Spacer(Modifier.height(16.dp))
         SectionTitle("外观")
         ThemeMode.entries.forEach { mode ->
             Row(

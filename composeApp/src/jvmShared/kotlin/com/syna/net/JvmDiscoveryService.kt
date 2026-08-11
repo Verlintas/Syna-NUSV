@@ -49,6 +49,10 @@ class JvmDiscoveryService(
 
     private var receiver: MulticastSocket? = null
     private var sender: DatagramSocket? = null
+
+    /** 隐身模式：不发送发现广播（但仍监听入站公告，手动刷新可用） */
+    @Volatile
+    private var stealth = false
     private var jobs = mutableListOf<kotlinx.coroutines.Job>()
 
     override val localAddress: String
@@ -109,11 +113,16 @@ class JvmDiscoveryService(
         }
     }
 
+    override fun setStealth(on: Boolean) {
+        stealth = on
+    }
+
     private suspend fun announceLoop() {
         val payload = announcement.encode()
         val groupAddr = InetAddress.getByName(DISCOVERY_MULTICAST_GROUP)
         while (true) {
             kotlinx.coroutines.delay(intervalMs)
+            if (stealth) continue // 隐身：不广播自身
             try {
                 sender?.let { out ->
                     out.send(DatagramPacket(payload, payload.size, groupAddr, DISCOVERY_PORT))

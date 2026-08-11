@@ -75,6 +75,76 @@ class AckAndGroupAdminTest {
     }
 
     @Test
+    fun groupFileTransferIsEncryptedPerMember() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = makeEngine("Alice", scopeA)
+        val b = makeEngine("Bob", scopeB)
+        try {
+            a.start(); b.start()
+            delay(1_200)
+            val bob = a.peers.first { list -> list.any { p -> p.username == "Bob" && p.online } }
+                .first { it.username == "Bob" }
+            // 密钥就绪
+            a.sendText(bob.id, "handshake")
+            delay(1_500)
+            assertTrue(a.peerKeys.value[bob.id] != null, "A 应有 B 的公钥")
+
+            // Alice 建群 + Bob 加入
+            val groupId = a.createGroup("文件群", listOf(bob.id))
+            delay(1_500)
+            assertTrue(b.groups.value.any { it.id == groupId }, "Bob 应加入群")
+
+            // 发送群文件（每成员密文分发）
+            val payload = ByteArray(300_000) { (it % 251).toByte() }
+            a.sendFile(groupId, "群文件.bin", payload, "application/octet-stream")
+            // 等待传输完成（分块 + 重传）
+            val deadline = System.currentTimeMillis() + 15_000
+            var received = false
+            while (System.currentTimeMillis() < deadline) {
+                val msg = b.chatStore.messages.value[groupId]?.firstOrNull { it.fileName == "群文件.bin" }
+                if (msg != null && msg.localPath != null) {
+                    received = true
+                    break
+                }
+                delay(300)
+            }
+            assertTrue(received, "Bob 应收到群文件")
+            // 字节级一致性
+            val stored = java.io.File(b.chatStore.messages.value[groupId]!!.first { it.fileName == "群文件.bin" }.localPath!!).readBytes()
+            assertEquals(payload.size, stored.size)
+            assertTrue(payload.contentEquals(stored), "群文件内容应一致")
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun stealthModeStopsAnnouncingButStillReceives() = runBlocking {
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = makeEngine("Alice", scopeA)
+        val b = makeEngine("Bob", scopeB)
+        try {
+            // B 先进入隐身模式再启动（settings 驱动，start 时应用）
+            b.settings.stealthMode = true
+            a.start(); b.start()
+            // A 不应发现隐身中的 B（但 B 能发现 A）
+            delay(2_000)
+            assertTrue(b.peers.value.any { it.username == "Alice" }, "隐身者仍应能发现他人")
+            assertTrue(a.peers.value.none { it.username == "Bob" }, "隐身者不应被发现")
+            // 手动刷新可被发现（sendNow 是主动广播）
+            b.setStealthMode(false)
+            delay(2_000)
+            assertTrue(a.peers.value.any { it.username == "Bob" }, "关闭隐身应重新被发现")
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
     fun groupAdminKickMuteAndAdmins() = runBlocking {
         val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)

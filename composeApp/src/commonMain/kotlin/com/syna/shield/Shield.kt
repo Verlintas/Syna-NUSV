@@ -557,6 +557,15 @@ class ShieldController(
     private val threatsM = MutableStateFlow<List<ShieldThreat>>(emptyList())
     val threats: StateFlow<List<ShieldThreat>> = threatsM.asStateFlow()
 
+    // 威胁明细（如具体可疑模块路径）：threat → 描述，锁定页/审计展示
+    private val threatDetailsM = MutableStateFlow<Map<ShieldThreat, String>>(emptyMap())
+    val threatDetails: StateFlow<Map<ShieldThreat, String>> = threatDetailsM.asStateFlow()
+
+    /** 设置威胁明细（检测器上报具体对象：模块路径/进程名等） */
+    fun setThreatDetail(threat: ShieldThreat, detail: String) {
+        threatDetailsM.value = threatDetailsM.value + (threat to detail)
+    }
+
     private val enabledM = MutableStateFlow(enabled)
     val enabled: StateFlow<Boolean> = enabledM.asStateFlow()
 
@@ -780,6 +789,7 @@ class ShieldController(
     fun clearThreat(threat: ShieldThreat) {
         val current = threatsM.value.filterNot { it == threat }
         threatsM.value = current
+        threatDetailsM.value = threatDetailsM.value - threat
         recordEvent(threat, ShieldAction.CLEARED)
         // 威胁全部消除后回到监测中（仍需用户解锁才能使用）；
         // AWAITING_TOTP 中不回退（第二因子验证未完成，防止绕过）

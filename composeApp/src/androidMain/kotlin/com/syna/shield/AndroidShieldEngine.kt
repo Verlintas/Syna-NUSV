@@ -182,7 +182,15 @@ class AndroidShieldEngine private constructor(
         checkWeakLock()
         checkImeChange()
         checkUsbChange()
-        if (hasSuspiciousModules()) onThreat(ShieldThreat.SUSPICIOUS_MODULE)
+        val suspicious = suspiciousModules()
+        if (suspicious.isNotEmpty()) {
+            onThreat(ShieldThreat.SUSPICIOUS_MODULE)
+            // 明细上报：具体模块路径（锁定页/审计可查）
+            ShieldController.current?.setThreatDetail(
+                ShieldThreat.SUSPICIOUS_MODULE,
+                "可疑模块: " + suspicious.joinToString(", ") { it.substringAfterLast('/') },
+            )
+        }
         // VPN 变更由回调单独触发
     }
 
@@ -342,24 +350,21 @@ class AndroidShieldEngine private constructor(
         }
     }
 
-    /** 可疑可执行模块检测：maps 中非白名单目录的可执行文件映射（注入痕迹，advisory） */
-    internal fun hasSuspiciousModules(): Boolean {
+    /**
+     * 可疑可执行模块检测：maps 中不在系统分区的可执行文件映射（注入痕迹，advisory）。
+     * 白名单按"分区前缀"判定（/system /apex /vendor /product /system_ext /odm /
+     * /data/app /data/user 全部放行）——厂商 ROM 自定义库不再误报；
+     * 返回具体可疑路径列表（供锁定页/审计展示）。
+     */
+    internal fun suspiciousModules(): List<String> {
         return try {
             val maps = java.io.File("/proc/self/maps").readText()
-            val allowed = listOf(
-                "/system/", "/apex/", "/vendor/", "/data/app/", "/data/user/",
-                "libsyna_shield", "libc.so", "linker", "libart", "libjavacore",
-                "libopenjdk", "libandroid", "libandroid_runtime", "liblog", "libz",
-                "libutils", "libbase", "libc++", "libm.so", "libdl", "libunwind",
-                "libcompiler", "libdexfile", "libnativeloader", "libclang", "libicu",
-                "libandroidicu", "libbinder", "libcutils", "libhardware", "libmem",
-                "libnativehelper", "libparcel", "libprocessgroup", "libpcre",
-                "libprofile", "libprocinfo", "libprotobuf", "libresource", "librs",
-                "libsigchain", "libstats", "libstdc++", "libsync", "libsysutils",
-                "libtextclassifier", "libunwindstack", "libutil", "libvixl",
-                "libxml2", "libziparchive", "libzlib", "libwebrtc", "libyuv",
+            // 系统/应用分区前缀全部放行（覆盖厂商 ROM 的自定义库位置）
+            val trustedPrefixes = listOf(
+                "/system/", "/apex/", "/vendor/", "/product/", "/system_ext/", "/odm/",
+                "/data/app/", "/data/user/", "/data/apex/",
             )
-            var suspicious = false
+            val found = LinkedHashSet<String>()
             val lines = maps.split("\n")
             for (line in lines) {
                 if (line.isBlank()) continue
@@ -369,13 +374,19 @@ class AndroidShieldEngine private constructor(
                 val path = parts[5]
                 if (!perms.contains("x")) continue
                 if (!path.startsWith("/")) continue
-                if (allowed.any { path.contains(it) }) continue
-                suspicious = true
-                break
+                if (trustedPrefixes.any { path.startsWith(it) }) continue
+                // 自身与运行时核心库（linker/libc/ART 等可能以非分区路径出现）
+                if (path.contains("libsyna_shield") || path.contains("linker") ||
+                    path.contains("libc.so") || path.contains("libart") ||
+                    path.contains("libjavacore") || path.contains("libopenjdk") ||
+                    path.contains("libandroid_runtime") || path.contains("libnativeloader")
+                ) continue
+                found.add(path)
+                if (found.size >= 5) break // 最多报告 5 个，防刷屏
             }
-            suspicious
+            found.toList()
         } catch (e: Exception) {
-            false
+            emptyList()
         }
     }
 

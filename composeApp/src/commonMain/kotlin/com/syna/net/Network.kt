@@ -34,6 +34,9 @@ interface DiscoveryService {
     fun start()
     fun sendNow()
     fun stop()
+
+    /** 隐身模式：停止广播自身存在（仍保持监听与手动刷新能力） */
+    fun setStealth(on: Boolean)
 }
 
 interface ConnectionManager {

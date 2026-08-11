@@ -136,6 +136,8 @@ fun App() {
     }
     LaunchedEffect(Unit) {
         engine.start()
+        // 隐身模式：启动即应用（不广播自身）
+        engine.setStealthMode(settings.stealthMode)
     }
     // 页面销毁（如 Android 旋转）时彻底释放引擎与护盾控制器，
     // 避免重复实例抢占端口/泄漏看门狗线程
@@ -160,6 +162,7 @@ fun App() {
     }
     var e2eEnabled by remember { mutableStateOf(settings.e2eEnabled) }
     var e2eOnlyEnabled by remember { mutableStateOf(settings.e2eOnlyEnabled) }
+    var stealthMode by remember { mutableStateOf(settings.stealthMode) }
     var burnAfterReading by remember { mutableStateOf(settings.burnAfterReadingEnabled) }
     var tempChatEnabled by remember { mutableStateOf(settings.tempChatEnabled) }
     var tempChatTtlHours by remember { mutableStateOf(settings.tempChatTtlHours) }
@@ -219,6 +222,12 @@ fun App() {
             onE2eOnlyEnabledChange = {
                 e2eOnlyEnabled = it
                 settings.e2eOnlyEnabled = it
+            },
+            stealthMode = stealthMode,
+            onStealthModeChange = {
+                stealthMode = it
+                settings.stealthMode = it
+                engine.setStealthMode(it)
             },
             onTempChatEnabledChange = {
                 tempChatEnabled = it
