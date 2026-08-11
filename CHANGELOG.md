@@ -9,6 +9,29 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [0.9.2] — 2026-08-10 — Group-file encryption, stealth mode, module details
+
+### Added
+- **Group file transfer E2E-encrypted per member** (one ciphertext copy per member,
+  mesh + server groups; receivers only process decryptable copies) — last plaintext
+  transfer path closed
+- **Stealth mode** (Settings): stop broadcasting presence (still discover others,
+  manual refresh still finds you)
+- **Group member key fingerprints** shown in the administration dialog
+- Suspicious-module detection now reports the **actual module paths** on the lock
+  screen and in the audit log
+
+### Fixed
+- Suspicious-module whitelist switched to **partition prefixes** (`/system` `/apex`
+  `/vendor` `/product` `/system_ext` `/odm` `/data/app` `/data/user`) — vendor ROM
+  libraries no longer false-trigger "可疑可执行模块" on first enable
+- **Mesh-group file sends silently failed** (misdetected as server-group disconnect) —
+  real fix + regression test
+
+### Tests
+- 81 (new: partition whitelist, anonymous-module detection, encrypted group-file
+  round-trip, stealth announce/stop)
+
 ## [0.9.1] — 2026-08-10 — Stabilization (full audit pass)
 
 ### Fixes (full code audit — see SECURITY_AUDIT_REPORT.md)

@@ -129,7 +129,7 @@ happens.
 | `remoteControlProcesses` | `ps -e -o comm=` (or `tasklist` on Windows) scanned for teamviewer / anydesk / obs / vnc / scrcpy / rustdesk / todesk / sunloginclient / 向日葵 | Desktop |
 | `checkImeChange` | `Settings.Secure.DEFAULT_INPUT_METHOD` changes (keylogging-IME swap) | Android, LOW advisory |
 | `checkUsbChange` | `UsbManager.deviceList` attach/detach (debug/data-extraction window) | Android, LOW advisory |
-| `hasSuspiciousModules` | executable mappings outside the system/app whitelist in `/proc/self/maps` (injection footprint) | Android, LOW advisory |
+| `suspiciousModules` | executable mappings outside the trusted **partition prefixes** (`/system` `/apex` `/vendor` `/product` `/system_ext` `/odm` `/data/app` `/data/user`) in `/proc/self/maps` (injection footprint); **reports actual module paths** on the lock screen/audit (v0.9.2) | Android, LOW advisory |
 
 ### 3.2 Runtime process inspection
 
@@ -607,6 +607,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.8.2 | **Message ACK/retransmission** (P2P reliability root fix), **group administration** (kick/mute/admins, receiver-side permission checks), **no-export policy** (`allowBackup=false`; no backup/export features by design) |
 | v0.9.0 | **Encrypted file transfer** (1:1 FILE_CHUNK payloads E2E-encrypted; group files documented), **voice messages** (long-press record, encrypted channel, AMR/WAV), **burn-send biometric re-auth**, **clipboard 30 s TTL**, server slow-client isolation & burn-history TTL |
 | v0.9.1 | **Full audit stabilization**: 2FA lockout eliminated (metadata moved to master key), honeypot decoy no longer overwrites history, burn-TTL dead code fixed, server-history replay unblocked, mesh group files fixed, ACK infinite-retransmission fixed, UDP key-port & chunk-size fixes, no-biometrics tap-counting fixed, server ownership checks — 60 issues fixed, `SECURITY_AUDIT_REPORT.md` published |
+| v0.9.2 | **Group-file per-member encryption** (last plaintext path closed), **stealth mode**, **suspicious-module partition whitelist + concrete module reporting**, group member fingerprints |
 
 ---
 
