@@ -613,12 +613,13 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.9.6 | **Self-protection hardening**: native heartbeat slot (JVM-hook immune, dual-gate decrypt check), scanner exception self-healing, audit-write-failure detection (SHIELD_TAMPERED), reinstall guard (identity change prompts Shield re-enable) |
 | v0.9.7 | **3rd full review**: shield-off lockout fixed, audit recursion fixed, TCP-heartbeat new-connection kill fixed, locked-state disk-wipe prevented, group-file O(N²)/REQ_KEY storm fixed, resend dead-code fixed, dex hashing finally removed from light scan, server membership/BURN_ACK auth |
 | v0.9.8 | **ART JIT `memfd:jit-*` whitelist** (no lock-on-enable), name-independent non-JIT memfd injection detection, **BIOMETRIC_STRONG-only unlock**, **signature-learning monitoring blacklist** (renames no longer bypass) |
+| v0.9.9 | **Process-epoch forward secrecy**: every start derives a fresh random epoch; session keys use `base\|min(epoch)\|max(epoch)` — a stolen session key from this run cannot decrypt the previous run; **double-try decrypt** (new formula → legacy fallback) keeps both sides symmetric regardless of key-exchange ordering; **encrypt-only now default** (no plaintext fallback, keys-missing messages queue + auto-send on pin); **no plaintext group fallback** (LAN mesh + server groups queue instead); **late-key frames** (UDP reordering) held in a bounded pending queue and decrypted on pin — never stored as raw ciphertext |
 
 ---
 
 ## 15. Verification & testing
 
-84 automated desktop tests, including:
+86 automated desktop tests, including:
 
 - gate fail-closed behavior (stall → decrypt refused; lock → refused; unlock → restored)
 - watchdog trip → forced CRITICAL lock

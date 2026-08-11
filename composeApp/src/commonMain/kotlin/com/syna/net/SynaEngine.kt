@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.9.8",
+    private val version: String = "0.9.9",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -254,13 +254,23 @@ class SynaEngine(
             com.syna.shield.KeyPinning.PinResult.PINNED_MATCH,
             -> {
                 peerKeysM.updateMap { it + (peerId to key) }
+                // 密钥就绪：补解密此前因缺公钥暂存（未入库）的密文帧
+                val pending = pendingIncomingM.value[peerId]
+                if (pending != null && pending.isNotEmpty()) {
+                    pendingIncomingM.updateMap { it - peerId }
+                    scope.launch { flushPendingIncoming(peerId, pending) }
+                }
                 // 仅加密模式排队消息：密钥就绪后自动补发（不丢消息）
                 val queued = pendingE2eQueueM.value.filter { it.peerId == peerId }
                 if (queued.isNotEmpty()) {
                     pendingE2eQueueM.updateList { list -> list.filterNot { it.peerId == peerId } }
                     scope.launch {
                         queued.forEach { p ->
-                            sendText(p.peerId, p.text, burn = p.burn, replyTo = p.replyTo, mentions = p.mentions)
+                            if (p.isGroup) {
+                                sendGroupText(p.peerId, p.text, burn = p.burn, replyTo = p.replyTo, mentions = p.mentions)
+                            } else {
+                                sendText(p.peerId, p.text, burn = p.burn, replyTo = p.replyTo, mentions = p.mentions)
+                            }
                         }
                     }
                 }
@@ -269,6 +279,37 @@ class SynaEngine(
                 // 公钥变更：不覆盖旧密钥（攻击者无法毒化），锁定并提示
                 synaLog("Crypto") { "密钥变更被拒: $peerId (potential MITM)" }
                 com.syna.shield.ShieldController.current?.reportThreat(com.syna.shield.ShieldThreat.KEY_CHANGED)
+            }
+        }
+    }
+
+    private suspend fun flushPendingIncoming(peerId: String, frames: List<TransportFrame>) {
+        for (frame in frames) {
+            if (frame.msgId.isNotEmpty() && chatStore.messageById(frame.msgId) != null) continue
+            val key = peerKeysM.value[frame.from] ?: continue
+            var plain: String? = null
+            if (frame.epoch != 0) {
+                plain = try {
+                    SynaCrypto.decrypt(
+                        SynaCrypto.deriveSessionKey(identity.privateBytes, key, sessionId(frame.from, frame.epoch)),
+                        frame.body ?: "",
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (plain == null) {
+                plain = try {
+                    SynaCrypto.decrypt(
+                        SynaCrypto.deriveSessionKey(identity.privateBytes, key, sessionId(frame.from, 0)),
+                        frame.body ?: "",
+                    )
+                } catch (e: Exception) {
+                    null
+                }
+            }
+            if (plain != null) {
+                incomingM.emit(IncomingEvent.PeerFrame(frame.from, frame.copy(body = plain)))
             }
         }
     }
@@ -326,9 +367,34 @@ class SynaEngine(
             val peerKey = peerKeysM.value[frame.from]
             if (peerKey != null) {
                 try {
-                    val session = SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(frame.from, frame.epoch))
-                    val plain = SynaCrypto.decrypt(session, frame.body ?: "")
-                    return event.copyWith(frame.copy(body = plain))
+                    // 前向保密（v0.9.9）：双试解密——先试进程纪元公式（新），失败回退
+                    // 固定公式（旧）。保证任何协商时序下收发两侧公式对称
+                    // （发送方可能在 epoch 协商完成前加密 → 旧公式；接收方先新后旧）。
+                    var plain: String? = null
+                    if (frame.epoch != 0) {
+                        val sessionNew = SynaCrypto.deriveSessionKey(
+                            identity.privateBytes, peerKey,
+                            sessionId(frame.from, frame.epoch),
+                        )
+                        plain = try {
+                            SynaCrypto.decrypt(sessionNew, frame.body ?: "")
+                        } catch (e: Exception) {
+                            null
+                        }
+                    }
+                    if (plain == null) {
+                        val sessionOld = SynaCrypto.deriveSessionKey(
+                            identity.privateBytes, peerKey,
+                            sessionId(frame.from, 0),
+                        )
+                        plain = try {
+                            SynaCrypto.decrypt(sessionOld, frame.body ?: "")
+                        } catch (e: Exception) {
+                            synaLog("Crypto") { "decrypt FAILED from=${frame.from.take(6)} epoch=${frame.epoch}" }
+                            null
+                        }
+                    }
+                    if (plain != null) return event.copyWith(frame.copy(body = plain))
                 } catch (e: Exception) {
                     // E2E 失败：若是群帧（含服务器群广播的多密文副本），
                     // 密文可能属于其他成员——静默丢弃，不触发 REQ_KEY 风暴
@@ -358,8 +424,14 @@ class SynaEngine(
                 sendKeyRequest(frame.from)
                 return null
             }
-            // 没有对方的公钥（UDP 下 KEY 帧可能丢失）：请求重发
+            // 没有对方的公钥（UDP 乱序/丢包，KEY 帧晚于消息到达）：
+            // 请求重发并把密文暂存（不落地）——密钥就绪后（pinPeerKey）补解密
             sendKeyRequest(frame.from)
+            val existing = pendingIncomingM.value[frame.from] ?: emptyList()
+            if (existing.size < MAX_PENDING_INCOMING_PER_PEER) {
+                pendingIncomingM.updateMap { it + (frame.from to (existing + frame)) }
+            }
+            return null
         }
         return event
     }
@@ -929,6 +1001,7 @@ class SynaEngine(
                         from = userId,
                         to = groupId,
                         msgId = msgId,
+                        epoch = processEpoch,
                         ts = System.currentTimeMillis(),
                         body = cipher,
                         enc = true,
@@ -938,9 +1011,10 @@ class SynaEngine(
                     )
                 }
             } else {
-                // v0.9.9：不再明文回退（仅加密语义）——无密钥成员等待密钥就绪
+                // v0.9.9：不再明文回退（仅加密语义）——密钥未就绪时排队等待补发
                 synaLog("Crypto") { "group $groupId: no member keys, message queued (encrypt-only)" }
                 frames = emptyList()
+                pendingE2eQueueM.updateList { it + PendingE2eSend(groupId, text, burn, replyTo, mentions, isGroup = true) }
                 // 为缺密钥成员触发密钥交换
                 group.memberIds.filter { it != userId && peerKeysM.value[it] == null }.forEach { memberId ->
                     peersM.value.firstOrNull { it.id == memberId }?.let { p ->
@@ -991,6 +1065,7 @@ class SynaEngine(
                 from = userId,
                 to = groupId,
                 msgId = msgId,
+                epoch = processEpoch,
                 ts = System.currentTimeMillis(),
                 body = if (encrypted) {
                     SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(memberId, peerEpochsM.value[memberId] ?: 0)), text)
@@ -1292,6 +1367,7 @@ class SynaEngine(
                         from = userId,
                         to = conversationId,
                         msgId = fileId,
+                        epoch = processEpoch,
                         ts = System.currentTimeMillis(),
                         body = if (fileEncrypted && memberKey != null) {
                             SynaCrypto.encrypt(
@@ -1310,6 +1386,7 @@ class SynaEngine(
                         from = userId,
                         to = conversationId,
                         msgId = fileId,
+                        epoch = processEpoch,
                         ts = System.currentTimeMillis(),
                         body = if (fileEncrypted && filePeerKey != null) {
                             SynaCrypto.encrypt(
@@ -1689,7 +1766,7 @@ class SynaEngine(
             if (peerKey == null) {
                 notifyMessage("Syna", "对方加密密钥未就绪，消息已排队等待密钥交换后发送")
                 // 密钥就绪后自动补发：注册一次待发（由 pinPeerKey 触发）
-                pendingE2eQueueM.updateList { it + PendingE2eSend(peerId, text, burn, replyTo, mentions) }
+                pendingE2eQueueM.updateList { it + PendingE2eSend(peerId, text, burn, replyTo, mentions, isGroup = false) }
                 return ""
             }
         }
@@ -1700,6 +1777,7 @@ class SynaEngine(
             from = userId,
             to = peerId,
             msgId = msgId,
+            epoch = processEpoch,
             ts = System.currentTimeMillis(),
             body = if (encrypted) {
                 SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(peerId, peerEpochsM.value[peerId] ?: 0)), text)
@@ -1766,6 +1844,7 @@ class SynaEngine(
             from = userId,
             to = peerId,
             msgId = newMsgId(),
+            epoch = processEpoch,
             ts = now,
             body = publicKeyB64,
         )
@@ -1916,9 +1995,13 @@ class SynaEngine(
         val burn: Boolean,
         val replyTo: String?,
         val mentions: List<String>,
+        val isGroup: Boolean = false,
     )
 
     private val pendingE2eQueueM = kotlinx.coroutines.flow.MutableStateFlow<List<PendingE2eSend>>(emptyList())
+    // 缺公钥暂存帧（未入库）：密钥就绪后补解密，上限防失控（每 peer 20 帧）
+    private val pendingIncomingM = kotlinx.coroutines.flow.MutableStateFlow<Map<String, List<TransportFrame>>>(emptyMap())
+    private val MAX_PENDING_INCOMING_PER_PEER = 20
 
     private fun sessionId(peerId: String, peerEpoch: Int): String {
         val base = listOf(userId, peerId).sorted().joinToString("|")

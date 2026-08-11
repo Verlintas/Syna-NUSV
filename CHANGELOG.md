@@ -9,6 +9,38 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [0.9.9] — 2026-08-11 — RC: forward secrecy, encrypt-only default, storm-tested, UX polish
+
+### Security
+- **Forward secrecy (process epoch)**: each process start derives a fresh random epoch; session keys are
+  derived with `base|min(epoch)|max(epoch)` — restarting the app rotates all session keys, so a stolen
+  session key cannot decrypt traffic from a previous run; epoch is carried in every encrypted frame
+- **Double-try decrypt** (new epoch formula → legacy fixed formula fallback): both sides stay symmetric
+  regardless of key-exchange ordering (works with older peers that don't carry epochs)
+- **Encrypt-only is now the default** (`e2eOnlyEnabled = true`): if the peer key isn't ready yet, messages
+  queue instead of falling back to plaintext; queued messages auto-send when the key arrives
+- **No more plaintext fallback in group chats** (LAN mesh + server groups): missing member keys → queue +
+  key exchange request; member copies are skipped instead of sent in the clear
+- **Undecryptable frames are never stored as raw ciphertext**: if the key frame arrives late (UDP
+  reordering), the ciphertext is held in a bounded pending queue and decrypted the moment the key is pinned
+
+### Stability
+- **Outbox cap** (500 frames per peer, drops oldest) — no unbounded memory growth for permanently-offline peers
+- **6-engine message storm stress test** (86 automated desktop tests total, incl. the storm)
+
+### UX
+- **Enter to send** in the chat input box (IME action `Send`); Shift+Enter for newline
+- **First-launch Shield wizard**: 4-step onboarding (biometrics / TOTP / usage / boundaries), skippable
+- **Message font size setting** (small / medium / large) applied to chat bubbles
+
+### Tooling
+- **Update checker**: silent GitHub Releases check 10 s after launch; only network egress in the app
+  (the codebase was audited — no backdoors, no hidden endpoints)
+- **FAQ_ZH.md**; CI gains a `dependency-audit` job (osv-scanner, non-blocking)
+
+### Tests
+- 86
+
 ## [0.9.8] — 2026-08-10 — JIT false-positive fix, strong-only unlock, signature-learning detection
 
 ### Fixed

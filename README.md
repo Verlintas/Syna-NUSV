@@ -33,8 +33,8 @@
 - ✅ **Chat history persistence**: LAN chats survive restarts — encrypted at rest (AES-GCM, Keystore/0600 key); full state restored (recalls, files, quotes, mentions)
 - ✅ **Clear local history**: Settings → Storage shows usage and wipes chats & received files
 - ✅ **Message forwarding**: long-press → forward to any conversation/group
-- ✅ **Chat polish**: date dividers (今天/昨天/date), unread badge on the Chats tab
-- ✅ **Desktop tray resident**: close-to-tray keeps receiving messages in the background
+- ✅ **Chat polish**: date dividers (今天/昨天/date), unread badge on the Chats tab, **Enter to send** (Shift+Enter for newline), **adjustable message font size** (small/medium/large), **first-launch Shield onboarding wizard** (4 steps, skippable)
+- ✅ **Desktop tray resident**: close-to-tray keeps receiving messages in the background; **silent update check** via GitHub Releases 10 s after launch
 - ✅ **System notifications**: Android notification bar / desktop tray popup for new messages
 - ✅ **Connection mode switching**: Auto / TCP (reliable) / UDP (fast) / Host Hotspot
 - ✅ **P2P mesh group chat**: create → invite → mesh membership sync (JOIN/LEAVE), **group owner can dissolve the group**, members can leave; **group administration** — kick / mute (1 h, toggleable) / set-admin by creator or admins (permission-checked)
@@ -42,7 +42,7 @@
 - ✅ **Message delivery ACK**: P2P 1:1 messages are ACKed and retransmitted (3 s ×3) before falling back to the offline queue
 - ✅ **Message copy with 30 s clipboard auto-clear**; burn-after-reading sends require biometric confirmation
 - ✅ **Enhanced protection**:
-  - **End-to-end encryption**: X25519 key exchange + HKDF-SHA256 + AES-256-GCM; private keys stay on your device only; **key fingerprinting + TOFU pinning** (P2P MITM defense, key changes rejected) · **encrypt-only mode** (no silent plaintext fallback) · replay defense
+  - **End-to-end encryption**: X25519 key exchange + HKDF-SHA256 + AES-256-GCM; private keys stay on your device only; **key fingerprinting + TOFU pinning** (P2P MITM defense, key changes rejected) · **process-epoch forward secrecy** (fresh random epoch per start; session keys rotate, old runs stay sealed) · **encrypt-only by default** (no plaintext fallback; keys-missing messages queue and auto-send on key exchange; late-key frames are decrypted on pin, never stored as raw ciphertext) · replay defense
   - **Burn after reading**: message shows for 8 seconds, then is destroyed on both sides with BURN_ACK confirmation + 60s fallback
   - **Temporary chat**: conversations auto-purge after a TTL (1h / 24h / 7d) on both devices
 - ✅ **Dark / light / system theme**
@@ -154,7 +154,7 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 # Android release APK (requires signing config in local.properties)
 ./gradlew :composeApp:assembleRelease
 
-# Tests (84: crypto / protocol / loopback chat / group mesh / burn-after-reading / temp chat / offline outbox / server join+chat+history+burn / ACK retransmission / group admin / file transfer / shield gate·watchdog·honeypot·brute-force·TOTP·TOFU·module whitelist·memfd)
+# Tests (86: crypto / protocol / loopback chat / group mesh / burn-after-reading / temp chat / offline outbox / server join+chat+history+burn / ACK retransmission / group admin / file transfer / process-epoch forward secrecy / 6-engine message storm / shield gate·watchdog·honeypot·brute-force·TOTP·TOFU·module whitelist·memfd)
 ./gradlew :composeApp:desktopTest
 ```
 
