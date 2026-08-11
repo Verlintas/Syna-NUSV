@@ -307,7 +307,7 @@ See [3.6](#36-screen-attack-surface). Additional behavior:
 | CRITICAL | ROOT_DETECTED, CREDENTIAL_CHANGED, DEVICE_ADMIN_CHANGE, SHIELD_TAMPERED, FRIDA_DETECTED, WATCHDOG_TRIP, BRUTE_FORCE, DOWNGRADE_ATTEMPT | Lock + **self-destruct** (if enabled) + re-lock 30 s after any unlock while the threat persists |
 | HIGH | EMULATOR_DETECTED, DEBUG_MODE, MONITORING_APP, ACCESSIBILITY_ABUSE, BACKGROUND_SWITCH, SCREEN_RECORDING, SCREEN_SHARE_SUSPECT, KEY_CHANGED | Lock + audit |
 | MEDIUM | VPN_CHANGE, NETWORK_MITM (CA / ARP) | Lock + audit |
-| LOW | INACTIVE, CLOCK_CHANGED, WEAK_LOCK, NETWORK_CHANGED, SELINUX_DISABLED, IME_CHANGED, USB_CHANGED, SUSPICIOUS_MODULE | **Audit only** — no forced lock (no false locks) |
+| LOW | INACTIVE, CLOCK_CHANGED, WEAK_LOCK, NETWORK_CHANGED, SELINUX_DISABLED, IME_CHANGED, USB_CHANGED, SUSPICIOUS_MODULE, PROXY_SET | **Audit only** — no forced lock (no false locks) |
 
 - **Deduplication:** a threat already present is not re-reported per scan (audit stays
   clean); `clearThreat` removes it when the signal clears.
@@ -608,6 +608,7 @@ clipboard and notifications are cleared/hidden while locked.
 | v0.9.0 | **Encrypted file transfer** (1:1 FILE_CHUNK payloads E2E-encrypted; group files documented), **voice messages** (long-press record, encrypted channel, AMR/WAV), **burn-send biometric re-auth**, **clipboard 30 s TTL**, server slow-client isolation & burn-history TTL |
 | v0.9.1 | **Full audit stabilization**: 2FA lockout eliminated (metadata moved to master key), honeypot decoy no longer overwrites history, burn-TTL dead code fixed, server-history replay unblocked, mesh group files fixed, ACK infinite-retransmission fixed, UDP key-port & chunk-size fixes, no-biometrics tap-counting fixed, server ownership checks — 60 issues fixed, `SECURITY_AUDIT_REPORT.md` published |
 | v0.9.2 | **Group-file per-member encryption** (last plaintext path closed), **stealth mode**, **suspicious-module partition whitelist + concrete module reporting**, group member fingerprints |
+| v0.9.3 | **Lock-bypass fix** (threat-cleared-while-locked no longer unlocks), 2FA enable robustness, no-biometrics device notice, **system HTTP proxy detection** (PROXY_SET, LOW advisory) |
 
 ---
 

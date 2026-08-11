@@ -9,6 +9,24 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [0.9.3] — 2026-08-10 — Lock-bypass fix, 2FA enable fix, no-emoji UI, proxy detection
+
+### Security fixes
+- **Lock bypass closed**: clearing a threat while LOCKED no longer auto-returns to
+  ARMED (previously the app silently unlocked without biometrics when the locking
+  threat disappeared); locked state persists until real verification
+- 2FA enable: stale/corrupt seed files cleared before re-enable; failure now shows a
+  notice instead of a dead switch
+- No-biometrics devices: unlock taps show a clear notice, never count toward
+  self-destruct
+
+### Changed
+- All emoji removed from the UI (text replacements: 焚/图片/文件/锁/群主/管理员/禁言/播放/录音)
+- Detection: system HTTP proxy (PROXY_SET, LOW advisory) with proxy address detail
+
+### Tests
+- 82
+
 ## [0.9.2] — 2026-08-10 — Group-file encryption, stealth mode, module details
 
 ### Added
