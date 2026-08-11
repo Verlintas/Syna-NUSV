@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.9.3",
+    private val version: String = "0.9.4",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -136,6 +136,7 @@ class SynaEngine(
         val fileSize: Long,
         val mimeType: String,
         val totalChunks: Int,
+        val durationMs: Long = 0L,
     ) {
         val chunks = arrayOfNulls<ByteArray>(totalChunks)
         var received = 0
@@ -1189,7 +1190,13 @@ class SynaEngine(
     }
 
     /** 发送文件/图片：64KB 分块，支持 1:1 / 局域网群 / 服务器群；单文件上限 200MB 防内存溢出 */
-    suspend fun sendFile(conversationId: String, fileName: String, bytes: ByteArray, mimeType: String = "application/octet-stream") {
+    suspend fun sendFile(
+        conversationId: String,
+        fileName: String,
+        bytes: ByteArray,
+        mimeType: String = "application/octet-stream",
+        durationMs: Long = 0L,
+    ) {
         if (bytes.size > MAX_FILE_SIZE_BYTES) {
             synaLog("File") { "拒绝发送超大文件 ${fileName} (${bytes.size}B > 200MB)" }
             return
@@ -1246,6 +1253,7 @@ class SynaEngine(
                 index = i,
                 dataB64 = @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
                 kotlin.io.encoding.Base64.Default.encode(chunk),
+                durationMs = durationMs,
             )
             val fileChunkJson = synaJson.encodeToString(FileChunk.serializer(), fileChunk)
             // 构建待发送帧列表：1:1 单帧；群聊每成员一份密文（无密钥成员回退明文）
@@ -1352,7 +1360,7 @@ class SynaEngine(
         if (fc.index < 0 || fc.index >= fc.totalChunks) return
         val conversationId = if (groupsM.value.any { it.id == frame.to }) frame.to else frame.from
         val assembler = fileAssemblers.getOrPut(fc.fileId) {
-            FileAssembler(fc.fileName, fc.fileSize, fc.mimeType, fc.totalChunks)
+            FileAssembler(fc.fileName, fc.fileSize, fc.mimeType, fc.totalChunks, fc.durationMs)
         }
         if (assembler.chunks[fc.index] == null) {
             val chunkBytes = try {

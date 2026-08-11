@@ -113,6 +113,8 @@ data class FileChunk(
     val totalChunks: Int,
     val index: Int,
     val dataB64: String,
+    /** 语音时长（毫秒；非语音文件为 0） */
+    val durationMs: Long = 0L,
 )
 
 @Serializable

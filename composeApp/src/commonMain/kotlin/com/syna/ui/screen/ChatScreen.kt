@@ -46,6 +46,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -513,11 +518,13 @@ fun ChatScreen(
                                 scope.launch {
                                     val file = java.io.File(f)
                                     val isWav = f.endsWith(".wav")
+                                    val seconds = (voiceDuration / 1000L).coerceIn(0L, 99L)
                                     engine.sendFile(
                                         peerId,
-                                        if (isWav) "语音消息.wav" else "语音消息.amr",
+                                        if (isWav) "语音消息-${seconds}s.wav" else "语音消息-${seconds}s.amr",
                                         file.readBytes(),
                                         if (isWav) "audio/wav" else "audio/amr",
+                                        durationMs = voiceDuration,
                                     )
                                     file.delete()
                                 }
@@ -592,7 +599,12 @@ fun ChatScreen(
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary),
             ) {
-                Text("发送", color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.padding(start = 2.dp))
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "发送",
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.padding(start = 2.dp),
+                )
             }
         }
 
@@ -890,7 +902,12 @@ private fun MessageBubble(
                             Spacer(Modifier.size(4.dp))
                         }
                         if (message.encrypted) {
-                            Text("[锁]", style = MaterialTheme.typography.bodyMedium)
+                            Icon(
+                                Icons.Filled.Lock,
+                                contentDescription = "已加密",
+                                tint = textColor,
+                                modifier = Modifier.size(12.dp),
+                            )
                             Spacer(Modifier.size(4.dp))
                         }
                         when (message.kind) {
@@ -932,7 +949,7 @@ private fun MessageBubble(
                                     message.localPath?.endsWith(".amr") == true ||
                                     message.localPath?.endsWith(".wav") == true
                                 if (isVoice && message.localPath != null) {
-                                    // 语音气泡：播放按钮 + 时长
+                                    // 语音气泡：播放按钮 + 时长（时长编码在文件名：语音消息-12s）
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
@@ -941,10 +958,18 @@ private fun MessageBubble(
                                             }
                                             .padding(vertical = 2.dp),
                                     ) {
-                                        Text("[播放]", style = MaterialTheme.typography.titleMedium, color = textColor)
+                                        Icon(
+                                            Icons.Filled.PlayArrow,
+                                            contentDescription = "播放",
+                                            tint = textColor,
+                                            modifier = Modifier.size(18.dp),
+                                        )
                                         Spacer(Modifier.width(6.dp))
+                                        val durationLabel = message.fileName
+                                            ?.let { Regex("-(\\d+)s\\.").find(it)?.groupValues?.get(1) }
+                                            ?.let { "${it}秒" }
                                         Text(
-                                            "语音 ${message.fileSize?.let { "${it / 1024}KB" } ?: ""}",
+                                            durationLabel ?: "语音 ${message.fileSize?.let { "${it / 1024}KB" } ?: ""}",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = textColor,
                                         )
