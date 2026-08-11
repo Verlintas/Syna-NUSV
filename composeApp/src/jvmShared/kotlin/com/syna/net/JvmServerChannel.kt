@@ -152,6 +152,11 @@ class TcpServerChannel internal constructor(
 
     private suspend fun readLoop() {
         try {
+            // 客户端读超时：服务器死亡（半开连接）时不再永久阻塞——3 倍保活周期判死
+            try {
+                socket.soTimeout = (SRV_KEEPALIVE_MS * 3).toInt()
+            } catch (e: Exception) {
+            }
             while (open) {
                 val frame = receiveOnce()
                 incomingM.emit(frame)

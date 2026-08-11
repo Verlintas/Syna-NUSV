@@ -345,6 +345,9 @@ object ShieldGate {
         if (armed) beat()
     }
 
+    /** 门禁是否启用（Shield 运行中） */
+    fun isArmed(): Boolean = armed
+
     /** 门禁是否放行解密（fail-closed：任何异常均拒绝） */
     fun isFresh(): Boolean {
         if (!armed) return true
@@ -597,6 +600,7 @@ class ShieldController(
 
     // 审计写入失败计数（自保：存储异常阻止审计 → 篡改信号）
     private var auditWriteFails = 0
+    private var auditTamperReported = false
 
     // 生物识别失败计数（暴力防护；持久化防重启清零）
     private val biometricFailsM = MutableStateFlow(loadBiometricFails())
@@ -856,6 +860,10 @@ class ShieldController(
                     cooldownMs = 0L
                     // 先恢复门禁（gate 放行），再捕获会话密钥并轮换（前向安全）：
                     // 顺序保证迁移前能解密旧数据（解锁时序修复）
+                    // 解锁成功：清除事件型威胁 BRUTE_FORCE（防永久 30s 再锁循环）
+                    if (threatsM.value.contains(ShieldThreat.BRUTE_FORCE)) {
+                        clearThreat(ShieldThreat.BRUTE_FORCE)
+                    }
                     setState(ShieldState.UNLOCKED)
                     SessionKeyStore.captureAuth()
                     recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
@@ -919,6 +927,9 @@ class ShieldController(
             // 解锁成功：门禁恢复后捕获会话密钥并轮换（前向安全）
             honeypotM.value = false
             honeypotStreak = 0
+            if (threatsM.value.contains(ShieldThreat.BRUTE_FORCE)) {
+                clearThreat(ShieldThreat.BRUTE_FORCE)
+            }
             setState(ShieldState.UNLOCKED)
             SessionKeyStore.captureAuth()
             recordEvent(ShieldThreat.INACTIVE, ShieldAction.UNLOCKED)
@@ -1175,24 +1186,40 @@ class ShieldController(
                 // 审计内容加密存储（密钥同聊天记录密钥），哈希链基于密文
                 val content = ShieldStorageKey.encryptWithMaster(plain.toByteArray())
                     ?.let { java.util.Base64.getEncoder().encodeToString(it) }
-                    ?: plain
+                    ?: throw java.io.IOException("audit encrypt failed")
                 val hash = sha256("$prevHash|$content")
                 file.appendText("$content|$prevHash|$hash\n")
-                // 事件文件封顶：超过上限保留最近 N 条（截断哈希链起点）
+                // 事件文件封顶：超过上限保留最近 N 条。
+                // 截断后新首行的 prevHash 指向已删除行 → 链断 → 重写首行以 GENESIS 为起点
                 if (file.length() > MAX_PERSISTED_EVENTS * 220L) {
                     val keep = file.readLines().takeLast(MAX_PERSISTED_EVENTS)
+                    val reSealed = keep.mapIndexed { i, line ->
+                        if (i == 0) {
+                            val content = line.substringBeforeLast('|').substringBeforeLast('|')
+                            val newHash = sha256("$GENESIS_HASH|$content")
+                            "$content|$GENESIS_HASH|$newHash"
+                        } else line
+                    }
                     java.io.FileOutputStream(file).use { out ->
-                        keep.forEach { out.write((it + "\n").toByteArray()) }
+                        reSealed.forEach { out.write((it + "\n").toByteArray()) }
                     }
                 }
                 auditWriteFails = 0
+                auditTamperReported = false
             } catch (e: Exception) {
-                // 自保：审计写入持续失败（存储只读/被填满阻止记录）→ 篡改信号
+                // 自保：审计写入持续失败（存储只读/被填满阻止记录）→ 篡改信号。
+                // 脱离同步块延迟上报（防 persistEvent→reportThreat→recordEvent→persistEvent 递归）；
+                // 一次性标志防重复上报
                 auditWriteFails++
-                if (auditWriteFails >= AUDIT_FAIL_LIMIT) {
-                    auditWriteFails = 0
-                    reportThreat(ShieldThreat.SHIELD_TAMPERED)
-                    setThreatDetail(ShieldThreat.SHIELD_TAMPERED, "审计日志写入失败（存储异常）")
+                if (auditWriteFails >= AUDIT_FAIL_LIMIT && !auditTamperReported) {
+                    auditTamperReported = true
+                    try {
+                        scope.launch {
+                            reportThreat(ShieldThreat.SHIELD_TAMPERED)
+                            setThreatDetail(ShieldThreat.SHIELD_TAMPERED, "审计日志写入失败（存储异常）")
+                        }
+                    } catch (e2: Exception) {
+                    }
                 }
             }
         }

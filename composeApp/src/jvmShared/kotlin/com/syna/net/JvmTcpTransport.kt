@@ -92,9 +92,11 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
                 } catch (e: Exception) {
                     closeByKey(key)
                 }
-                // 连续 3 个心跳周期无 PONG：判定死连接并清理
-                val last = lastPongAt[key] ?: 0L
-                if (System.currentTimeMillis() - last > TCP_HEARTBEAT_MS * 3) {
+                // 连续 3 个心跳周期无 PONG：判定死连接并清理。
+                // 刚建立的连接尚未收到过 PONG（lastPongAt 无记录）——给建连时间，
+                // 仅当"曾收到过 PONG 或已存活超过 3 周期"才判定超时
+                val last = lastPongAt[key]
+                if (last != null && System.currentTimeMillis() - last > TCP_HEARTBEAT_MS * 3) {
                     closeByKey(key)
                     lastPongAt.remove(key)
                 }
@@ -223,6 +225,7 @@ class JvmTcpTransport(private val myId: String, private val myPublicKeyB64: Stri
             }
             socket.tcpNoDelay = true
             outbound[key] = socket
+            lastPongAt[key] = System.currentTimeMillis()
 
             val hello = TransportFrame(
                 type = FrameType.HELLO,

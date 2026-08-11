@@ -191,7 +191,7 @@ class SynaServer(
                     ts = System.currentTimeMillis(),
                     body = synaJson.encodeToString(
                         ServerHello.serializer(),
-                        ServerHello(serverId, salt, "0.9.6", groupName),
+                        ServerHello(serverId, salt, "0.9.7", groupName),
                     ),
                 ),
             )
@@ -205,7 +205,7 @@ class SynaServer(
             } catch (e: Exception) {
                 return
             }
-            if (synchronized(banned) { auth.userId in banned }) {
+            if (auth.userId in synchronized(banned) { banned.toSet() }) {
                 log("[SynaServer] 拒绝封禁用户: ${auth.username} (${auth.userId.take(6)})")
                 return
             }
@@ -315,6 +315,8 @@ class SynaServer(
     private suspend fun handleRelayFrame(session: ClientSession, frame: TransportFrame) {
         // 防身份伪造：所有中继帧的 from 必须等于认证身份；from == groupId（服务器身份）一律拒绝，
         // 否则已认证成员可伪造服务器身份广播公告/管理帧。
+        // 空 from 豁免仅限 PING（其他帧空 from 拒绝——防伪造空身份帧）
+        if (frame.from.isEmpty() && frame.type != FrameType.PING) return
         if (frame.from.isNotEmpty() && frame.from != session.userId) return
         when (frame.type) {
             FrameType.PING -> {
@@ -331,10 +333,10 @@ class SynaServer(
             }
             FrameType.SRV_LEAVE -> throw IOException("client leave")
             FrameType.BURN_ACK -> {
-                // 鉴权：仅当目标消息是阅后即焚且请求者为原发送者时清除（防任意成员删他人消息）
+                // 鉴权：目标消息须为阅后即焚，且请求者须为该群成员（BURN_ACK 由接收者发出）
                 val msgId = frame.body ?: ""
                 val target = synchronized(messages) { messages.firstOrNull { it.msgId == msgId } }
-                if (target != null && target.burn && target.from == session.userId) {
+                if (target != null && target.burn && target.to == session.userId) {
                     purgeMessage(msgId)
                     broadcast(frame, except = session)
                 }
@@ -358,6 +360,18 @@ class SynaServer(
             FrameType.GROUP_JOIN, FrameType.GROUP_LEAVE, FrameType.EPHEMERAL_SESSION,
             FrameType.TYPING, FrameType.FILE_CHUNK, FrameType.ANNOUNCEMENT, FrameType.REQ_KEY,
             -> {
+                // 防伪造成员事件：GROUP_JOIN/LEAVE 的 body 内 memberId 必须等于认证身份
+                if (frame.type == FrameType.GROUP_JOIN || frame.type == FrameType.GROUP_LEAVE) {
+                    try {
+                        val ev = synaJson.decodeFromString(
+                            GroupMemberEvent.serializer(),
+                            frame.body ?: return,
+                        )
+                        if (ev.memberId != session.userId) return
+                    } catch (e: Exception) {
+                        return
+                    }
+                }
                 if (frame.type == FrameType.KEY) {
                     synchronized(memberMap) {
                         memberMap[frame.from]?.let {
@@ -461,7 +475,7 @@ class SynaServer(
 
     private fun printBanner() {
         println("================================================")
-        println("  Syna 私人聊天服务器 v0.9.6")
+        println("  Syna 私人聊天服务器 v0.9.7")
         println("  群名称: $groupName")
         println("  端口:   ${boundPort}")
         println("  数据目录: ${dataDir.toAbsolutePath()}")

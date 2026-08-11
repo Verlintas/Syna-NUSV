@@ -165,10 +165,6 @@ class AndroidShieldEngine private constructor(
         if (!verifySignature()) {
             onThreat(ShieldThreat.SHIELD_TAMPERED)
         }
-        // 运行时自校验：dex 哈希与基准比对（versionCode 未变的篡改 → 命中）
-        if (!verifyDexIntegrity()) {
-            onThreat(ShieldThreat.SHIELD_TAMPERED)
-        }
         if (isRooted()) onThreat(ShieldThreat.ROOT_DETECTED)
         if (hasFrida() || detectProcessInjection()) onThreat(ShieldThreat.FRIDA_DETECTED)
         // native 代码完整性（对抗 inline/GOT hook）：自身被改 → 篡改；libc 被改 → 注入

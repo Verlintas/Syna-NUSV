@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.9.6",
+    private val version: String = "0.9.7",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -148,8 +148,12 @@ class SynaEngine(
 
     private var serverSession: ServerSession? = null
 
-    val serverGroupId: String?
-        get() = serverSession?.groupId
+    /**
+     * 当前服务器群 id（存储字段）：断线后保留（发送路径据此标记 FAILED），
+     * 重连成功时更新，离开时清空。
+     */
+    @Volatile
+    private var serverGroupId: String? = null
 
     fun isServerGroup(groupId: String): Boolean = serverSession?.groupId == groupId
 
@@ -268,6 +272,8 @@ class SynaEngine(
         return when (frame.type) {
             FrameType.TEXT, FrameType.IMAGE, FrameType.FILE_CHUNK, FrameType.KEY,
             FrameType.READ, FrameType.BURN_ACK, FrameType.RECALL, FrameType.REQ_KEY,
+            FrameType.GROUP_INVITE, FrameType.GROUP_JOIN, FrameType.GROUP_LEAVE,
+            FrameType.GROUP_KICK, FrameType.GROUP_MUTE, FrameType.GROUP_ADMIN,
             -> frame.ts > 0 && System.currentTimeMillis() - frame.ts > MAX_FRAME_AGE_MS
             else -> false
         }
@@ -306,7 +312,14 @@ class SynaEngine(
                     val plain = SynaCrypto.decrypt(session, frame.body ?: "")
                     return event.copyWith(frame.copy(body = plain))
                 } catch (e: Exception) {
-                    // E2E 失败，可能是群密钥加密的旧消息
+                    // E2E 失败：若是群帧（含服务器群广播的多密文副本），
+                    // 密文可能属于其他成员——静默丢弃，不触发 REQ_KEY 风暴
+                    if (frame.to.isNotEmpty() &&
+                        (groupsM.value.any { it.id == frame.to } || serverGroupId == frame.to)
+                    ) {
+                        return null
+                    }
+                    // 否则可能是密钥不同步的旧消息
                 }
             }
             val serverGroup = serverSession?.takeIf { it.groupId == frame.to }
@@ -538,31 +551,7 @@ class SynaEngine(
                 serverAnnouncementM.value = ann
                 synaLog("Server") { "收到群公告: ${ann.text.take(30)}" }
             }
-            FrameType.GROUP_KICK -> {
-                val event = try {
-                    synaJson.decodeFromString(GroupMemberEvent.serializer(), frame.body ?: return)
-                } catch (e: Exception) {
-                    return
-                }
-                if (event.memberId == userId) {
-                    synaLog("Server") { "已被服务器踢出" }
-                    removeGroupLocally(event.groupId)
-                    serverSession = null
-                    serverStateM.value = ServerState.DISCONNECTED
-                    notifyMessage("Syna", "你已被服务器移出群聊")
-                } else {
-                    groupsM.updateList { list ->
-                        list.map { group ->
-                            if (group.id == event.groupId) {
-                                group.copy(
-                                    memberIds = group.memberIds.filter { it != event.memberId },
-                                    memberNames = group.memberNames - event.memberId,
-                                )
-                            } else group
-                        }
-                    }
-                }
-            }
+                        FrameType.GROUP_KICK -> Unit // 已由 GROUP_KICK/GROUP_MUTE/GROUP_ADMIN 分支处理（v0.8.2 起 GroupAdminEvent 格式）
             FrameType.ACK -> frame.body?.let { msgId ->
                 // 送达确认：停止该消息的重传追踪
                 pendingAcksM.updateMap { it - msgId }
@@ -1077,6 +1066,8 @@ class SynaEngine(
 
             val groupKey = SynaCrypto.deriveFromPassword(password, result.groupId, SERVER_GROUP_INFO)
             serverSession = ServerSession(result.groupId, result.serverId, host, port, result.channel, groupKey)
+            serverGroupId = result.groupId
+            serverGroupId = result.groupId
 
             // 把自己的公钥发给服务器（中继给全体成员）
             sendServerKeyFrame()
@@ -1130,6 +1121,7 @@ class SynaEngine(
         }
         serverSession = null
         serverStateM.value = ServerState.DISCONNECTED
+            serverGroupId = null
     }
 
     private suspend fun routeServerFrame(frame: TransportFrame, fromHistory: Boolean = false) {
@@ -1196,6 +1188,7 @@ class SynaEngine(
         bytes: ByteArray,
         mimeType: String = "application/octet-stream",
         durationMs: Long = 0L,
+        localPath: String? = null,
     ) {
         if (bytes.size > MAX_FILE_SIZE_BYTES) {
             synaLog("File") { "拒绝发送超大文件 ${fileName} (${bytes.size}B > 200MB)" }
@@ -1207,6 +1200,19 @@ class SynaEngine(
         val totalChunks = ((bytes.size + chunkSize - 1) / chunkSize).coerceAtLeast(1)
         val fileId = newMsgId()
         val kind = if (mimeType.startsWith("image/")) MessageKind.IMAGE else MessageKind.FILE
+        // 保存发送副本（供失败重发；接收文件目录不动，缓存目录自毁时清理）
+        val persistPath = localPath ?: run {
+            try {
+                val dir = java.io.File(com.syna.util.appCacheDir(), "syna_outbox")
+                dir.mkdirs()
+                val safe = fileName.filter { it != '/' && it != '\\' && it != ':' && it != '*' && it != '?' && it != '"' && it != '<' && it != '>' && it != '|' }
+                val f = java.io.File(dir, "$fileId-$safe")
+                f.writeBytes(bytes)
+                f.absolutePath
+            } catch (e: Exception) {
+                null
+            }
+        }
 
         val group = groupsM.value.firstOrNull { it.id == conversationId }
         val conversationName = group?.name ?: peersM.value.firstOrNull { it.id == conversationId }?.username ?: conversationId
@@ -1225,6 +1231,7 @@ class SynaEngine(
                 kind = kind,
                 fileName = fileName,
                 fileSize = bytes.size.toLong(),
+                localPath = persistPath,
                 progress = 0,
             ),
         )
@@ -1295,7 +1302,31 @@ class SynaEngine(
                 )
             }
             try {
-                framesToSend.forEach { frame -> sendToConversation(conversationId, frame) }
+                val udpMode = settings.connectionMode == ConnectionMode.UDP
+                if (isGroupChat && group != null) {
+                    // mesh 群：密文帧直发对应成员（对齐群 TEXT，避免 O(N²) 广播扇出）
+                    framesToSend.forEachIndexed { idx, frame ->
+                        val memberId = groupMembers[idx]
+                        val peer = peersM.value.firstOrNull { it.id == memberId }
+                        if (peer != null) {
+                            // UDP 模式文件改走 TCP（丢块不可恢复，TCP 可靠）
+                            if (udpMode) tcp?.send(peer.addr, frame) else send(peer, frame)
+                        }
+                    }
+                } else if (isGroupChat) {
+                    // 服务器群：经服务器通道广播（接收方解密过滤非己副本）
+                    framesToSend.forEach { frame -> sendToConversation(conversationId, frame) }
+                } else {
+                    if (udpMode) {
+                        // 1:1 UDP 模式走 TCP 可靠通道
+                        val peer = peersM.value.firstOrNull { it.id == conversationId }
+                        if (peer != null) {
+                            framesToSend.forEach { frame -> tcp?.send(peer.addr, frame) }
+                        }
+                    } else {
+                        framesToSend.forEach { frame -> sendToConversation(conversationId, frame) }
+                    }
+                }
                 chatStore.updateProgress(fileId, ((i + 1) * 100) / totalChunks)
                 // 最后一帧：调度文件级 ACK 重传（P2P 1:1）
                 if (i == totalChunks - 1 && isOneToOne) {
@@ -1599,6 +1630,8 @@ class SynaEngine(
             it.stop()
             val d = createDiscoveryService(ann, discoveryIntervalMs).also { d -> d.start() }
             discovery = d
+            // 重建后保持隐身设置（否则隐身用户改名即开始广播）
+            d.setStealth(settings.stealthMode)
             scope.launch {
                 d.announcements.collect { (a, ip) ->
                     if (a.id != userId && !isBlocked(a.id)) {

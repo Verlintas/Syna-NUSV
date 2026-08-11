@@ -126,6 +126,7 @@ expect fun deviceIdentityChanged(): Boolean
 class ChatPersistence(private val path: String = chatPersistencePath()) {
 
     fun load(): List<ChatMessage> {
+        synchronized(writeLock) {
         return try {
             val file = Path.of(path)
             if (!Files.exists(file)) return emptyList()
@@ -151,6 +152,7 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
         } catch (e: Exception) {
             println("[Syna:Persist] 加载失败: ${e.message}")
             emptyList()
+        }
         }
     }
 
@@ -196,9 +198,15 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
     fun clear() {
         synchronized(writeLock) {
         try {
-            // 安全覆写删除（防取证恢复）：主文件 + 原子写残留的 tmp
+            // 安全覆写删除（防取证恢复）：主文件 + 原子写残留的 tmp（含随机后缀）
             com.syna.util.SecureWipe.wipeFile(path)
             com.syna.util.SecureWipe.wipeFile(path + ".tmp")
+            try {
+                java.io.File(path).parentFile?.listFiles()?.filter {
+                    it.name.startsWith(java.io.File(path).name + ".tmp")
+                }?.forEach { com.syna.util.SecureWipe.wipeFile(it.absolutePath) }
+            } catch (e: Exception) {
+            }
         } catch (e: Exception) {
             println("[Syna:Persist] 清除失败: ${e.message}")
         }

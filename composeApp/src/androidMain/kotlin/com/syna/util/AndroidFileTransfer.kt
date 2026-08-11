@@ -64,7 +64,7 @@ actual fun FilePickerButton(
         },
         modifier = modifier,
     ) {
-        Text("📎")
+        Text("文件")
     }
 }
 
@@ -84,7 +84,7 @@ actual fun ImagePickerButton(
         },
         modifier = modifier,
     ) {
-        Text("🖼")
+        Text("图片")
     }
 }
 
@@ -158,3 +158,5 @@ private fun handlePicked(
         }
     }.start()
 }
+
+actual fun appCacheDir(): String = com.syna.SynaApp.context.cacheDir.absolutePath

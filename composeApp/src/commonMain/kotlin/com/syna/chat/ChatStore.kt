@@ -106,12 +106,21 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
     }
 
     /** 消息变更后防抖重写本地文件（500ms 合并批量操作） */
+    /** 内存已释放标志（锁定/后台擦除期间禁止落盘——防空内存覆盖磁盘历史） */
+    @Volatile
+    private var memoryWiped = false
+
     private fun scheduleRewrite() {
         if (persistence == null) return
+        // 锁定/内存已释放期间：不落盘（防空内存/半内存覆盖完整磁盘历史）
+        if (memoryWiped) return
         rewriteJob?.cancel()
         rewriteJob = persistScope.launch {
             delay(500)
-            persistence.rewrite(messagesM.value)
+            // 越过 delay 后再次校验（取消不可中断的阻塞写期间内存可能被清空）
+            if (!memoryWiped) {
+                persistence.rewrite(messagesM.value)
+            }
         }
     }
 
@@ -265,6 +274,7 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
     fun releaseMemory() {
         // 取消未执行的防抖重写（否则 500ms 窗口内的重写会用空内存覆盖磁盘全部历史）
         rewriteJob?.cancel()
+        memoryWiped = true
         messagesM.value = emptyMap()
         // 会话元数据中的消息明文预览一并清除（锁定期间防 root dump 泄露）
         conversationsM.value = conversationsM.value.map { c ->
@@ -274,9 +284,38 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
 
     /** 解锁后从持久化重新加载消息 */
     fun reloadFromPersistence() {
+        memoryWiped = false
         persistence?.load()?.let { loaded ->
             if (loaded.isNotEmpty()) {
                 messagesM.value = loaded.groupBy { it.conversationId }
+                // 重建会话预览（releaseMemory 清空了 lastMessage）
+                messagesM.value.forEach { (conversationId, list) ->
+                    val last = list.lastOrNull()
+                    if (last != null) {
+                        conversationsM.updateList { convs ->
+                            val exists = convs.any { it.peerId == conversationId }
+                            val updated = if (exists) {
+                                convs.map { c ->
+                                    if (c.peerId == conversationId) {
+                                        c.copy(
+                                            lastMessage = if (last.burnAfterReading) "[焚] 阅后即焚消息" else last.body,
+                                            lastTs = last.ts,
+                                        )
+                                    } else c
+                                }
+                            } else {
+                                convs + com.syna.chat.Conversation(
+                                    peerId = conversationId,
+                                    peerName = last.senderId,
+                                    lastMessage = if (last.burnAfterReading) "[焚] 阅后即焚消息" else last.body,
+                                    lastTs = last.ts,
+                                    unreadCount = 0,
+                                )
+                            }
+                            updated
+                        }
+                    }
+                }
             }
         }
     }
@@ -298,10 +337,14 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
     }
 
     fun purgeExpired(ttlMs: Long, now: Long = System.currentTimeMillis()) {
-        conversationsM.value.filter { now - it.lastTs > ttlMs }.forEach { conv ->
+        if (memoryWiped) return
+        // 仅当确实存在过期会话时才落盘（否则每 5s sweep 全量重写浪费 IO）
+        val expired = conversationsM.value.filter { now - it.lastTs > ttlMs }
+        if (expired.isEmpty()) return
+        expired.forEach { conv ->
             removeConversation(conv.peerId)
         }
-            scheduleRewrite()
+        scheduleRewrite()
     }
 
     fun markAllRead(peerId: String) {

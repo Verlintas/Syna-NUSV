@@ -46,7 +46,7 @@ actual fun deviceIdentityChanged(): Boolean {
 actual fun destructPlatformArtifacts() {
     try {
         val dir = com.syna.SynaApp.context.filesDir
-        listOf("syna_totp_seed", "syna_session_blob", "syna_dex_base", "syna_version_base", "syna_key_pins", "crash.log")
+        listOf("syna_totp_seed", "syna_session_blob", "syna_dex_base", "syna_version_base", "syna_key_pins", "syna_audit_seen", "syna_device_base", "crash.log")
             .forEach { name -> com.syna.util.SecureWipe.wipeFile(java.io.File(dir, name).absolutePath) }
         // 录音缓存（cacheDir/voice）覆写清理
         try {

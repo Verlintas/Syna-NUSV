@@ -55,6 +55,7 @@ class JvmDiscoveryService(
     private var stealth = false
 
     /** 省电：快频广播计数（前 [FAST_ANNOUNCE_COUNT] 次按 intervalMs，之后按 3 倍间隔） */
+    @Volatile
     private var fastAnnounceCount = 0
     private val FAST_ANNOUNCE_COUNT = 10
     private var jobs = mutableListOf<kotlinx.coroutines.Job>()

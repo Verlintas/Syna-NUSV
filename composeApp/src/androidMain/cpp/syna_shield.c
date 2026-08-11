@@ -503,10 +503,27 @@ static long g_native_beat = 0;
 static char g_native_fp[65];
 static unsigned char g_native_key[32];
 
+static long monotonic_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_BOOTTIME, &ts);
+    return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
 static void native_key_init(void) {
     static int inited = 0;
     if (!inited) {
-        for (int i = 0; i < 32; i++) g_native_key[i] = (unsigned char)(rand() & 0xff);
+        /* /dev/urandom 播种（rand 默认种子 1 会令所有设备密钥相同，指纹可预测） */
+        size_t got = 0;
+        int fd = (int)syscall(SYS_openat, AT_FDCWD, "/dev/urandom", O_RDONLY, 0);
+        if (fd >= 0) {
+            while (got < 32) {
+                long r = syscall(SYS_read, fd, g_native_key + got, 32 - got);
+                if (r <= 0) break;
+                got += (size_t)r;
+            }
+            syscall(SYS_close, fd);
+        }
+        for (size_t i = got; i < 32; i++) g_native_key[i] = (unsigned char)(rand() & 0xff);
         inited = 1;
     }
 }
@@ -514,13 +531,13 @@ static void native_key_init(void) {
 JNIEXPORT void JNICALL Java_com_syna_shield_NativeShield_gateBeat(JNIEnv *env, jobject thiz) {
     (void)env; (void)thiz;
     native_key_init();
-    long t = (long)time(NULL);
+    long t = monotonic_now_ms();
     g_native_beat = t;
-    /* HMAC-SHA256 前 64 hex 字符（简化：用现有 sha256 作 HMAC 近似，密钥混合） */
+    /* 指纹：HMAC 式 key 混合 + SHA-256（防时间戳冻结） */
     sha256_ctx c;
     sha256_init(&c);
     sha256_update(&c, g_native_key, 32);
-    char tmp[16];
+    char tmp[24];
     snprintf(tmp, sizeof(tmp), "%ld", t);
     sha256_update(&c, (const unsigned char *)tmp, strlen(tmp));
     unsigned char out[32];
@@ -531,7 +548,7 @@ JNIEXPORT void JNICALL Java_com_syna_shield_NativeShield_gateBeat(JNIEnv *env, j
 JNIEXPORT jint JNICALL Java_com_syna_shield_NativeShield_gateFresh(JNIEnv *env, jobject thiz) {
     (void)env; (void)thiz;
     if (g_native_beat == 0) return 0;
-    if (labs((long)time(NULL) - g_native_beat) > 15) return 0;
+    if (monotonic_now_ms() - g_native_beat > 12000L) return 0;
     /* 指纹校验：重算比对（防时间戳冻结） */
     sha256_ctx c;
     sha256_init(&c);

@@ -67,7 +67,7 @@ actual fun ImagePickerButton(
         onClick = { showFileDialog("选择图片", onImagePicked) },
         modifier = modifier,
     ) {
-        Text("🖼")
+        Text("图片")
     }
 }
 
@@ -80,7 +80,7 @@ actual fun FilePickerButton(
         onClick = { showFileDialog("选择文件", onFilePicked) },
         modifier = modifier,
     ) {
-        Text("📎")
+        Text("文件")
     }
 }
 
@@ -114,3 +114,5 @@ private fun showFileDialog(title: String, onPicked: (name: String, bytes: ByteAr
         }
     }.start()
 }
+
+actual fun appCacheDir(): String = System.getProperty("java.io.tmpdir") ?: "."

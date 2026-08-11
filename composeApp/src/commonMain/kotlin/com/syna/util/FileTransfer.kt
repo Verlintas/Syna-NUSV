@@ -44,3 +44,6 @@ expect fun ImagePickerButton(
     onImagePicked: (name: String, bytes: ByteArray) -> Unit,
     modifier: Modifier = Modifier,
 )
+
+/** 应用缓存目录（发送副本/临时文件用；自毁时清理） */
+expect fun appCacheDir(): String
