@@ -252,7 +252,19 @@ class SynaEngine(
         when (com.syna.shield.KeyPinning.checkAndPin(peerId, key)) {
             com.syna.shield.KeyPinning.PinResult.PINNED_FIRST,
             com.syna.shield.KeyPinning.PinResult.PINNED_MATCH,
-            -> peerKeysM.updateMap { it + (peerId to key) }
+            -> {
+                peerKeysM.updateMap { it + (peerId to key) }
+                // 仅加密模式排队消息：密钥就绪后自动补发（不丢消息）
+                val queued = pendingE2eQueueM.value.filter { it.peerId == peerId }
+                if (queued.isNotEmpty()) {
+                    pendingE2eQueueM.updateList { list -> list.filterNot { it.peerId == peerId } }
+                    scope.launch {
+                        queued.forEach { p ->
+                            sendText(p.peerId, p.text, burn = p.burn, replyTo = p.replyTo, mentions = p.mentions)
+                        }
+                    }
+                }
+            }
             com.syna.shield.KeyPinning.PinResult.PINNED_CHANGED -> {
                 // 公钥变更：不覆盖旧密钥（攻击者无法毒化），锁定并提示
                 synaLog("Crypto") { "密钥变更被拒: $peerId (potential MITM)" }
@@ -285,9 +297,15 @@ class SynaEngine(
         // 重放防护：超时窗口的实时帧直接丢弃（历史回放跳过）
         if (!skipReplay && isReplay(frame)) return null
         when (frame.type) {
-            FrameType.HELLO -> frame.body?.let { key -> pinPeerKey(frame.from, key) }
+            FrameType.HELLO -> frame.body?.let { key ->
+                peerEpochsM.value = peerEpochsM.value + (frame.from to frame.epoch)
+                pinPeerKey(frame.from, key)
+            }
             FrameType.KEY -> {
-                frame.body?.let { key -> pinPeerKey(frame.from, key) }
+                frame.body?.let { key ->
+                    peerEpochsM.value = peerEpochsM.value + (frame.from to frame.epoch)
+                    pinPeerKey(frame.from, key)
+                }
                 // 收到公钥后回发自己的公钥，节流避免回复风暴
                 val now = System.currentTimeMillis()
                 val lastSent = peerKeySentM.value[frame.from] ?: 0L
@@ -308,7 +326,7 @@ class SynaEngine(
             val peerKey = peerKeysM.value[frame.from]
             if (peerKey != null) {
                 try {
-                    val session = SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(frame.from))
+                    val session = SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(frame.from, frame.epoch))
                     val plain = SynaCrypto.decrypt(session, frame.body ?: "")
                     return event.copyWith(frame.copy(body = plain))
                 } catch (e: Exception) {
@@ -898,7 +916,7 @@ class SynaEngine(
                 val peerKey = peerKeysM.value[memberId]
                 if (peerKey != null) {
                     SynaCrypto.encrypt(
-                        SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(memberId)),
+                        SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(memberId, peerEpochsM.value[memberId] ?: 0)),
                         text,
                     )
                 } else null
@@ -920,21 +938,20 @@ class SynaEngine(
                     )
                 }
             } else {
-                // 尚无成员密钥（首条消息前）：明文发送一份
-                frames = listOf(
-                    TransportFrame(
-                        type = FrameType.GROUP_MESSAGE,
-                        from = userId,
-                        to = groupId,
-                        msgId = msgId,
-                        ts = System.currentTimeMillis(),
-                        body = text,
-                        enc = false,
-                        burn = burn,
-                        replyTo = replyTo,
-                        mentions = mentions,
-                    ),
-                )
+                // v0.9.9：不再明文回退（仅加密语义）——无密钥成员等待密钥就绪
+                synaLog("Crypto") { "group $groupId: no member keys, message queued (encrypt-only)" }
+                frames = emptyList()
+                // 为缺密钥成员触发密钥交换
+                group.memberIds.filter { it != userId && peerKeysM.value[it] == null }.forEach { memberId ->
+                    peersM.value.firstOrNull { it.id == memberId }?.let { p ->
+                        scope.launch {
+                            try {
+                                sendKeyFrameNow(memberId, p.addr)
+                            } catch (e: Exception) {
+                            }
+                        }
+                    }
+                }
             }
             frames.forEach { frame ->
                 try {
@@ -976,7 +993,7 @@ class SynaEngine(
                 msgId = msgId,
                 ts = System.currentTimeMillis(),
                 body = if (encrypted) {
-                    SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(memberId)), text)
+                    SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(memberId, peerEpochsM.value[memberId] ?: 0)), text)
                 } else text,
                 enc = encrypted,
                 burn = burn,
@@ -1138,6 +1155,7 @@ class SynaEngine(
             from = userId,
             to = session.groupId,
             msgId = newMsgId(),
+            epoch = processEpoch,
             ts = System.currentTimeMillis(),
             body = publicKeyB64,
         )
@@ -1265,8 +1283,10 @@ class SynaEngine(
             val fileChunkJson = synaJson.encodeToString(FileChunk.serializer(), fileChunk)
             // 构建待发送帧列表：1:1 单帧；群聊每成员一份密文（无密钥成员回退明文）
             val framesToSend: List<TransportFrame> = if (isGroupChat && groupMembers.isNotEmpty()) {
-                groupMembers.map { memberId ->
+                groupMembers.mapNotNull { memberId ->
                     val memberKey = peerKeysM.value[memberId]
+                    // 仅加密：无密钥成员跳过（不发明文副本），等待密钥就绪
+                    if (fileEncrypted && memberKey == null) return@mapNotNull null
                     TransportFrame(
                         type = FrameType.FILE_CHUNK,
                         from = userId,
@@ -1275,7 +1295,7 @@ class SynaEngine(
                         ts = System.currentTimeMillis(),
                         body = if (fileEncrypted && memberKey != null) {
                             SynaCrypto.encrypt(
-                                SynaCrypto.deriveSessionKey(identity.privateBytes, memberKey, sessionId(memberId)),
+                                SynaCrypto.deriveSessionKey(identity.privateBytes, memberKey, sessionId(memberId, peerEpochsM.value[memberId] ?: 0)),
                                 fileChunkJson,
                             )
                         } else fileChunkJson,
@@ -1293,7 +1313,7 @@ class SynaEngine(
                         ts = System.currentTimeMillis(),
                         body = if (fileEncrypted && filePeerKey != null) {
                             SynaCrypto.encrypt(
-                                SynaCrypto.deriveSessionKey(identity.privateBytes, filePeerKey, sessionId(conversationId)),
+                                SynaCrypto.deriveSessionKey(identity.privateBytes, filePeerKey, sessionId(conversationId, peerEpochsM.value[conversationId] ?: 0)),
                                 fileChunkJson,
                             )
                         } else fileChunkJson,
@@ -1654,11 +1674,24 @@ class SynaEngine(
     ): String {
         if (text.isBlank()) return ""
         val peer = peersM.value.firstOrNull { it.id == peerId } ?: return ""
-        val peerKey = peerKeysM.value[peerId]
-        // 仅加密会话：密钥未就绪时拒发（不静默明文降级）
+        var peerKey = peerKeysM.value[peerId]
+        // 仅加密会话（默认开启）：密钥未就绪 → 自动请求密钥并等待（不拒发、不降级明文）
         if (settings.e2eOnlyEnabled && peerKey == null) {
-            notifyMessage("Syna", "对方加密密钥未就绪，已拒绝明文发送（仅加密会话模式）")
-            return ""
+            try {
+                sendKeyFrameNow(peerId, peer.addr)
+            } catch (e: Exception) {
+            }
+            val deadline = System.currentTimeMillis() + 5_000
+            while (peerKey == null && System.currentTimeMillis() < deadline) {
+                kotlinx.coroutines.delay(100)
+                peerKey = peerKeysM.value[peerId]
+            }
+            if (peerKey == null) {
+                notifyMessage("Syna", "对方加密密钥未就绪，消息已排队等待密钥交换后发送")
+                // 密钥就绪后自动补发：注册一次待发（由 pinPeerKey 触发）
+                pendingE2eQueueM.updateList { it + PendingE2eSend(peerId, text, burn, replyTo, mentions) }
+                return ""
+            }
         }
         val encrypted = settings.e2eEnabled && peerKey != null
         val msgId = newMsgId()
@@ -1669,7 +1702,7 @@ class SynaEngine(
             msgId = msgId,
             ts = System.currentTimeMillis(),
             body = if (encrypted) {
-                SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(peerId)), text)
+                SynaCrypto.encrypt(SynaCrypto.deriveSessionKey(identity.privateBytes, peerKey, sessionId(peerId, peerEpochsM.value[peerId] ?: 0)), text)
             } else text,
             enc = encrypted,
             burn = burn,
@@ -1716,6 +1749,7 @@ class SynaEngine(
             from = userId,
             to = peerId,
             msgId = newMsgId(),
+            epoch = processEpoch,
             ts = System.currentTimeMillis(),
             body = publicKeyB64,
         )
@@ -1797,7 +1831,14 @@ class SynaEngine(
     }
 
     private fun enqueueOutbox(peerId: String, frame: TransportFrame) {
-        outboxM.updateMap { it + (peerId to ((it[peerId] ?: emptyList()) + frame)) }
+        outboxM.updateMap { map ->
+            // 每 peer 上限（防对端永久离线时无限增长的内存泄漏）：超出丢弃最旧
+            val existing = map[peerId] ?: emptyList()
+            val capped = if (existing.size >= MAX_OUTBOX_PER_PEER) {
+                existing.drop(1)
+            } else existing
+            map + (peerId to (capped + frame))
+        }
     }
 
     private val outboxFlushLock = kotlinx.coroutines.sync.Mutex()
@@ -1856,8 +1897,37 @@ class SynaEngine(
 
     private fun defaultUsername(): String = "用户-${userId.takeLast(4)}"
 
-    private fun sessionId(peerId: String): String =
-        listOf(userId, peerId).sorted().joinToString("|")
+    /**
+     * 前向保密进程纪元：进程启动随机。双方纪元均非 0 时参与会话密钥派生
+     * （重启/重连即换钥）；任一为 0（旧客户端）→ 沿用固定派生（兼容）。
+     */
+    private val processEpoch: Int = java.security.SecureRandom().nextInt(1, Int.MAX_VALUE)
+
+    /** 测试辅助：本进程纪元 */
+    fun processEpochForTest(): Int = processEpoch
+
+    /** 对端纪元（HELLO/KEY 帧携带，收到时记录） */
+    private val peerEpochsM = kotlinx.coroutines.flow.MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    /** 仅加密模式下密钥未就绪的排队消息（密钥就绪后自动补发） */
+    private data class PendingE2eSend(
+        val peerId: String,
+        val text: String,
+        val burn: Boolean,
+        val replyTo: String?,
+        val mentions: List<String>,
+    )
+
+    private val pendingE2eQueueM = kotlinx.coroutines.flow.MutableStateFlow<List<PendingE2eSend>>(emptyList())
+
+    private fun sessionId(peerId: String, peerEpoch: Int): String {
+        val base = listOf(userId, peerId).sorted().joinToString("|")
+        return if (processEpoch != 0 && peerEpoch != 0) {
+            "$base|${minOf(processEpoch, peerEpoch)}|${maxOf(processEpoch, peerEpoch)}"
+        } else {
+            base
+        }
+    }
 
     private fun newMsgId(): String = Uuid.random().toString()
 }

@@ -56,6 +56,13 @@ class SettingsRepository(private val settings: Settings = Settings()) {
             settings.putBoolean(KEY_E2E_ENABLED, value)
         }
 
+    /** 字体大小：0=小 1=中 2=大 */
+    var fontSizeLevel: Int
+        get() = settings.getInt(KEY_FONT_SIZE, 1)
+        set(value) {
+            settings.putInt(KEY_FONT_SIZE, value)
+        }
+
     /** 隐身模式：不广播自身（仍可发现他人、可被手动刷新发现） */
     var stealthMode: Boolean
         get() = settings.getBoolean(KEY_STEALTH_MODE, false)
@@ -63,9 +70,9 @@ class SettingsRepository(private val settings: Settings = Settings()) {
             settings.putBoolean(KEY_STEALTH_MODE, value)
         }
 
-    /** 仅加密会话：密钥未就绪时拒发明文（防静默降级） */
+    /** 仅加密会话：密钥未就绪时拒发明文（防静默降级；v0.9.9 起默认开启） */
     var e2eOnlyEnabled: Boolean
-        get() = settings.getBoolean(KEY_E2E_ONLY_ENABLED, false)
+        get() = settings.getBoolean(KEY_E2E_ONLY_ENABLED, true)
         set(value) {
             settings.putBoolean(KEY_E2E_ONLY_ENABLED, value)
         }
@@ -149,6 +156,7 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         const val KEY_E2E_ENABLED = "e2e_enabled"
         const val KEY_E2E_ONLY_ENABLED = "e2e_only_enabled"
         const val KEY_STEALTH_MODE = "stealth_mode"
+        const val KEY_FONT_SIZE = "font_size"
         const val KEY_BURN_ENABLED = "burn_after_reading"
         const val KEY_TEMP_CHAT_ENABLED = "temp_chat_enabled"
         const val KEY_TEMP_CHAT_TTL_HOURS = "temp_chat_ttl_hours"

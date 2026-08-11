@@ -21,6 +21,7 @@ package com.syna.ui.screen
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -318,6 +319,7 @@ fun ChatScreen(
                     allMessages = chatMessages,
                     maxBubbleWidth = bubbleMaxWidth,
                     onImageClick = { fullImagePreview = it },
+                    fontSizeLevel = engine.settings.fontSizeLevel,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -566,41 +568,19 @@ fun ChatScreen(
                     .padding(8.dp),
             )
             Spacer(Modifier.size(4.dp))
-            IconButton(
-                onClick = {
-                    val text = input.trim()
-                    if (text.isNotEmpty()) {
-                        val replyId = replyingTo?.id
-                        val mentions = pendingMention?.let { listOf(it) } ?: emptyList()
-                        val doSend = {
-                            scope.launch {
-                                if (isGroup) {
-                                    engine.sendGroupText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
-                                } else {
-                                    engine.sendText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
-                                }
+            // 发送逻辑（Enter/发送按钮共用）：密钥未就绪时由引擎排队等待，绝不降级明文
+            val onSendInput = {
+                val text = input.trim()
+                if (text.isNotEmpty()) {
+                    val replyId = replyingTo?.id
+                    val mentions = pendingMention?.let { listOf(it) } ?: emptyList()
+                    val doSend = {
+                        scope.launch {
+                            if (isGroup) {
+                                engine.sendGroupText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
+                            } else {
+                                engine.sendText(peerId, text, burn = burn, replyTo = replyId, mentions = mentions)
                             }
-                            input = ""
-                            replyingTo = null
-                            pendingMention = null
-                            scope.launch {
-                                if (chatMessages.isNotEmpty()) {
-                                    listState.scrollToItem(0)
-                                }
-                            }
-                        }
-                        if (burn && com.syna.shield.ShieldController.current != null) {
-                            // 敏感操作二次认证：发送阅后即焚消息前需生物识别确认（护盾启用时）
-                            com.syna.shield.ShieldController.current!!.verifyIdentity { granted ->
-                                if (granted) {
-                                    doSend()
-                                } else {
-                                    com.syna.util.notifyMessage("Syna", "阅后即焚发送已取消（需生物识别确认）")
-                                }
-                            }
-                        } else {
-                            // 护盾未启用：无二次认证要求
-                            doSend()
                         }
                         input = ""
                         replyingTo = null
@@ -611,7 +591,18 @@ fun ChatScreen(
                             }
                         }
                     }
-                },
+                    if (burn && com.syna.shield.ShieldController.current != null) {
+                        com.syna.shield.ShieldController.current!!.verifyIdentity { granted ->
+                            if (granted) doSend()
+                            else com.syna.util.notifyMessage("Syna", "阅后即焚发送已取消（需生物识别确认）")
+                        }
+                    } else {
+                        doSend()
+                    }
+                }
+            }
+            IconButton(
+                onClick = onSendInput,
                 modifier = Modifier
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary),
@@ -901,6 +892,7 @@ private fun MessageBubble(
     allMessages: List<ChatMessage> = emptyList(),
     maxBubbleWidth: Dp = 280.dp,
     onImageClick: (androidx.compose.ui.graphics.ImageBitmap) -> Unit = {},
+    fontSizeLevel: Int = 1,
 ) {
     val bubbleColor = if (isMine) {
         MaterialTheme.colorScheme.primary
@@ -1071,7 +1063,13 @@ private fun MessageBubble(
                             }
                             MessageKind.TEXT -> Text(
                                 text = message.body,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontSize = when (fontSizeLevel) {
+                                        0 -> MaterialTheme.typography.bodySmall.fontSize
+                                        2 -> MaterialTheme.typography.bodyLarge.fontSize
+                                        else -> MaterialTheme.typography.bodyMedium.fontSize
+                                    },
+                                ),
                                 color = textColor,
                             )
                         }

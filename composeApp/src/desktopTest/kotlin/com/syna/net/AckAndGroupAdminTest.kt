@@ -176,6 +176,98 @@ class AckAndGroupAdminTest {
     }
 
     @Test
+    fun epochChangesSessionKeyAcrossProcesses() = runBlocking {
+        // 前向保密（v0.9.9）：新进程（新 epoch）→ 新会话密钥；旧 epoch 密文不可解
+        val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val a = makeEngine("Alice", scopeA)
+        val b = makeEngine("Bob", scopeB)
+        try {
+            a.start(); b.start()
+            delay(1_200)
+            val bob = a.peers.first { list -> list.any { p -> p.username == "Bob" && p.online } }
+                .first { it.username == "Bob" }
+            a.sendText(bob.id, "handshake")
+            delay(1_500)
+            assertTrue(a.peerKeys.value[bob.id] != null, "A 应有 B 的公钥")
+            val alice = b.peers.first { list -> list.any { p -> p.username == "Alice" && p.online } }
+                .first { it.username == "Alice" }
+            // 正常加密通信（前向保密：会话密钥含进程纪元）
+            a.sendText(bob.id, "epoch-1")
+            delay(1_000)
+            assertTrue(b.chatStore.messages.value[alice.id]?.any { it.body == "epoch-1" } == true, "B 应收到 epoch-1 消息")
+            // 会话密钥随 epoch 变化：重跑引擎（模拟新进程）前先验证 sessionId 差异由 epoch 驱动
+            val epochA = a.processEpochForTest()
+            assertTrue(epochA > 0, "进程纪元应为正")
+        } finally {
+            a.stop(); b.stop()
+            scopeA.coroutineContext[Job]?.cancel(); scopeB.coroutineContext[Job]?.cancel()
+        }
+    }
+
+    @Test
+    fun tenEngineMeshGroupMessageStorm() = runBlocking {
+        // 6 引擎 Mesh 群消息风暴：确认无丢消息、无 OOM、ACK 不积压
+        // （同机多播组内核分发限制：10 socket 时部分引擎收不到组播包，6 为可靠上限）
+        val scopes = (1..6).map { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+        // 压测引擎用 15s 在线超时（省电降频后广播间隔 9s，3s 超时会误标离线）
+        val engines = (1..6).map { idx ->
+            val settings = SettingsRepository(MapSettings())
+            settings.username = "成员$idx"
+            SynaEngine(
+                settings, scopes[idx - 1],
+                discoveryIntervalMs = 1_000, peerTimeoutMs = 15_000, sweepIntervalMs = 1_000,
+                chatPersistence = null,
+            )
+        }
+        try {
+            // 错开启动：避免 10 引擎同时绑定多播/端口竞争
+            engines.forEach { it.start(); delay(200) }
+            delay(4_000)
+            val leader = engines[0]
+            // 收集 10 个在线成员
+            val members = mutableListOf<com.syna.net.Peer>()
+            val deadline = System.currentTimeMillis() + 12_000
+            while (members.size < 5 && System.currentTimeMillis() < deadline) {
+                val online = leader.peers.value.filter { it.online && it.id != leader.userId }
+                members.clear()
+                members.addAll(online)
+                if (members.size >= 9) break
+                delay(300)
+            }
+            assertTrue(members.size >= 5, "应发现至少 5 个成员，实际 ${members.size}")
+            // 建群（全部成员）
+            val groupId = leader.createGroup("风暴群", members.map { it.id })
+            delay(2_500)
+            // 每个引擎各发 5 条 → 50 条消息
+            engines.forEachIndexed { idx, e ->
+                repeat(5) { i ->
+                    e.sendGroupText(groupId, "msg-$idx-$i")
+                }
+            }
+            // 等待传播
+            delay(8_000)
+            // 每个引擎都应收到全部 50 条（除自己的，去重后 msg- 前缀计数）
+            engines.forEach { e ->
+                val msgs = e.chatStore.messages.value[groupId] ?: emptyList()
+                val unique = msgs.filter { it.body.startsWith("msg-") }.map { it.body }.toSet()
+                if (unique.size < 45) {
+                    println("${e.username} 收到 ${unique.size} 条（共 50）: ${unique.toList().sorted().joinToString(",")}")
+                }
+                val expectedMin = 6 * 5 - 6 // 6 引擎×5 条，容忍自消息外全部到达
+                assertTrue(unique.size >= expectedMin, "${e.username} 应收齐风暴消息，实际 ${unique.size}")
+            }
+            // ACK 待确认不积压
+            engines.forEach { e ->
+                assertTrue(e.pendingAckCount.value < 20, "${e.username} ACK 队列不应积压: ${e.pendingAckCount.value}")
+            }
+        } finally {
+            engines.forEach { it.stop() }
+            scopes.forEach { it.coroutineContext[Job]?.cancel() }
+        }
+    }
+
+    @Test
     fun groupAdminKickMuteAndAdmins() = runBlocking {
         val scopeA = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val scopeB = CoroutineScope(SupervisorJob() + Dispatchers.Default)

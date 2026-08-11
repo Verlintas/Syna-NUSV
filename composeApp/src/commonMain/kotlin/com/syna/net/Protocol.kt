@@ -35,6 +35,7 @@ const val BURN_SWEEP_TTL_MS = 60_000L // 未查看的焚毁消息 60s 后兜底�
 const val MAX_FRAME_AGE_MS = 10 * 60_000L // 实时帧时间窗口（重放防护）
 const val ACK_RETRY_INTERVAL_MS = 3_000L // ACK 重传间隔
 const val ACK_MAX_RETRIES = 3 // ACK 最大重传次数
+const val MAX_OUTBOX_PER_PEER = 500 // 离线队列每对端上限（防内存泄漏）
 const val BURN_ACK_FALLBACK_MS = 60_000L
 const val SERVER_CHANNEL_INFO = "syna-server-channel"
 const val SERVER_GROUP_INFO = "syna-server-group"
@@ -102,6 +103,8 @@ data class TransportFrame(
     val burn: Boolean = false,
     val replyTo: String? = null,
     val mentions: List<String> = emptyList(),
+    /** 前向保密进程纪元（v0.9.9）：进程启动随机；双方非 0 时参与会话密钥派生 */
+    val epoch: Int = 0,
 )
 
 @Serializable

@@ -44,6 +44,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun App() {
@@ -151,6 +152,16 @@ fun App() {
         engine.start()
         // 隐身模式：启动即应用（不广播自身）
         engine.setStealthMode(settings.stealthMode)
+        // 版本更新检测：启动后延迟拉取 GitHub Releases（失败静默；后台线程）
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+            kotlinx.coroutines.delay(10_000)
+            com.syna.util.UpdateChecker.checkAsync("0.9.9") { tag, url ->
+                com.syna.util.notifyMessage(
+                    "Syna",
+                    "发现新版本 $tag。请前往 GitHub Releases 下载更新。",
+                )
+            }
+        }
     }
     // 页面销毁（如 Android 旋转）时彻底释放引擎与护盾控制器，
     // 避免重复实例抢占端口/泄漏看门狗线程
@@ -176,6 +187,7 @@ fun App() {
     var e2eEnabled by remember { mutableStateOf(settings.e2eEnabled) }
     var e2eOnlyEnabled by remember { mutableStateOf(settings.e2eOnlyEnabled) }
     var stealthMode by remember { mutableStateOf(settings.stealthMode) }
+    var fontSizeLevel by remember { mutableStateOf(settings.fontSizeLevel) }
     var burnAfterReading by remember { mutableStateOf(settings.burnAfterReadingEnabled) }
     var tempChatEnabled by remember { mutableStateOf(settings.tempChatEnabled) }
     var tempChatTtlHours by remember { mutableStateOf(settings.tempChatTtlHours) }
@@ -223,6 +235,11 @@ fun App() {
             onThemeModeChange = {
                 themeMode = it
                 settings.themeMode = it
+            },
+            fontSizeLevel = fontSizeLevel,
+            onFontSizeChange = {
+                fontSizeLevel = it
+                settings.fontSizeLevel = it
             },
             onBurnAfterReadingChange = {
                 burnAfterReading = it

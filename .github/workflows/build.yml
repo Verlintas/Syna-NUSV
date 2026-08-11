@@ -98,3 +98,13 @@ jobs:
             --notes "Automated build from GitHub Actions." \
             --repo "$GITHUB_REPOSITORY" || \
           gh release upload "$TAG" artifacts/* --clobber --repo "$GITHUB_REPOSITORY"
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 尽力而为的依赖漏洞扫描（网络/缓存失败不阻断主流程）
+      - uses: google/osv-scanner/actions/scanner@v1
+        continue-on-error: true
+        with:
+          args: --recursive --fail-on-vuln=false

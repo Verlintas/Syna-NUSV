@@ -37,6 +37,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -68,6 +69,8 @@ fun SettingsScreen(
     onUsernameChange: (String) -> Unit,
     onConnectionModeChange: (ConnectionMode) -> Unit,
     onThemeModeChange: (ThemeMode) -> Unit,
+    fontSizeLevel: Int,
+    onFontSizeChange: (Int) -> Unit,
     onBurnAfterReadingChange: (Boolean) -> Unit,
     onE2eEnabledChange: (Boolean) -> Unit,
     onE2eOnlyEnabledChange: (Boolean) -> Unit,
@@ -148,6 +151,25 @@ fun SettingsScreen(
         }
         Spacer(Modifier.height(16.dp))
         SectionTitle("外观")
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("字体大小", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            listOf("小" to 0, "中" to 1, "大" to 2).forEach { (label, level) ->
+                Text(
+                    text = if (fontSizeLevel == level) "● " else "○ ",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.clickable { onFontSizeChange(level) }.padding(end = 12.dp),
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
         ThemeMode.entries.forEach { mode ->
             Row(
                 modifier = Modifier
@@ -310,6 +332,15 @@ fun SettingsScreen(
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("◇Mirtazapine Shield")
+        // 首启向导：刚开启护盾时展示分步引导（可跳过）
+        var showWizard by remember { mutableStateOf(false) }
+        var wizardSeen by remember { mutableStateOf(false) }
+        LaunchedEffect(shieldEnabled) {
+            if (shieldEnabled && !wizardSeen) {
+                showWizard = true
+                wizardSeen = true
+            }
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -428,6 +459,28 @@ fun SettingsScreen(
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (showWizard) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { showWizard = false },
+                title = { Text("◇Mirtazapine Shield 配置向导") },
+                text = {
+                    Column {
+                        Text("1. 完成系统生物识别设置（指纹/面容）——解锁与敏感操作验证都需要。", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(4.dp))
+                        Text("2. （可选）开启双重验证并导入 TOTP 种子——解锁需动态码第二因子。", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(4.dp))
+                        Text("3. 授权使用情况访问（前台监控感知）——系统会弹出授权页。", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(4.dp))
+                        Text("4. 理解防护边界：本功能检测应用层可见的威胁；系统级预装监控/MDM 无法检测。", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.height(8.dp))
+                        Text("设置页可随时重新执行以上步骤。", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { showWizard = false }) { Text("知道了") }
+                },
+            )
+        }
         if (shieldEnabled) {
             Spacer(Modifier.height(16.dp))
             ShieldLivePanel(
