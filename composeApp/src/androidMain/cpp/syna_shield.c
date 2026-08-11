@@ -21,6 +21,7 @@
  * JVM 通道将位掩码接入威胁管道（SHIELD_TAMPERED / FRIDA_DETECTED）。
  */
 #include <jni.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
@@ -414,6 +415,8 @@ jint JNICALL Java_com_syna_shield_NativeShield_fridaMaps(JNIEnv *, jobject);
 jint JNICALL Java_com_syna_shield_NativeShield_fridaThreads(JNIEnv *, jobject);
 jint JNICALL Java_com_syna_shield_NativeShield_integrity(JNIEnv *, jobject);
 void JNICALL Java_com_syna_shield_NativeShield_crash(JNIEnv *, jobject);
+void JNICALL Java_com_syna_shield_NativeShield_gateBeat(JNIEnv *, jobject);
+jint JNICALL Java_com_syna_shield_NativeShield_gateFresh(JNIEnv *, jobject);
 
 static void verify_self_entries(void) {
     void *targets[] = {
@@ -424,6 +427,8 @@ static void verify_self_entries(void) {
         (void *)&verify_entry_file,
         (void *)&verify_self_entries,
         (void *)&Java_com_syna_shield_NativeShield_crash,
+        (void *)&Java_com_syna_shield_NativeShield_gateBeat,
+        (void *)&Java_com_syna_shield_NativeShield_gateFresh,
     };
     for (size_t i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
         if (verify_entry_file(targets[i])) {
@@ -485,6 +490,60 @@ static int scan_rwx_anon(void) {
         line = nl + 1;
     }
     return 0;
+}
+
+/* ================= native 心跳槽（JVM hook 免疫） ================= */
+
+/*
+ * 护盾自保：心跳 HMAC 计算与校验下沉 native——
+ * 攻击者 hook JVM 的 ShieldGate.beat() 可伪造 JVM 心跳，但 native 槽独立
+ * 维护（同一节拍调用），JVM hook 无法覆盖；解密路径校验双侧新鲜。
+ */
+static long g_native_beat = 0;
+static char g_native_fp[65];
+static unsigned char g_native_key[32];
+
+static void native_key_init(void) {
+    static int inited = 0;
+    if (!inited) {
+        for (int i = 0; i < 32; i++) g_native_key[i] = (unsigned char)(rand() & 0xff);
+        inited = 1;
+    }
+}
+
+JNIEXPORT void JNICALL Java_com_syna_shield_NativeShield_gateBeat(JNIEnv *env, jobject thiz) {
+    (void)env; (void)thiz;
+    native_key_init();
+    long t = (long)time(NULL);
+    g_native_beat = t;
+    /* HMAC-SHA256 前 64 hex 字符（简化：用现有 sha256 作 HMAC 近似，密钥混合） */
+    sha256_ctx c;
+    sha256_init(&c);
+    sha256_update(&c, g_native_key, 32);
+    char tmp[16];
+    snprintf(tmp, sizeof(tmp), "%ld", t);
+    sha256_update(&c, (const unsigned char *)tmp, strlen(tmp));
+    unsigned char out[32];
+    sha256_final(&c, out);
+    for (int i = 0; i < 32; i++) snprintf(g_native_fp + i * 2, 3, "%02x", out[i]);
+}
+
+JNIEXPORT jint JNICALL Java_com_syna_shield_NativeShield_gateFresh(JNIEnv *env, jobject thiz) {
+    (void)env; (void)thiz;
+    if (g_native_beat == 0) return 0;
+    if (labs((long)time(NULL) - g_native_beat) > 15) return 0;
+    /* 指纹校验：重算比对（防时间戳冻结） */
+    sha256_ctx c;
+    sha256_init(&c);
+    sha256_update(&c, g_native_key, 32);
+    char tmp[16];
+    snprintf(tmp, sizeof(tmp), "%ld", g_native_beat);
+    sha256_update(&c, (const unsigned char *)tmp, strlen(tmp));
+    unsigned char out[32];
+    sha256_final(&c, out);
+    char fp[65];
+    for (int i = 0; i < 32; i++) snprintf(fp + i * 2, 3, "%02x", out[i]);
+    return strcmp(fp, g_native_fp) == 0 ? 1 : 0;
 }
 
 /* ================= JNI 导出 ================= */

@@ -66,6 +66,9 @@ actual object ShieldStorageKey {
     actual fun decrypt(payload: ByteArray): ByteArray? {
         // Shield 门禁（fail-closed）：心跳停滞（检测线程被暂停/杀死）→ 拒绝解密
         if (!ShieldGate.isFresh()) return null
+        // native 心跳校验（JVM hook 免疫）：攻击者 hook JVM beat 伪造新鲜度，
+        // 但 native 槽独立停滞 → 解密仍拒绝
+        if (NativeShield.loaded && NativeShield.gateFresh() == 0) return null
         // 主动对抗：解密路径概率性完整性抽查（约每 8 次解密一次）——
         // 攻击者 hook 检测线程后周期扫描可能失效，但解密是攻击者必经之路，
         // 每次解密都是一个检测窗口（native 毫秒级开销）

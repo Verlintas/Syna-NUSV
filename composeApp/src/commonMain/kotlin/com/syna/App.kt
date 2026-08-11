@@ -82,6 +82,16 @@ fun App() {
             settings.shieldScreenProtection = true
             settings.shieldSelfDestruct = true
         }
+        // 重装/恢复备份引导：设备身份变化且护盾关闭 → 提示开启（自保：重装不能静默关掉防护）
+        try {
+            if (com.syna.storage.deviceIdentityChanged() && !settings.shieldEnabled) {
+                com.syna.util.notifyMessage(
+                    "Syna",
+                    "检测到设备身份变化（可能是重新安装或恢复备份）。建议开启 ◇Mirtazapine Shield 以保护本地数据。",
+                )
+            }
+        } catch (e: Exception) {
+        }
         shield.setSecureScreen(settings.shieldScreenProtection)
         shield.setMemoryWipeCallbacks(
             wipe = { engine.chatStore.releaseMemory() },

@@ -106,11 +106,28 @@ class AndroidShieldEngine private constructor(
         scanJob = scope.launch {
             var tick = 0L
             while (true) {
-                // 心跳节拍：驱动 ShieldGate 门禁（停滞 → 解密路径 fail-closed 拒绝）
-                ShieldGate.beat()
-                runLightChecks()
+                try {
+                    // 心跳节拍：驱动 ShieldGate 门禁（停滞 → 解密路径 fail-closed 拒绝）；
+                    // 同步驱动 native 心跳槽（JVM hook 免疫通道）
+                    ShieldGate.beat()
+                    if (NativeShield.loaded) {
+                        NativeShield.gateBeat()
+                    }
+                    runLightChecks()
+                    if (tick % (HEAVY_SCAN_INTERVAL_MS / LIGHT_SCAN_INTERVAL_MS) == 0L) {
+                        runHeavyChecks()
+                    }
+                } catch (e: Throwable) {
+                    // 自保：单轮检测异常不得杀死扫描循环（否则心跳停滞，
+                    // 虽然门禁 fail-closed 保护数据，但护盾自身失去响应能力）
+                    println("[Syna:Shield] scan error: ${e.message}")
+                }
+                // 重量级检测（APK 哈希等）耗时可观：结束后刷新双侧心跳
                 if (tick % (HEAVY_SCAN_INTERVAL_MS / LIGHT_SCAN_INTERVAL_MS) == 0L) {
-                    runHeavyChecks()
+                    ShieldGate.beat()
+                    if (NativeShield.loaded) {
+                        NativeShield.gateBeat()
+                    }
                 }
                 tick++
                 // 扫描间隔抖动（+0~2s）：防止攻击者精确预测检测时机

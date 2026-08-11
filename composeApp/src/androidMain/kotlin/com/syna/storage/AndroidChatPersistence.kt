@@ -19,6 +19,30 @@ actual fun copyTextToClipboard(text: String) {
     }
 }
 
+actual fun deviceIdentityChanged(): Boolean {
+    return try {
+        val androidId = android.provider.Settings.Secure.getString(
+            com.syna.SynaApp.context.contentResolver,
+            android.provider.Settings.Secure.ANDROID_ID,
+        ) ?: return false
+        val baseFile = java.io.File(com.syna.SynaApp.context.filesDir, "syna_device_base")
+        if (!baseFile.exists()) {
+            // 首次：固化基准
+            baseFile.writeBytes(com.syna.shield.ShieldStorageKey.encryptWithMaster(androidId.toByteArray()) ?: return false)
+            return false
+        }
+        val base = com.syna.shield.ShieldStorageKey.decryptWithMaster(baseFile.readBytes())?.decodeToString()
+        if (base != null && base != androidId) {
+            // 更新基准（下次不再提示）
+            baseFile.writeBytes(com.syna.shield.ShieldStorageKey.encryptWithMaster(androidId.toByteArray()) ?: return false)
+            return true
+        }
+        false
+    } catch (e: Exception) {
+        false
+    }
+}
+
 actual fun destructPlatformArtifacts() {
     try {
         val dir = com.syna.SynaApp.context.filesDir

@@ -595,6 +595,9 @@ class ShieldController(
     private var selfDestructCallback: (() -> Unit)? = null
     private var destructedFor: String? = null
 
+    // 审计写入失败计数（自保：存储异常阻止审计 → 篡改信号）
+    private var auditWriteFails = 0
+
     // 生物识别失败计数（暴力防护；持久化防重启清零）
     private val biometricFailsM = MutableStateFlow(loadBiometricFails())
     val biometricFails: StateFlow<Int> = biometricFailsM.asStateFlow()
@@ -1182,7 +1185,15 @@ class ShieldController(
                         keep.forEach { out.write((it + "\n").toByteArray()) }
                     }
                 }
+                auditWriteFails = 0
             } catch (e: Exception) {
+                // 自保：审计写入持续失败（存储只读/被填满阻止记录）→ 篡改信号
+                auditWriteFails++
+                if (auditWriteFails >= AUDIT_FAIL_LIMIT) {
+                    auditWriteFails = 0
+                    reportThreat(ShieldThreat.SHIELD_TAMPERED)
+                    setThreatDetail(ShieldThreat.SHIELD_TAMPERED, "审计日志写入失败（存储异常）")
+                }
             }
         }
     }
@@ -1236,6 +1247,7 @@ class ShieldController(
         const val MAX_PERSISTED_EVENTS = 2_000 // 事件文件封顶（防无限增长）
         const val GENESIS_HASH = "genesis" // 哈希链起点
         const val BIOMETRIC_FAIL_LIMIT = 5
+        const val AUDIT_FAIL_LIMIT = 5 // 审计连续写入失败上限
         const val MEMORY_WIPE_DELAY_MS = 60_000L // 切后台 60 秒后擦除内存明文
 
         /** 进程级当前实例（供通知隐藏等模块读取锁定状态） */

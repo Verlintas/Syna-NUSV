@@ -47,4 +47,10 @@ object NativeShield {
 
     /** 主动崩溃：高置信度攻击信号（ptrace/代码被 hook）时立即 SIGABRT，防慢慢调试 */
     external fun crash()
+
+    /** native 心跳节拍（护盾自保：JVM hook 无法伪造 native 槽） */
+    external fun gateBeat()
+
+    /** native 心跳新鲜度（时间戳 + HMAC 指纹校验） */
+    external fun gateFresh(): Int
 }

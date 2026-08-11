@@ -113,6 +113,13 @@ expect fun destructPlatformArtifacts()
 expect fun copyTextToClipboard(text: String)
 
 /**
+ * 设备身份变化检查（重装/恢复备份）：与上次运行基准比对。
+ * 独立于 Shield 启停运行（Shield 关闭时也能检测并引导用户开启）。
+ * Android：ANDROID_ID 主密钥加密基准；桌面：恒 false。
+ */
+expect fun deviceIdentityChanged(): Boolean
+
+/**
  * 聊天记录 JSONL 文件持久化（零依赖、跨平台一致）：
  * 启动加载全部消息，变更后全量重写（保留最近 [MAX_MESSAGES] 条防无限增长）。
  */

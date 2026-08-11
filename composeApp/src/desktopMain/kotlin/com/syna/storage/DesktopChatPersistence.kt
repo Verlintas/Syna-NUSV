@@ -26,6 +26,8 @@ actual fun copyTextToClipboard(text: String) {
     }
 }
 
+actual fun deviceIdentityChanged(): Boolean = false
+
 actual fun destructPlatformArtifacts() {
     try {
         val dir = java.io.File(System.getProperty("user.home") ?: ".", ".syna")
