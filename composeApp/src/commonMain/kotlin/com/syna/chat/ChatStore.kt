@@ -222,7 +222,7 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
             list.map { conv ->
                 if (conv.peerId == conversationId) {
                     conv.copy(
-                        lastMessage = if (last == null) "" else if (last.burnAfterReading) "🔥 阅后即焚消息" else last.body,
+                        lastMessage = if (last == null) "" else if (last.burnAfterReading) "[焚] 阅后即焚消息" else last.body,
                         lastTs = last?.ts ?: conv.lastTs,
                     )
                 } else conv
@@ -252,7 +252,7 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
                         conv.copy(lastMessage = "", lastTs = conv.lastTs)
                     } else {
                         conv.copy(
-                            lastMessage = if (last.burnAfterReading) "🔥 阅后即焚消息" else last.body,
+                            lastMessage = if (last.burnAfterReading) "[焚] 阅后即焚消息" else last.body,
                             lastTs = last.ts,
                         )
                     }

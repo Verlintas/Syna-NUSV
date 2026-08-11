@@ -48,7 +48,7 @@ import kotlin.uuid.Uuid
 class SynaEngine(
     val settings: SettingsRepository,
     private val scope: CoroutineScope,
-    private val version: String = "0.9.2",
+    private val version: String = "0.9.3",
     private val discoveryIntervalMs: Long = DISCOVERY_INTERVAL_MS,
     private val peerTimeoutMs: Long = PEER_TIMEOUT_MS,
     private val sweepIntervalMs: Long = SWEEP_INTERVAL_MS,
@@ -373,7 +373,7 @@ class SynaEngine(
                         replyToId = frame.replyTo,
                         mentions = frame.mentions,
                     ),
-                    preview = if (frame.burn) "🔥 阅后即焚消息" else frame.body ?: "",
+                    preview = if (frame.burn) "[焚] 阅后即焚消息" else frame.body ?: "",
                 )
                 if (frame.burn) {
                     pendingBurnsM.updateList { it + Triple(frame.from, frame.msgId, frame.from) }
@@ -415,7 +415,7 @@ class SynaEngine(
                         replyToId = frame.replyTo,
                         mentions = frame.mentions,
                     ),
-                    preview = if (frame.burn) "🔥 阅后即焚消息" else frame.body ?: "",
+                    preview = if (frame.burn) "[焚] 阅后即焚消息" else frame.body ?: "",
                     )
                     if (frame.burn) {
                         pendingBurnsM.updateList { it + Triple(groupId, frame.msgId, frame.from) }
@@ -1031,8 +1031,8 @@ class SynaEngine(
         if (message.recalled) return
         val text = when (message.kind) {
             MessageKind.TEXT -> message.body
-            MessageKind.IMAGE -> "🖼 [图片] ${message.fileName ?: ""}".trim()
-            MessageKind.FILE -> "📄 [文件] ${message.fileName ?: ""}".trim()
+            MessageKind.IMAGE -> "[图片] ${message.fileName ?: ""}".trim()
+            MessageKind.FILE -> "[文件] ${message.fileName ?: ""}".trim()
         }
         if (text.isBlank()) return
         if (groupsM.value.any { it.id == targetConversationId }) {
@@ -1402,7 +1402,7 @@ class SynaEngine(
                     fileSize = assembler.fileSize,
                     localPath = path,
                 ),
-                preview = if (kind == MessageKind.IMAGE) "🖼 ${assembler.fileName}" else "📄 ${assembler.fileName}",
+                preview = if (kind == MessageKind.IMAGE) "[图片] ${assembler.fileName}" else "[文件] ${assembler.fileName}",
             )
             synaLog("File") { "received ${assembler.fileName} (${assembler.fileSize}B) -> $path" }
             // 文件送达确认（发送方据此停止重传）
@@ -1413,7 +1413,7 @@ class SynaEngine(
     /** 通知发送：Shield 锁定期间不泄露消息内容 */
     private fun notifyMessageSafe(title: String, body: String) {
         if (com.syna.shield.ShieldController.isLocked) {
-            notifyMessage("🔒 Syna 已锁定", "收到新消息（Shield 锁定期间不显示内容）")
+            notifyMessage("[锁] Syna 已锁定", "收到新消息（Shield 锁定期间不显示内容）")
         } else {
             notifyMessage(title, body)
         }

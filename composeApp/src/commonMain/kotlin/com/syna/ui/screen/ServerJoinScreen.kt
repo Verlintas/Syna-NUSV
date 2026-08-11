@@ -142,7 +142,7 @@ fun ServerJoinScreen(
 
         when (serverState) {
             ServerState.CONNECTED -> Text(
-                "✅ 已加入服务器，正在打开群聊…",
+                "[已授权] 已加入服务器，正在打开群聊…",
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(top = 12.dp),
             )

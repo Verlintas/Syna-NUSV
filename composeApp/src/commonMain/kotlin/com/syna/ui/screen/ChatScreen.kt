@@ -215,7 +215,7 @@ fun ChatScreen(
                 if (peerKey != null) {
                     val fp = com.syna.shield.KeyPinning.fingerprint(peerKey)
                     Text(
-                        text = "🔑 $fp",
+                        text = "指纹 $fp",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
@@ -422,7 +422,7 @@ fun ChatScreen(
             verticalAlignment = Alignment.Bottom,
         ) {
             Text(
-                text = "🔥",
+                text = "焚",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier
                     .clip(CircleShape)
@@ -492,7 +492,7 @@ fun ChatScreen(
                 }
             }
             Text(
-                text = if (recording) "● ${recordingSecs}s" else "🎤",
+                text = if (recording) "● ${recordingSecs}s" else "录音",
                 style = MaterialTheme.typography.titleMedium,
                 color = if (recording) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 modifier = Modifier
@@ -592,7 +592,7 @@ fun ChatScreen(
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.primary),
             ) {
-                Text("➤", color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.padding(start = 2.dp))
+                Text("发送", color = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.padding(start = 2.dp))
             }
         }
 
@@ -690,12 +690,12 @@ fun ChatScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "$mName${if (memberId == group.creatorId) " 👑" else if (isAdminMember) " ⭐" else ""}${if (muted) " 🔇" else ""}",
+                                        text = "$mName${if (memberId == group.creatorId) " [群主]" else if (isAdminMember) " [管理员]" else ""}${if (muted) " [禁言]" else ""}",
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                     if (memberFp != null) {
                                         Text(
-                                            text = "🔑 $memberFp",
+                                            text = "指纹 $memberFp",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -745,7 +745,7 @@ fun ChatScreen(
                         val pinned = com.syna.shield.KeyPinning.pinnedKey(peerId)
                         if (pinned != null && pinned != key) {
                             Text(
-                                "⚠️ 该公钥与已固定指纹不一致（密钥变更被拒）——确认安全后可点击下方按钮信任新密钥",
+                                "[警告] 该公钥与已固定指纹不一致（密钥变更被拒）——确认安全后可点击下方按钮信任新密钥",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.error,
                             )
@@ -886,11 +886,11 @@ private fun MessageBubble(
                     }
                     Row {
                         if (message.burnAfterReading) {
-                            Text("🔥", style = MaterialTheme.typography.bodyMedium)
+                            Text("焚", style = MaterialTheme.typography.bodyMedium)
                             Spacer(Modifier.size(4.dp))
                         }
                         if (message.encrypted) {
-                            Text("🔒", style = MaterialTheme.typography.bodyMedium)
+                            Text("[锁]", style = MaterialTheme.typography.bodyMedium)
                             Spacer(Modifier.size(4.dp))
                         }
                         when (message.kind) {
@@ -915,11 +915,11 @@ private fun MessageBubble(
                                                 .clip(RoundedCornerShape(8.dp)),
                                         )
                                     } else {
-                                        Text("🖼 ${message.fileName ?: "图片"}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                                        Text("图片 ${message.fileName ?: "图片"}", style = MaterialTheme.typography.bodyMedium, color = textColor)
                                     }
                                 } else {
                                     Text(
-                                        "🖼 ${message.fileName ?: "图片"}${message.progress?.let { " ($it%)" } ?: ""}",
+                                        "图片 ${message.fileName ?: "图片"}${message.progress?.let { " ($it%)" } ?: ""}",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = textColor,
                                     )
@@ -941,7 +941,7 @@ private fun MessageBubble(
                                             }
                                             .padding(vertical = 2.dp),
                                     ) {
-                                        Text("▶️", style = MaterialTheme.typography.titleMedium, color = textColor)
+                                        Text("[播放]", style = MaterialTheme.typography.titleMedium, color = textColor)
                                         Spacer(Modifier.width(6.dp))
                                         Text(
                                             "语音 ${message.fileSize?.let { "${it / 1024}KB" } ?: ""}",
@@ -950,7 +950,7 @@ private fun MessageBubble(
                                         )
                                     }
                                 } else {
-                                    Text("📄 ${message.fileName ?: "文件"}${message.fileSize?.let { " · ${it / 1024}KB" } ?: ""}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
+                                    Text("文件 ${message.fileName ?: "文件"}${message.fileSize?.let { " · ${it / 1024}KB" } ?: ""}${message.progress?.let { " ($it%)" } ?: ""}", style = MaterialTheme.typography.bodyMedium, color = textColor)
                                 }
                             }
                             MessageKind.TEXT -> Text(

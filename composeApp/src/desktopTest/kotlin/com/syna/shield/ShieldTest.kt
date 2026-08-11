@@ -23,9 +23,9 @@ class ShieldTest {
         assertEquals(ShieldState.LOCKED, controller.state.value)
         assertTrue(ShieldThreat.DEBUG_MODE in controller.threats.value)
 
-        // 威胁消除 → 回到监测中（仍锁定，需用户解锁）
+        // 威胁消除 → 仅清列表；仍保持锁定（v0.9.3：威胁消除≠解锁，防免验证绕过）
         controller.clearThreat(ShieldThreat.DEBUG_MODE)
-        assertEquals(ShieldState.ARMED, controller.state.value)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
         assertTrue(controller.threats.value.isEmpty())
 
         // 解锁（桌面引擎直接确认）
@@ -310,6 +310,28 @@ class ShieldHardeningTest {
         assertEquals(ThreatSeverity.LOW, ShieldThreat.SUSPICIOUS_MODULE.severity())
         // DEBUG_MODE 已降级（不触发自毁误杀）
         assertEquals(ThreatSeverity.HIGH, ShieldThreat.DEBUG_MODE.severity())
+    }
+
+    @Test
+    fun threatClearedWhileLockedStaysLocked() {
+        // 回归：锁定后威胁被引擎清除（VPN 恢复等）不得免验证解锁（v0.9.3 漏洞修复）
+        val controller = ShieldController(enabled = true, eventsPathOverride = tempPath())
+        controller.start()
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        // 威胁消失 → 仅清列表，状态必须保持 LOCKED（仍需生物识别验证）
+        controller.clearThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.LOCKED, controller.state.value, "威胁消除≠解锁：必须保持锁定")
+        assertTrue(controller.threats.value.isEmpty())
+        // 解锁后威胁清除 → 回 ARMED
+        controller.requestUnlock()
+        assertEquals(ShieldState.UNLOCKED, controller.state.value)
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        controller.requestUnlock()
+        controller.clearThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.ARMED, controller.state.value, "UNLOCKED 后威胁清除应回 ARMED")
+        controller.stop()
+        ShieldGate.disarm()
     }
 
     @Test

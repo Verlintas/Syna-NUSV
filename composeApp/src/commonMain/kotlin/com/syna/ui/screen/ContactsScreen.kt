@@ -73,7 +73,7 @@ fun ContactsScreen(
                 modifier = Modifier.weight(1f),
             )
             Text(
-                text = "⟳ 刷新",
+                text = "刷新 刷新",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier

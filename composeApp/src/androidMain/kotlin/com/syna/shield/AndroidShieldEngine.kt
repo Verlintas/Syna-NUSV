@@ -182,6 +182,7 @@ class AndroidShieldEngine private constructor(
         checkWeakLock()
         checkImeChange()
         checkUsbChange()
+        checkSystemProxy()
         val suspicious = suspiciousModules()
         if (suspicious.isNotEmpty()) {
             onThreat(ShieldThreat.SUSPICIOUS_MODULE)
@@ -332,6 +333,21 @@ class AndroidShieldEngine private constructor(
                 onThreat(ShieldThreat.IME_CHANGED)
             }
             if (ime.isNotEmpty()) lastIme = ime
+        } catch (e: Exception) {
+        }
+    }
+
+    /** 系统代理检测：全局 HTTP 代理被设置 → 流量可能经第三方中转（advisory） */
+    private fun checkSystemProxy() {
+        try {
+            val proxy = Settings.Global.getString(context.contentResolver, Settings.Global.HTTP_PROXY) ?: ""
+            if (proxy.isNotBlank()) {
+                onThreat(ShieldThreat.PROXY_SET)
+                ShieldController.current?.setThreatDetail(
+                    ShieldThreat.PROXY_SET,
+                    "代理: $proxy",
+                )
+            }
         } catch (e: Exception) {
         }
     }
@@ -879,14 +895,17 @@ class AndroidShieldEngine private constructor(
                     }
 
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        // 失败计数统一由控制器 onBiometricFailed 处理（防双计数）；
-                        // 硬件不可用/未录入（设备无生物识别）不计入暴力失败——否则每次点击都累积自毁倒计时
-                        if (errorCode != XBiometricPrompt.ERROR_USER_CANCELED &&
-                            errorCode != XBiometricPrompt.ERROR_NO_BIOMETRICS &&
-                            errorCode != XBiometricPrompt.ERROR_HW_UNAVAILABLE &&
-                            errorCode != XBiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL
-                        ) {
-                            onResult(false)
+                        when {
+                            // 硬件不可用/未录入：提示但不计入暴力失败（防每次点击累积自毁倒计时）
+                            errorCode == XBiometricPrompt.ERROR_NO_BIOMETRICS ||
+                                errorCode == XBiometricPrompt.ERROR_HW_UNAVAILABLE ||
+                                errorCode == XBiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL -> {
+                                ShieldController.current?.onBiometricUnavailable()
+                            }
+                            // 用户取消：静默
+                            errorCode == XBiometricPrompt.ERROR_USER_CANCELED -> Unit
+                            // 其余错误：按失败处理（计入暴力计数）
+                            else -> onResult(false)
                         }
                     }
 

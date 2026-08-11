@@ -115,6 +115,11 @@ enum class ShieldThreat(
         "检测到对端密钥变更",
         "对方的加密密钥发生变化，可能是重装应用或中间人攻击，请核对密钥指纹",
     ),
+    PROXY_SET(
+        "proxy",
+        "检测到系统代理配置",
+        "系统设置了全局 HTTP 代理，网络流量可能经第三方中转",
+    ),
     SHIELD_TAMPERED(
         "tampered",
         "检测到安全设置被篡改",
@@ -220,6 +225,7 @@ fun ShieldThreat.severity(): ThreatSeverity = when (this) {
     ShieldThreat.IME_CHANGED,
     ShieldThreat.USB_CHANGED,
     ShieldThreat.SUSPICIOUS_MODULE,
+    ShieldThreat.PROXY_SET,
     -> ThreatSeverity.LOW
 }
 
@@ -791,9 +797,10 @@ class ShieldController(
         threatsM.value = current
         threatDetailsM.value = threatDetailsM.value - threat
         recordEvent(threat, ShieldAction.CLEARED)
-        // 威胁全部消除后回到监测中（仍需用户解锁才能使用）；
-        // AWAITING_TOTP 中不回退（第二因子验证未完成，防止绕过）
-        if (current.isEmpty() && stateM.value != ShieldState.AWAITING_TOTP) {
+        // 仅 UNLOCKED 状态回 ARMED（威胁消除 ≠ 解锁）：
+        // LOCKED/AWAITING_TOTP 必须保持锁定，仍需生物识别/第二因子验证——
+        // 否则锁定后威胁一消失（VPN 恢复等）就免验证进入应用（绕过漏洞）
+        if (current.isEmpty() && stateM.value == ShieldState.UNLOCKED) {
             setState(ShieldState.ARMED)
         }
     }
@@ -918,12 +925,29 @@ class ShieldController(
 
     /** 开启双重验证：生成种子并保存（首次需在 TOTP 应用中导入 otpauth URI） */
     fun enableTotp(): String? {
+        // 先清理可能损坏的旧种子文件（否则 load 校验失败 → 永远无法启用）
+        TotpSeedStore.clear(totpSeedPath)
         val seed = TotpCode.newSeed()
         // 种子保存失败则不启用（避免"看似开启实则无种子"的永久锁定）
         TotpSeedStore.save(seed, totpSeedPath)
-        if (TotpSeedStore.load(totpSeedPath) == null) return null
+        if (TotpSeedStore.load(totpSeedPath) == null) {
+            // 不静默失败：明确告知用户
+            try {
+                com.syna.util.notifyMessage("Syna", "双重验证启用失败：安全存储不可用")
+            } catch (e: Exception) {
+            }
+            return null
+        }
         totpEnabledM.value = true
         return TotpCode.otpauthUri(seed, deviceLabel())
+    }
+
+    /** 生物识别硬件不可用（未录入/无传感器）：提示但不计入暴力失败 */
+    fun onBiometricUnavailable() {
+        try {
+            com.syna.util.notifyMessage("Syna", "设备无可用生物识别，请先录入指纹或面容")
+        } catch (e: Exception) {
+        }
     }
 
     /** 关闭双重验证：清除种子（需先处于已解锁或监测状态） */

@@ -356,7 +356,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (usageGranted) "✅ 使用情况访问已授权（前台感知已生效）"
+                    text = if (usageGranted) "[已授权] 使用情况访问已授权（前台感知已生效）"
                     else "👉 授予使用情况访问权限（增强前台监控感知）",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (usageGranted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -448,7 +448,7 @@ fun SettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             PermissionState.GRANTED -> Text(
-                "✅ 通知权限已授权",
+                "[已授权] 通知权限已授权",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -459,7 +459,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    "⚠️ 通知权限未授予，新消息将无法在通知栏提醒",
+                    "[警告] 通知权限未授予，新消息将无法在通知栏提醒",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f),
@@ -533,8 +533,8 @@ private fun ShieldLivePanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (health.gateFresh) "✅ 监测心跳正常（解密门禁放行）"
-                else "⚠️ 监测心跳停滞（解密已拒绝，fail-closed 生效）",
+                if (health.gateFresh) "[已授权] 监测心跳正常（解密门禁放行）"
+                else "[警告] 监测心跳停滞（解密已拒绝，fail-closed 生效）",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (health.gateFresh) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 modifier = Modifier.weight(1f),
@@ -548,7 +548,7 @@ private fun ShieldLivePanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (health.watchdogAlive) "✅ 看门狗哨兵正常（环形互盯 · 随机节拍）"
+                if (health.watchdogAlive) "[已授权] 看门狗哨兵正常（环形互盯 · 随机节拍）"
                 else "🔴 看门狗已触发 ${health.watchdogTrips} 次（检测线程停滞）",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (health.watchdogAlive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
@@ -563,8 +563,8 @@ private fun ShieldLivePanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                if (honeypot) "⚠️ 假锁模式已激活（注入类威胁，密钥已释放）"
-                else "✅ 假锁模式未激活",
+                if (honeypot) "[警告] 假锁模式已激活（注入类威胁，密钥已释放）"
+                else "[已授权] 假锁模式未激活",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (honeypot) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 modifier = Modifier.weight(1f),
@@ -579,8 +579,8 @@ private fun ShieldLivePanel(
         ) {
             val fails = health.biometricFailCount
             Text(
-                if (fails == 0) "✅ 生物识别失败计数：0（上限 ${com.syna.shield.ShieldController.BIOMETRIC_FAIL_LIMIT}）"
-                else "⚠️ 生物识别失败计数：$fails（上限 ${com.syna.shield.ShieldController.BIOMETRIC_FAIL_LIMIT}，达到后释放密钥并自毁）",
+                if (fails == 0) "[已授权] 生物识别失败计数：0（上限 ${com.syna.shield.ShieldController.BIOMETRIC_FAIL_LIMIT}）"
+                else "[警告] 生物识别失败计数：$fails（上限 ${com.syna.shield.ShieldController.BIOMETRIC_FAIL_LIMIT}，达到后释放密钥并自毁）",
                 style = MaterialTheme.typography.bodySmall,
                 color = if (fails == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                 modifier = Modifier.weight(1f),
