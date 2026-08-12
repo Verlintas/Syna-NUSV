@@ -58,6 +58,17 @@ actual object SynaCrypto {
         return PublicKeyBytes(bytes)
     }
 
+    actual fun isValidPublicKey(publicKeyB64: String): Boolean {
+        return try {
+            val bytes = Base64.getDecoder().decode(publicKeyB64)
+            val spec = java.security.spec.X509EncodedKeySpec(bytes)
+            KeyFactory.getInstance("X25519").generatePublic(spec)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     actual fun deriveSessionKey(privateBytes: ByteArray, peerPublicKeyB64: String, peerId: String): SessionKey {
         val privateKey = KeyFactory.getInstance("X25519")
             .generatePrivate(PKCS8EncodedKeySpec(privateBytes)) as PrivateKey

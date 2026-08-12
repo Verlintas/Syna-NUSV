@@ -154,7 +154,7 @@ In the Syna app: **Contacts → Join Server → enter `public-address:port` + pa
 # Android release APK (requires signing config in local.properties)
 ./gradlew :composeApp:assembleRelease
 
-# Tests (86: crypto / protocol / loopback chat / group mesh / burn-after-reading / temp chat / offline outbox / server join+chat+history+burn / ACK retransmission / group admin / file transfer / process-epoch forward secrecy / 6-engine message storm / shield gate·watchdog·honeypot·brute-force·TOTP·TOFU·module whitelist·memfd)
+# Tests (88: crypto / protocol / loopback chat / group mesh / burn-after-reading / temp chat / offline outbox / server join+chat+history+burn / ACK retransmission / group admin / file transfer / process-epoch forward secrecy / 6-engine message storm / shield gate·watchdog·honeypot·brute-force·TOTP·TOTP-cancel·TOFU·module whitelist·memfd)
 ./gradlew :composeApp:desktopTest
 ```
 

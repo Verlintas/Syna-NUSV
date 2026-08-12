@@ -9,6 +9,30 @@ Format: `version — date — summary`. Releases:
 
 ---
 
+## [1.0.0] — 2026-08-12 — Stable: full code review & license audit pass
+
+### Stability & correctness (19 issues fixed, verified by a full code review)
+- **Outbox no longer drops failed sends**: TCP send failures rethrow into the flush loop, so frames stay queued for reconnect instead of being marked "sent" and lost
+- **Server recall ownership check fixed**: looked up the wrong field (recall frame's own id) — any member could forge recalls; now validated by target message id + sender + group
+- **Encrypt-only made complete**: mesh group text and 1:1 file transfer no longer fall back to plaintext (queue / wait for key instead); receiver drops plaintext message frames in encrypt-only mode (LAN injection defense)
+- **Mesh group file chunks now go to the correct member** (member-index misalignment after keyless-member filtering)
+- **App upgrades no longer trigger self-destruct**: the dex baseline is rewritten on versionCode change (previously any update tripped SHIELD_TAMPERED → data wipe)
+- **Session-key rotation hardened**: atomic blob writes (crash no longer makes all data undecryptable); the migration key is released only after a successful rewrite
+- **Biometric system errors (LOCKOUT/TIMEOUT…) no longer count toward brute-force self-destruct**
+- **Late-key frames decrypted on pin, epoch recorded only after successful key pin** (replay-poisoning of the session epoch closed)
+- **Deduped retransmissions re-ACKed** (no more stuck SENT/outbox), FILE_CHUNK cross-frame bounds validated, replay window extended to group frames, burn sweep marks cleaned, server group BURN_ACK purge fixed, member public keys validated on the server, server crash auto-restart unblocked, audit-log truncation keeps the hash chain intact, suspicious-module whitelist uses exact names (no `evil-linker.so` bypass), TOTP waiting screen gained a cancel button (unlock cancel → LOCKED, disable cancel → ARMED, never counts as brute force)
+- **Atomic writes everywhere**: key pins, master key, identity files; plaintext tmp fallback removed (fail-closed)
+- **First-launch wizard persisted**; self-destruct also wipes the outbox cache; update checker ignores pre-release tags
+
+### License & legal
+- **Full license audit**: all ~140 runtime dependencies are Apache-2.0 / MIT, all GPL-3.0-compatible — no contamination
+- **Dependency vulnerability check (OSV)**: 0 known vulnerabilities on all direct dependencies
+- **Copyright headers**: 100% of source files carry the GPL-3.0 SPDX header (94 files); keystore/password confirmed never committed
+- Full audit report: `docs/REVISION_AND_LICENSE_AUDIT_v1.0.0.md` (English, detailed)
+
+### Tests
+- 88 (added TOTP cancel flow tests)
+
 ## [0.9.9] — 2026-08-11 — RC: forward secrecy, encrypt-only default, storm-tested, UX polish
 
 ### Security

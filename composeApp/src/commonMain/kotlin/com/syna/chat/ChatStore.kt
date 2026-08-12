@@ -117,9 +117,11 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         rewriteJob?.cancel()
         rewriteJob = persistScope.launch {
             delay(500)
-            // 越过 delay 后再次校验（取消不可中断的阻塞写期间内存可能被清空）
+            // 先捕获内存快照再校验标志：检查与读取之间内存可能被清空
+            // （releaseMemory 在另一线程置位）——避免"空内存"覆盖磁盘历史
+            val snapshot = messagesM.value
             if (!memoryWiped) {
-                persistence.rewrite(messagesM.value)
+                persistence.rewrite(snapshot)
             }
         }
     }
@@ -130,9 +132,8 @@ class ChatStore(private val persistence: ChatPersistence? = null) {
         list.any { !it.id.startsWith("decoy-") }
     }
 
-    fun rewriteNow() {
-        persistence?.rewrite(messagesM.value)
-    }
+    /** 立即全量重写持久化文件（会话密钥轮换迁移用；用当前密钥重新加密全部数据）。返回是否成功 */
+    fun rewriteNow(): Boolean = persistence?.rewrite(messagesM.value) ?: true
 
     fun addIncoming(peerId: String, peerName: String, msg: ChatMessage, preview: String = msg.body) {
         messagesM.updateMap { it + (peerId to (it[peerId] ?: emptyList()) + msg) }

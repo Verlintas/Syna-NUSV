@@ -42,8 +42,13 @@ object UpdateChecker {
     }
 
     private fun isNewer(latest: String, current: String): Boolean {
-        val lp = latest.split(".").mapNotNull { it.toIntOrNull() }
-        val cp = current.split(".").mapNotNull { it.toIntOrNull() }
+        // 预发布/非正式 tag（RC/beta/alpha 等）不通知——"0.9.10-RC1" 按数字段
+        // 会被误判为正式新版本
+        if (!latest.matches(Regex("^\\d+(\\.\\d+)*$")) || !current.matches(Regex("^\\d+(\\.\\d+)*$"))) {
+            return false
+        }
+        val lp = latest.split(".").map { it.toInt() }
+        val cp = current.split(".").map { it.toInt() }
         for (i in 0 until maxOf(lp.size, cp.size)) {
             val l = lp.getOrElse(i) { 0 }
             val c = cp.getOrElse(i) { 0 }

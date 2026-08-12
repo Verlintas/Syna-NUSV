@@ -25,6 +25,8 @@ expect object SynaCrypto {
     fun generateKeyPair(): IdentityKey
     fun publicKeyB64(identity: IdentityKey): String
     fun parsePublicKey(publicKeyB64: String): PublicKeyBytes
+    /** 校验字符串是否为可解析的 X25519 公钥（防垃圾公钥入库毒化会话） */
+    fun isValidPublicKey(publicKeyB64: String): Boolean
     fun deriveSessionKey(privateBytes: ByteArray, peerPublicKeyB64: String, peerId: String): SessionKey
     fun deriveFromPassword(password: String, salt: String, info: String = "syna-server-channel"): SessionKey
     fun encrypt(key: SessionKey, plaintext: String): String

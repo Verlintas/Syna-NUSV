@@ -129,8 +129,8 @@ android {
                 abiFilters("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
             }
         }
-        versionCode = 24
-        versionName = "0.9.9"
+        versionCode = 25
+        versionName = "1.0.0"
         // 官方签名指纹（SHA-256 十六进制）：release 签名 keystore 固定，
         // 运行时校验 APK 签名一致性，防止重打包/重新签名绕过护盾
         buildConfigField("String", "SYNA_SIGNATURE_HASH", "\"745317298590e69ddd48c94902c24209918fe1c19e104bb3ce1ca05263c2c4d7\"")

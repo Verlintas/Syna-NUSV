@@ -191,7 +191,7 @@ class SynaServer(
                     ts = System.currentTimeMillis(),
                     body = synaJson.encodeToString(
                         ServerHello.serializer(),
-                        ServerHello(serverId, salt, "0.9.9", groupName),
+                        ServerHello(serverId, salt, "1.0.0", groupName),
                     ),
                 ),
             )
@@ -217,7 +217,11 @@ class SynaServer(
             }
             session.userId = auth.userId
 
-            // 3. 注册成员 + 广播加入
+            // 3. 注册成员 + 广播加入（公钥格式校验：防垃圾公钥入库毒化全员会话）
+            if (auth.publicKeyB64.isNotBlank() && !com.syna.crypto.SynaCrypto.isValidPublicKey(auth.publicKeyB64)) {
+                log("[SynaServer] 拒绝无效公钥: ${auth.userId.take(6)}")
+                return
+            }
             val isNew = auth.userId !in memberMap
             synchronized(memberMap) { memberMap[auth.userId] = ServerMember(auth.userId, auth.username, auth.publicKeyB64) }
             publishMembers()
@@ -333,18 +337,20 @@ class SynaServer(
             }
             FrameType.SRV_LEAVE -> throw IOException("client leave")
             FrameType.BURN_ACK -> {
-                // 鉴权：目标消息须为阅后即焚，且请求者须为该群成员（BURN_ACK 由接收者发出）
+                // 鉴权：目标消息须为阅后即焚，且目标属于本服务器群（群消息 to=groupId，
+                // 成员 id 与群 id 永不可能相等——旧条件恒不成立，群 burn 永远清不掉历史）
                 val msgId = frame.body ?: ""
                 val target = synchronized(messages) { messages.firstOrNull { it.msgId == msgId } }
-                if (target != null && target.burn && target.to == session.userId) {
+                if (target != null && target.burn && target.to == groupId) {
                     purgeMessage(msgId)
                     broadcast(frame, except = session)
                 }
             }
             FrameType.RECALL -> {
-                // 归属校验：仅消息原发送者可撤回（防任意成员撤回他人消息）
-                val target = synchronized(messages) { messages.firstOrNull { it.msgId == frame.msgId } }
-                if (target != null && target.from != session.userId) return
+                // 归属校验：仅消息原发送者可撤回（防任意成员撤回他人消息）。
+                // 客户端撤回帧格式：msgId=新UUID、body=目标消息id——必须查 body。
+                val target = synchronized(messages) { messages.firstOrNull { it.msgId == frame.body } }
+                if (target == null || target.from != session.userId || target.to != groupId) return
                 // 撤回帧也持久化，保证后加入者回放历史时能看到撤回标记
                 synchronized(messages) {
                     if (messages.none { it.msgId == frame.msgId }) {
@@ -475,7 +481,7 @@ class SynaServer(
 
     private fun printBanner() {
         println("================================================")
-        println("  Syna 私人聊天服务器 v0.9.9")
+        println("  Syna 私人聊天服务器 v1.0.0")
         println("  群名称: $groupName")
         println("  端口:   ${boundPort}")
         println("  数据目录: ${dataDir.toAbsolutePath()}")

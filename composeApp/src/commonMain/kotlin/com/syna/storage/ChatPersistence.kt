@@ -177,7 +177,7 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
 
     private val writeLock = Object()
 
-    fun rewrite(messages: Map<String, List<ChatMessage>>) {
+    fun rewrite(messages: Map<String, List<ChatMessage>>): Boolean {
         synchronized(writeLock) {
         try {
             val all = messages.values.flatten().sortedBy { it.ts }.takeLast(MAX_MESSAGES)
@@ -188,16 +188,17 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
             Files.createDirectories(file.parent)
             val plain = if (lines.isEmpty()) ByteArray(0) else "$lines\n".toByteArray()
             val payload = ShieldStorageKey.encrypt(plain)
+            if (payload == null) {
+                // 加密密钥不可用：拒绝写入（fail-closed）——降级明文会让崩溃残留的
+                // tmp 文件成为明文聊天记录，且数据已用旧密钥加密时盘上一致性被破坏
+                println("[Syna:Persist] 加密密钥不可用，跳过落盘")
+                return false
+            }
             // 原子写：先写临时文件再 rename（随机后缀防并发撕裂），防进程被杀/断电产生截断主文件
             val tmp = Path.of(path + ".tmp" + System.nanoTime())
             java.io.FileOutputStream(tmp.toFile()).use { out ->
-                if (payload != null) {
-                    out.write(MAGIC.toByteArray())
-                    out.write(payload)
-                } else {
-                    // 加密密钥不可用（异常环境）：降级明文存储并提示
-                    out.write(plain)
-                }
+                out.write(MAGIC.toByteArray())
+                out.write(payload)
                 // 内容落盘后再 rename（断电不产生截断）
                 out.fd.sync()
             }
@@ -207,8 +208,10 @@ class ChatPersistence(private val path: String = chatPersistencePath()) {
                 // 文件系统不支持原子移动：退化为普通替换
                 Files.move(tmp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
             }
+            return true
         } catch (e: Exception) {
             println("[Syna:Persist] 写入失败: ${e.message}")
+            return false
         }
         }
     }

@@ -70,6 +70,13 @@ class SettingsRepository(private val settings: Settings = Settings()) {
             settings.putBoolean(KEY_STEALTH_MODE, value)
         }
 
+    /** 首启护盾向导是否已展示过（持久化：重启后不再重复弹出） */
+    var shieldWizardSeen: Boolean
+        get() = settings.getBoolean(KEY_SHIELD_WIZARD_SEEN, false)
+        set(value) {
+            settings.putBoolean(KEY_SHIELD_WIZARD_SEEN, value)
+        }
+
     /** 仅加密会话：密钥未就绪时拒发明文（防静默降级；v0.9.9 起默认开启） */
     var e2eOnlyEnabled: Boolean
         get() = settings.getBoolean(KEY_E2E_ONLY_ENABLED, true)
@@ -163,6 +170,7 @@ class SettingsRepository(private val settings: Settings = Settings()) {
         const val KEY_BLOCKED_PEERS = "blocked_peers"
         const val KEY_SHIELD_ENABLED = "shield_enabled"
         const val KEY_SHIELD_ENABLED_SIG = "shield_enabled_sig"
+        const val KEY_SHIELD_WIZARD_SEEN = "shield_wizard_seen"
         const val KEY_SHIELD_SCREEN_PROTECTION = "shield_screen_protection"
         const val KEY_SHIELD_SCREEN_PROTECTION_SIG = "shield_screen_protection_sig"
         const val KEY_SHIELD_SELF_DESTRUCT = "shield_self_destruct"

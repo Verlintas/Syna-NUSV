@@ -214,4 +214,64 @@ class TotpTest {
         controller.stop()
         ShieldGate.disarm()
     }
+
+    @Test
+    fun cancelAwaitingTotpKeepsShieldArmedAfterDisableFlow() = kotlinx.coroutines.runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("syna-totp")
+        val path = dir.resolve("events.jsonl").toString()
+        val seedPath = dir.resolve("seed.bin").toString()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path, totpSeedPathOverride = seedPath)
+        var disabled = 0
+        controller.start()
+        controller.enableTotp()
+
+        // 双因子关闭流程：生物识别通过 → 等待 TOTP；此时点"取消"
+        controller.requestDisableWithVerification { disabled++ }
+        assertEquals(ShieldState.AWAITING_TOTP, controller.state.value)
+        assertTrue(controller.disabling.value)
+        controller.cancelAwaitingTotp()
+
+        // 取消后：护盾保持启用、关闭请求撤销、回到 ARMED、回调不触发、不计暴力失败
+        assertEquals(ShieldState.ARMED, controller.state.value)
+        assertTrue(controller.enabled.value)
+        assertFalse(controller.disabling.value)
+        assertEquals(0, disabled)
+        assertEquals(0, controller.biometricFails.value)
+        // 护盾仍正常锁/解
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        controller.stop()
+        ShieldGate.disarm()
+    }
+
+    @Test
+    fun cancelAwaitingTotpDuringUnlockReturnsToLocked() = kotlinx.coroutines.runBlocking {
+        val dir = java.nio.file.Files.createTempDirectory("syna-totp")
+        val path = dir.resolve("events.jsonl").toString()
+        val seedPath = dir.resolve("seed.bin").toString()
+        val controller = ShieldController(enabled = true, eventsPathOverride = path, totpSeedPathOverride = seedPath)
+        controller.start()
+        controller.enableTotp()
+
+        // 解锁流程：锁定 → 生物识别 → 等待 TOTP；点"取消"
+        controller.reportThreat(ShieldThreat.VPN_CHANGE)
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        controller.requestUnlock()
+        assertEquals(ShieldState.AWAITING_TOTP, controller.state.value)
+        controller.cancelAwaitingTotp()
+
+        // 第二因子未通过：回到锁定（不提供解锁），护盾仍启用
+        assertEquals(ShieldState.LOCKED, controller.state.value)
+        assertTrue(controller.enabled.value)
+        assertEquals(0, controller.biometricFails.value, "取消不应计入暴力失败")
+        // 随后可正常用正确码解锁
+        delay(1_200)
+        controller.requestUnlock()
+        assertEquals(ShieldState.AWAITING_TOTP, controller.state.value)
+        val seed = TotpSeedStore.load(seedPath) ?: error("种子应存在")
+        controller.verifyTotp(TotpCode.generate(seed, System.currentTimeMillis()))
+        assertEquals(ShieldState.UNLOCKED, controller.state.value)
+        controller.stop()
+        ShieldGate.disarm()
+    }
 }

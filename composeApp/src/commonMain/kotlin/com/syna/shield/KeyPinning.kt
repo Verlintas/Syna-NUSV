@@ -44,8 +44,15 @@ object KeyPinning {
         try {
             val bytes = com.syna.net.synaJson.encodeToString(PinStore.serializer(), PinStore(pins)).toByteArray()
             val enc = ShieldStorageKey.encryptWithMaster(bytes) ?: return
-            pinFile().parentFile?.mkdirs()
-            pinFile().writeBytes(enc)
+            val f = pinFile()
+            f.parentFile?.mkdirs()
+            // 原子写：崩溃损坏会导致 load 返回空 → 全部 pin 丢失 → TOFU 重置（MITM 窗口）
+            val tmp = java.io.File(f.absolutePath + ".tmp")
+            tmp.writeBytes(enc)
+            if (!tmp.renameTo(f)) {
+                f.writeBytes(enc)
+                tmp.delete()
+            }
         } catch (e: Exception) {
         }
     }

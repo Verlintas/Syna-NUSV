@@ -481,16 +481,23 @@ class AndroidShieldEngine private constructor(
                 //    其余 memfd 可执行（Frida 等注入常用）判可疑——攻击者改名 jit 之外任意名也命中
                 if (path.startsWith("/")) {
                     if (trustedPrefixes.any { path.startsWith(it) }) continue
-                    // 自身与运行时核心库（linker/libc/ART 等可能以非分区路径出现）
-                    if (path.contains("libsyna_shield") || path.contains("linker") ||
-                        path.contains("libc.so") || path.contains("libart") ||
-                        path.contains("libjavacore") || path.contains("libopenjdk") ||
-                        path.contains("libandroid_runtime") || path.contains("libnativeloader")
-                    ) continue
+                    // 自身与运行时核心库（linker/libc/ART 等可能以非分区路径出现）。
+                    // 精确 basename 匹配：子串匹配可被 /data/local/tmp/evil-linker.so
+                    // 之类命名绕过（攻击者把注入库改名成"linker"即放行）
+                    val base = path.substringAfterLast('/')
+                    val coreLibOk = base == "libsyna_shield.so" || base == "libsyna_shield" ||
+                        base == "linker" || base == "linker64" ||
+                        base == "libc.so" || base == "libart.so" || base == "libartd.so" ||
+                        base == "libjavacore.so" || base == "libopenjdk.so" ||
+                        base == "libandroid_runtime.so" || base == "libnativeloader.so"
+                    if (coreLibOk) continue
                 } else if (path.startsWith("memfd:")) {
-                    // ART JIT 正常产物（jit-cache / jit-zygote-cache 等）放行；
-                    // 其他 memfd 可执行 = 注入特征（不依赖名字，memfd 类型本身即信号）
-                    if (path.contains("jit")) continue
+                    // ART JIT 正常产物精确命名（jit-cache / jit-zygote-cache）；
+                    // "jit-inject" 等恶意命名不含这些前缀 → 命中注入特征
+                    if (path == "memfd:jit-cache" ||
+                        path.startsWith("memfd:jit-cache-") ||
+                        path.startsWith("memfd:jit-zygote")
+                    ) continue
                 } else if (path.isBlank() || path.startsWith("[anon:")) {
                     // 匿名可执行映射（无名字）：若 rwxp（可写可执行）为注入中转特征，
                     // 已有 native rwx 通道覆盖；此处跳过避免重复
@@ -674,12 +681,21 @@ class AndroidShieldEngine private constructor(
                 .joinToString("") { "%02x".format(it) }
             val baseFile = java.io.File(context.filesDir, "syna_dex_base")
             if (!baseFile.exists()) {
-                // 首次运行：固化基准
-                baseFile.writeBytes(ShieldStorageKey.encrypt(digest.toByteArray()) ?: return true)
+                // 首次运行：固化基准（格式 version|digest）
+                baseFile.writeBytes(ShieldStorageKey.encrypt("$version|$digest".toByteArray()) ?: return true)
                 return true
             }
             val base = ShieldStorageKey.decrypt(baseFile.readBytes())?.decodeToString()
-            base == digest
+            if (base == null) return true
+            val parts = base.split("|", limit = 2)
+            val baseVersion = parts[0].toLongOrNull()
+            val baseDigest = if (parts.size == 2) parts[1] else parts[0]
+            if (baseVersion != null && baseVersion != version) {
+                // 正常升级（versionCode 变化）：dex 哈希必然变化——重写基准而非判篡改
+                baseFile.writeBytes(ShieldStorageKey.encrypt("$version|$digest".toByteArray()) ?: return true)
+                return true
+            }
+            baseDigest == digest
         } catch (e: Exception) {
             true
         }
@@ -1029,14 +1045,20 @@ class AndroidShieldEngine private constructor(
 
                     override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                         when {
-                            // 硬件不可用/未录入：提示但不计入暴力失败（防每次点击累积自毁倒计时）
+                            // 硬件不可用/未录入/系统锁死/超时等：非真实指纹错误——
+                            // 计入暴力失败会在系统 lockout 期间反复点击即触发自毁，必须隔离
                             errorCode == XBiometricPrompt.ERROR_NO_BIOMETRICS ||
                                 errorCode == XBiometricPrompt.ERROR_HW_UNAVAILABLE ||
                                 errorCode == XBiometricPrompt.ERROR_NO_DEVICE_CREDENTIAL -> {
                                 ShieldController.current?.onBiometricUnavailable()
                             }
-                            // 用户取消：静默
-                            errorCode == XBiometricPrompt.ERROR_USER_CANCELED -> Unit
+                            errorCode == XBiometricPrompt.ERROR_LOCKOUT ||
+                                errorCode == XBiometricPrompt.ERROR_LOCKOUT_PERMANENT ||
+                                errorCode == XBiometricPrompt.ERROR_TIMEOUT ||
+                                errorCode == XBiometricPrompt.ERROR_UNABLE_TO_PROCESS ||
+                                errorCode == XBiometricPrompt.ERROR_NEGATIVE_BUTTON ||
+                                errorCode == XBiometricPrompt.ERROR_CANCELED ||
+                                errorCode == XBiometricPrompt.ERROR_USER_CANCELED -> Unit
                             // 其余错误：按失败处理（计入暴力计数）
                             else -> onResult(false)
                         }

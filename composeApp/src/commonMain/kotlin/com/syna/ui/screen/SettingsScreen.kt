@@ -84,6 +84,8 @@ fun SettingsScreen(
     tempChatTtlHours: Int,
     shieldEnabled: Boolean,
     onShieldEnabledChange: (Boolean) -> Unit,
+    shieldWizardSeen: Boolean,
+    onShieldWizardSeen: () -> Unit,
     shieldHealth: com.syna.shield.ShieldHealth,
     shieldEvents: List<com.syna.shield.ShieldEvent>,
     shieldHoneypot: Boolean,
@@ -332,13 +334,13 @@ fun SettingsScreen(
         Spacer(Modifier.height(16.dp))
 
         SectionTitle("◇Mirtazapine Shield")
-        // 首启向导：刚开启护盾时展示分步引导（可跳过）
+        // 首启向导：刚开启护盾时展示分步引导（可跳过）。
+        // 已展示状态持久化（SettingsRepository），避免每次进入设置页/重启后重复弹出
         var showWizard by remember { mutableStateOf(false) }
-        var wizardSeen by remember { mutableStateOf(false) }
         LaunchedEffect(shieldEnabled) {
-            if (shieldEnabled && !wizardSeen) {
+            if (shieldEnabled && !shieldWizardSeen) {
                 showWizard = true
-                wizardSeen = true
+                onShieldWizardSeen()
             }
         }
         Row(

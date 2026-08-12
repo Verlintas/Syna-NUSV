@@ -120,6 +120,10 @@ class ServerController(
             isRunning.collect { running ->
                 if (!running && !manualStop && autoRestartOn.value && server != null) {
                     logLine("[SynaLauncher] 服务器意外退出，3 秒后自动重启…")
+                    // 崩溃时释放实例：start() 守卫是 server == null，否则自动重启与
+                    // 手动重启都会被 `if (server != null) return` 拦住（死代码）
+                    linkJob?.cancel()
+                    server = null
                     delay(3_000)
                     if (!manualStop && autoRestartOn.value && server == null) {
                         start(fromCrash = true)

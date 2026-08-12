@@ -124,7 +124,15 @@ actual object SessionKeyStore {
             val newKey = ByteArray(SESSION_KEY_LEN).also { SecureRandom().nextBytes(it) }
             val cipher = authEncryptCipher() ?: return
             val ct = cipher.doFinal(newKey)
-            blobFile().writeBytes(cipher.iv + ct)
+            // 原子写：临时文件 + rename——直接 writeBytes 在进程被杀时产生
+            // 半写 blob，旧会话密钥无备份 → 全部加密数据永久不可解
+            val blob = blobFile()
+            val tmp = File(blob.parentFile, "syna_session_blob.tmp")
+            tmp.writeBytes(cipher.iv + ct)
+            if (!tmp.renameTo(blob)) {
+                blob.writeBytes(cipher.iv + ct)
+                tmp.delete()
+            }
             migrationKey = cachedSessionKey
             cachedSessionKey = newKey
         } catch (e: Exception) {

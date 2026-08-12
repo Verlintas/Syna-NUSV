@@ -37,31 +37,43 @@ actual object ShieldStorageKey {
     private fun keyFile(): Path =
         Paths.get(System.getProperty("user.home") ?: ".", ".syna", KEY_FILE)
 
+    private val keyLock = Any()
+
     private fun keyBytes(): ByteArray? {
-        return try {
-            val f = keyFile()
-            if (Files.exists(f)) {
-                val bytes = Files.readAllBytes(f)
-                if (bytes.size == 32) return bytes
-                // 尺寸异常：隔离旧文件（不静默覆盖——否则旧密文永久不可解），重建新密钥
-                Files.move(f, Paths.get(f.toString() + ".corrupt"), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
-            }
-            val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
-            Files.createDirectories(f.parent)
-            Files.write(f, key)
+        return synchronized(keyLock) {
             try {
-                Files.setPosixFilePermissions(
-                    f,
-                    setOf(
-                        java.nio.file.attribute.PosixFilePermission.OWNER_READ,
-                        java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
-                    ),
-                )
-            } catch (_: Exception) {
+                val f = keyFile()
+                if (Files.exists(f)) {
+                    val bytes = Files.readAllBytes(f)
+                    if (bytes.size == 32) return@synchronized bytes
+                    // 尺寸异常：隔离旧文件（不静默覆盖——否则旧密文永久不可解），重建新密钥
+                    Files.move(f, Paths.get(f.toString() + ".corrupt"), java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                }
+                val key = ByteArray(32).also { SecureRandom().nextBytes(it) }
+                Files.createDirectories(f.parent)
+                // 原子写：并发首次初始化时两线程各生成一个密钥，
+                // 后者覆盖前者会导致用旧密钥加密的数据永久不可解
+                val tmp = Paths.get(f.toString() + ".tmp")
+                Files.write(tmp, key)
+                try {
+                    Files.setPosixFilePermissions(
+                        tmp,
+                        setOf(
+                            java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+                            java.nio.file.attribute.PosixFilePermission.OWNER_WRITE,
+                        ),
+                    )
+                } catch (_: Exception) {
+                }
+                try {
+                    Files.move(tmp, f, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+                } catch (e: Exception) {
+                    Files.write(f, key)
+                }
+                key
+            } catch (e: Exception) {
+                null
             }
-            key
-        } catch (e: Exception) {
-            null
         }
     }
 

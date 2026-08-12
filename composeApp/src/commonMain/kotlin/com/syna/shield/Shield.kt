@@ -212,6 +212,7 @@ enum class ShieldAction(val label: String) {
     KEY_RELEASED("会话密钥已释放"),
     HONEYPOT("假锁模式已启用"),
     WATCHDOG("看门狗触发"),
+    CANCELLED("二次验证已取消"),
 }
 
 /** 威胁分级：严重级威胁（root/凭据/设备管理/调试）解锁后若未消除会自动再锁 */
@@ -919,6 +920,21 @@ class ShieldController(
     /**
      * 验证 TOTP 第二因子：正确 → 解锁；错误 → 计入暴力防护（失败上限 + 冷却）。
      */
+    /** 取消 TOTP 等待（锁屏"取消"按钮）：
+     * - 关闭流程（双因子关闭护盾，disablePending=true）→ 撤销关闭请求，
+     *   回到 ARMED（护盾保持启用——攻击者仅凭生物特征无法借取消关闭护盾）
+     * - 解锁流程（第二因子验证）→ 回到 LOCKED（第二因子未通过，不提供解锁）
+     */
+    fun cancelAwaitingTotp() {
+        if (stateM.value != ShieldState.AWAITING_TOTP) return
+        val wasDisabling = disablePending
+        disablePending = false
+        disablingM.value = false
+        disableCallback = null
+        setState(if (wasDisabling) ShieldState.ARMED else ShieldState.LOCKED)
+        recordEvent(ShieldThreat.INACTIVE, ShieldAction.CANCELLED)
+    }
+
     fun verifyTotp(code: String) {
         if (stateM.value != ShieldState.AWAITING_TOTP) return
         if (!enabledM.value) return
@@ -1209,15 +1225,18 @@ class ShieldController(
                 val hash = sha256("$prevHash|$content")
                 file.appendText("$content|$prevHash|$hash\n")
                 // 事件文件封顶：超过上限保留最近 N 条。
-                // 截断后新首行的 prevHash 指向已删除行 → 链断 → 重写首行以 GENESIS 为起点
+                // 截断后必须从 GENESIS 起重算**全部**保留行的哈希链——
+                // 否则第 2..N 行的 prevHash 仍指向已删除行，加载时链条
+                // 从第 2 行起断裂，重启后只剩 1 条审计事件
                 if (file.length() > MAX_PERSISTED_EVENTS * 220L) {
                     val keep = file.readLines().takeLast(MAX_PERSISTED_EVENTS)
-                    val reSealed = keep.mapIndexed { i, line ->
-                        if (i == 0) {
-                            val content = line.substringBeforeLast('|').substringBeforeLast('|')
-                            val newHash = sha256("$GENESIS_HASH|$content")
-                            "$content|$GENESIS_HASH|$newHash"
-                        } else line
+                    var prev = GENESIS_HASH
+                    val reSealed = keep.map { line ->
+                        val content = line.substringBeforeLast('|').substringBeforeLast('|')
+                        val hash = sha256("$prev|$content")
+                        val out = "$content|$prev|$hash"
+                        prev = hash
+                        out
                     }
                     java.io.FileOutputStream(file).use { out ->
                         reSealed.forEach { out.write((it + "\n").toByteArray()) }

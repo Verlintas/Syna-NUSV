@@ -177,6 +177,20 @@ fun ShieldLockScreen(controller: ShieldController, modifier: Modifier = Modifier
                 )
             }
             Spacer(Modifier.height(12.dp))
+            // 取消：撤销关闭请求（回 ARMED 保持护盾）或放弃解锁（回 LOCKED）——
+            // 误触/反悔无需等待动态码，也不计入暴力防护
+            androidx.compose.material3.TextButton(
+                onClick = { controller.cancelAwaitingTotp() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp),
+            ) {
+                Text(
+                    text = if (disabling) "取消并保持护盾开启" else "取消",
+                    fontSize = 14.sp,
+                    color = ShieldWhiteDim,
+                )
+            }
             Text(
                 text = if (disabling) {
                     "双重验证关闭：攻击者无法关闭已开启的护盾。动态码错误将计入暴力防护。"

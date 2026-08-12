@@ -141,8 +141,11 @@ fun App() {
         shield.setSessionRotateCallback {
             engine.chatStore.reloadFromPersistence()
             com.syna.shield.SessionKeyStore.rotateSessionKey()
-            engine.chatStore.rewriteNow()
-            com.syna.shield.SessionKeyStore.clearMigration()
+            // 仅在重写成功后才释放旧密钥——重写失败（磁盘满/IO 错误）时
+            // 盘上仍是旧密钥加密的数据，误释放旧密钥会使其永久不可解
+            if (engine.chatStore.rewriteNow()) {
+                com.syna.shield.SessionKeyStore.clearMigration()
+            }
         }
         shield.configureSelfDestruct(enabled = settings.shieldSelfDestruct) {
             fullDestruct(engine, shield)
@@ -155,7 +158,7 @@ fun App() {
         // 版本更新检测：启动后延迟拉取 GitHub Releases（失败静默；后台线程）
         kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
             kotlinx.coroutines.delay(10_000)
-            com.syna.util.UpdateChecker.checkAsync("0.9.9") { tag, url ->
+            com.syna.util.UpdateChecker.checkAsync("1.0.0") { tag, url ->
                 com.syna.util.notifyMessage(
                     "Syna",
                     "发现新版本 $tag。请前往 GitHub Releases 下载更新。",
@@ -268,6 +271,8 @@ fun App() {
                 settings.tempChatTtlHours = it
             },
             shieldEnabled = shield.enabled.collectAsState().value,
+            shieldWizardSeen = settings.shieldWizardSeen,
+            onShieldWizardSeen = { settings.shieldWizardSeen = true },
             onShieldEnabledChange = { on ->
                 if (on) {
                     // 一键全开：Shield + 防截屏 + 自毁协议 全部启用
@@ -322,6 +327,11 @@ private fun fullDestruct(
         // 平台附加痕迹：TOTP 种子/会话 blob/基准文件/崩溃日志（覆写删除）
         try {
             com.syna.storage.destructPlatformArtifacts()
+        } catch (e: Exception) {
+        }
+        // 发送中的文件副本（cacheDir/syna_outbox）可能含敏感文档，一并清除
+        try {
+            com.syna.util.SecureWipe.wipeDir(java.io.File(com.syna.util.appCacheDir(), "syna_outbox"))
         } catch (e: Exception) {
         }
         // 销毁存储密钥（最强手段：TEE 内删除，残留密文永久不可解）
