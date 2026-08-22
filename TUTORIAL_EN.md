@@ -31,7 +31,7 @@ Step-by-step guide: LAN chat, private server, remote access (NAT traversal), sec
 **1. Run the desktop app**
 
 ```bash
-git clone https://github.com/Verlintas/Syna-NUSV.git
+git clone https://github.com/NUSV/Syna-NUSV.git
 cd Syna-NUSV
 ./gradlew :composeApp:run
 ```
@@ -155,7 +155,7 @@ Run `java -jar syna-server.jar --ui` and start the server to get the dashboard:
 
 - One physical machine (Windows / macOS / Linux — see details below). A Raspberry Pi 3B+ or better works great.
 - Java 17 (JRE is enough, you do NOT need the full JDK).
-- The server jar: download `Syna-server-v0.3.0.jar` from the [GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases) page.
+- The server jar: download `Syna-server-v0.3.0.jar` from the [GitHub Releases](https://github.com/NUSV/Syna-NUSV/releases) page.
 - (Optional) Your router admin password for port forwarding — see [Router port forwarding](#router-port-forwarding) below.
 
 **The 4-step formula for every OS**

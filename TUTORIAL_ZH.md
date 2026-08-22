@@ -31,7 +31,7 @@
 **1. 运行桌面应用**
 
 ```bash
-git clone https://github.com/Verlintas/Syna-NUSV.git
+git clone https://github.com/NUSV/Syna-NUSV.git
 cd Syna-NUSV
 ./gradlew :composeApp:run
 ```
@@ -180,7 +180,7 @@ java -jar syna-server.jar --launcher # 强制启动器模式
 
 - 一台实体机（Windows / macOS / Linux 均可，下面分系统讲）。树莓派 3B+ 及以上也行。
 - Java 17（只要 JRE 运行时即可，不需要完整 JDK）。
-- 服务器程序：到 [GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases) 下载 `Syna-server-v0.3.0.jar`。
+- 服务器程序：到 [GitHub Releases](https://github.com/NUSV/Syna-NUSV/releases) 下载 `Syna-server-v0.3.0.jar`。
 - （可选）路由器管理员密码——用于端口转发，见下文"路由器端口转发"。
 
 **每个系统通用的四步公式**

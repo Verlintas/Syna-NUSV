@@ -5,7 +5,7 @@ Multiplatform, GPL-3.0). Android · Windows · macOS, fully peer-to-peer, no int
 required.
 
 Format: `version — date — summary`. Releases:
-[GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases)
+[GitHub Releases](https://github.com/NUSV/Syna-NUSV/releases)
 
 ---
 

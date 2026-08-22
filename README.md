@@ -94,7 +94,7 @@ java -jar syna-server.jar -p 45880 -w YourSecretPassword -g "My Group"
 ```
 
 **② Launcher (GUI)** — visual launcher for everyone else:
-- **macOS / Windows / Linux**: download the **SynaServer launcher app** from [GitHub Releases](https://github.com/Verlintas/Syna-NUSV/releases), double-click to open — no terminal needed.
+- **macOS / Windows / Linux**: download the **SynaServer launcher app** from [GitHub Releases](https://github.com/NUSV/Syna-NUSV/releases), double-click to open — no terminal needed.
 - Or run the jar directly on a machine with a display:
 ```bash
 java -jar syna-server.jar            # auto-launches the launcher on desktop; falls back to CLI headless
